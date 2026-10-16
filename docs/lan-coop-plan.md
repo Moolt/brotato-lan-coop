@@ -81,6 +81,16 @@ extensions/...                 # mirrored vanilla paths (below)
   - Client drops between waves: the host drops them from the merge.
   - Host drops: clients return to the title screen and see a popup.
 
+**Status: done.** Files: `net/net_manager.gd`, `net/net_protocol.gd`, `net/net_config.gd`, `net/net_translations.gd`, `extensions/singletons/progress_data.gd`. Notes on what was built:
+- **Public API** (`/root/LanNet`): `host(port)`, `join(ip, port)`, `leave()`, `set_player_name`, `set_local_player_info({character_id, weapon_id, ready})`, `set_lobby_settings({zone, difficulty})` (host), `set_run_in_progress(bool)` (host), `get_player(i)`, `get_local_player()`, `are_all_ready()`. Signals: `session_started(as_host)`, `session_ended(reason)`, `joined_lobby`, `lobby_changed`, `player_disconnected(player_index)`.
+- **Reasons** are translation keys (`LAN_REJECT_*`, `LAN_MSG_*`). `last_end_reason` keeps the last one so the title screen (Step 2) can show the popup and clear it.
+- **Saves** are blocked for host *and* clients while a session is active (`ProgressData.lan_coop_saves_blocked`), so a net run never lands in `saved_run_state`. Unlocks earned during a session are not saved.
+- **Unlock override** covers `zones/characters/upgrades/consumables/weapons/items_unlocked`, not difficulties (the host picks the difficulty).
+- **Player indices** are compacted when someone leaves the lobby. During a run (`run_in_progress`) the slot is kept with `connected = false` and `player_disconnected` fires; Steps 6 and 7 hook into that.
+- **Security/robustness:** `server_relay` is off, every RPC checks the sender id and argument types, and peers that don't send a hello within 5 s are kicked. Rejected clients get the reason, then are kicked after 0.5 s.
+- **ENet pitfall:** ENet calls `close_connection()` itself right after `server_disconnected` / `connection_failed`, so cleanup runs deferred and the close is guarded by connection status. Closing twice logs an engine `ERROR:`.
+- `net_input.gd`, `host_sync.gd` and `client_sync.gd` belong to Step 6 and don't exist yet.
+
 ## Step 2: Main menu entry
 - **Extend `ui/menus/title_screen/title_screen_menus.gd`.** In `_ready()`:
   1. Instance `multiplayer_menu.tscn` and `lobby.tscn` as hidden children.
@@ -227,6 +237,8 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - Run 2–4 game instances on one PC (Godot 3.7 editor "Run multiple instances", or the game exe with mod loading). Each instance needs a separate `user://` (`--user-data-dir` or a separate profile) so saves and config don't collide.
   - Host on 127.0.0.1.
   - Run with `-vvv` and watch `ModLoaderLog` output.
+  - **Windows that are covered or unfocused stall on vsync** under Wayland/XWayland, which also stops the network poll. Turn vsync off (`display/window/vsync/use_vsync=false`) and tile the windows with `--position`.
+  - Without `config/custom_user_dir_name`, instances use the real `~/.local/share/Brotato` save and log. For throwaway tests, copy the project and set a separate user dir name in the copy.
 - **Per milestone:**
   - M2: names, characters and ready flags show up on every instance. Start is disabled until all players are ready.
   - M3/M4: client movement is visible on the host and the other way round. Enemies, hits, deaths and gold match. Killing the client process mid-wave doesn't crash the host.
