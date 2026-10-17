@@ -11,6 +11,9 @@ extends Node
 #   - Every entity the spawner creates during the wave (enemies, bosses, trees, structures,
 #     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
 #     events, collected per physics frame.
+#   - Weapon attacks (player, weapon index, rotation, distance, melee attack type) and
+#     projectiles (spawn: scene, position, velocity, rotation, speed and range; stop) are events
+#     too. Projectiles inside a group (GroupOfBullet, bullet hell) aren't synced.
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
 #     wave time left; per player position, movement, speed, HP and death; per entity (trees
 #     excluded, they don't move) position and HP ratio (0-255).
@@ -20,6 +23,10 @@ extends Node
 #     no areas. They die on the host's death event and slide with its knockback.
 #   - The own player moves locally at the speed the host reports, takes no damage and doesn't
 #     regenerate; HP and death come from the host.
+#   - Weapons show the host's attacks: melee weapons swing (the real swing, which hits nothing
+#     because client entities are inert), ranged weapons recoil and play their sound.
+#     Projectiles are copies with their areas off; they fly on their own and stop on the host's
+#     stop event (or at their range).
 #   - Other players and entities are puppets, interpolated between snapshots
 #     INTERP_DELAY_MS in the past.
 #   - The wave timer follows the host's. The wave ends when the host says so.
@@ -41,6 +48,10 @@ const MAX_NET_ID: = 65535
 const EVENT_SPAWN: = 0
 const EVENT_DIE: = 1
 const EVENT_BIRTH: = 2
+const EVENT_WEAPON: = 3
+const EVENT_PROJECTILE: = 4
+const EVENT_PROJECTILE_STOP: = 5
+const RANGED_ATTACK: = - 1
 
 var is_host: = false
 
@@ -57,6 +68,14 @@ var _remote_states: = {}
 var _snapshot_seq: = 0
 var _next_net_id: = 0
 var _events: = []
+# Projectiles shot since the last flush; their spawn events are built at flush time, when
+# position and velocity are set (enemy projectiles shoot once in _ready, before they're placed).
+var _pending_projectiles: = []
+var _next_projectile_id: = 0
+
+# Projectile net id -> projectile, on both sides (host: shot and not yet returned to the pool).
+var _projectiles: = {}
+var _scene_cache: = {}
 
 # Client: received snapshots, oldest first:
 # {time (host msec), players: [{pos, move}], entities: {net id: pos}}.
@@ -109,6 +128,7 @@ func _physics_process(_delta: float) -> void :
 	_frame += 1
 	if is_host:
 		_apply_remote_states()
+		_flush_pending_projectiles()
 		if not _events.empty():
 			_net.send_events(_events)
 			_events = []
@@ -149,6 +169,71 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 # Called by the entity_spawner.gd extension when a spawn marker appears.
 func on_birth(type: int, pos: Vector2, charmed_by: int) -> void :
 	_events.append([EVENT_BIRTH, type, pos, charmed_by])
+
+
+func on_weapon_shot(weapon: Node, distance: float) -> void :
+	var player = weapon._parent
+	if not is_instance_valid(player) or not player is Player:
+		return
+	var weapon_index: int = player.current_weapons.find(weapon)
+	if weapon_index < 0:
+		return
+	var attack_type: int = weapon.next_attack_type if weapon is MeleeWeapon else RANGED_ATTACK
+	_events.append([EVENT_WEAPON, player.player_index, weapon_index, weapon.rotation, distance, attack_type])
+
+
+# Called by the projectile.gd extension. Only projectiles that sit directly in main's
+# projectile containers are synced (bullets inside a GroupOfBullet move with their group).
+func on_projectile_shot(projectile: Node) -> void :
+	if projectile.lan_net_id != 0 or projectile is GroupOfBullet:
+		return
+	var parent: = projectile.get_parent()
+	if parent != _main._player_projectiles and parent != _main._enemy_projectiles:
+		return
+	_next_projectile_id = _next_projectile_id % MAX_NET_ID + 1
+	projectile.lan_net_id = _next_projectile_id
+	_projectiles[_next_projectile_id] = projectile
+	_pending_projectiles.append(projectile)
+
+
+func on_projectile_stopped(projectile: Node) -> void :
+	if not is_host:
+		return
+	if _pending_projectiles.has(projectile):
+		# Never sent: forget it.
+		_pending_projectiles.erase(projectile)
+		var _erased = _projectiles.erase(projectile.lan_net_id)
+		projectile.lan_net_id = 0
+		return
+	_events.append([EVENT_PROJECTILE_STOP, projectile.lan_net_id, projectile.global_position])
+
+
+func on_projectile_returned(projectile: Node) -> void :
+	var net_id: int = projectile.lan_net_id
+	if _projectiles.get(net_id) != projectile:
+		return
+	var _erased = _projectiles.erase(net_id)
+	if not is_host:
+		return
+	if _pending_projectiles.has(projectile):
+		_pending_projectiles.erase(projectile)
+	elif projectile._hitbox.active:
+		# Pooled without stop() (stop() clears active): tell the clients.
+		_events.append([EVENT_PROJECTILE_STOP, net_id, projectile.global_position])
+
+
+func _flush_pending_projectiles() -> void :
+	for projectile in _pending_projectiles:
+		if not is_instance_valid(projectile) or projectile.lan_net_id == 0:
+			continue
+		var speed: float = projectile.velocity.length()
+		var max_range: = 0
+		if projectile is PlayerProjectile and projectile._weapon_stats != null:
+			speed = projectile._weapon_stats.projectile_speed
+			max_range = projectile._max_range
+		var is_enemy: bool = projectile.get_parent() == _main._enemy_projectiles
+		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy])
+	_pending_projectiles.clear()
 
 
 func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
@@ -319,6 +404,12 @@ func on_events(events: Array) -> void :
 			_client_die(event)
 		elif event[0] == EVENT_BIRTH and event.size() == 4:
 			_client_birth(event)
+		elif event[0] == EVENT_WEAPON and event.size() == 6:
+			_client_weapon_shot(event)
+		elif event[0] == EVENT_PROJECTILE and event.size() == 9:
+			_client_projectile(event)
+		elif event[0] == EVENT_PROJECTILE_STOP and event.size() == 3:
+			_client_projectile_stop(event)
 
 
 func _client_spawn(event: Array) -> void :
@@ -404,6 +495,109 @@ func _client_birth(event: Array) -> void :
 		return
 	if not _main._cleaning_up:
 		_main._entity_spawner.spawn_entity_birth(event[1], null, event[2], null, - 1, null, event[3])
+
+
+func _client_weapon_shot(event: Array) -> void :
+	# [EVENT_WEAPON, player_index, weapon_index, rotation, distance, attack type]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[5]) != TYPE_INT:
+		return
+	if typeof(event[3]) != TYPE_REAL or typeof(event[4]) != TYPE_REAL:
+		return
+	if event[1] < 0 or event[1] >= _main._players.size():
+		return
+	var player = _main._players[event[1]]
+	if not is_instance_valid(player) or player.dead or event[2] < 0 or event[2] >= player.current_weapons.size():
+		return
+	var weapon = player.current_weapons[event[2]]
+	if not is_instance_valid(weapon) or weapon._is_shooting:
+		return
+	weapon.rotation = event[3]
+	if weapon is MeleeWeapon and event[5] != RANGED_ATTACK:
+		weapon.next_attack_type = event[5]
+		weapon._shooting_behavior.shoot(event[4])
+	else:
+		_client_ranged_recoil(weapon)
+
+
+# The visible part of RangedWeaponShootingBehavior.shoot, without the projectiles.
+func _client_ranged_recoil(weapon: Node) -> void :
+	var stats = weapon.current_stats
+	SoundManager.play(Utils.get_rand_element(stats.shooting_sounds), stats.sound_db_mod, 0.2)
+	var initial_position: Vector2 = weapon.sprite.position
+	weapon.set_shooting(true)
+	weapon.tween.interpolate_property(weapon.sprite, "position", initial_position, Vector2(initial_position.x - stats.recoil, initial_position.y), stats.recoil_duration, Tween.TRANS_EXPO, Tween.EASE_OUT)
+	weapon.tween.start()
+	yield(weapon.tween, "tween_all_completed")
+	if not is_instance_valid(weapon):
+		return
+	weapon.tween.interpolate_property(weapon.sprite, "position", weapon.sprite.position, initial_position, stats.recoil_duration, Tween.TRANS_EXPO, Tween.EASE_OUT)
+	weapon.tween.start()
+	yield(weapon.tween, "tween_all_completed")
+	if is_instance_valid(weapon):
+		weapon.set_shooting(false)
+
+
+func _client_projectile(event: Array) -> void :
+	# [EVENT_PROJECTILE, net_id, scene path, pos, velocity, rotation, speed, max range, is_enemy]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_VECTOR2:
+		return
+	if typeof(event[5]) != TYPE_REAL or typeof(event[6]) != TYPE_REAL or typeof(event[7]) != TYPE_INT or typeof(event[8]) != TYPE_BOOL:
+		return
+	if _main._cleaning_up:
+		return
+	var scene = _load_scene(event[2])
+	if scene == null:
+		return
+	var container = _main._enemy_projectiles if event[8] else _main._player_projectiles
+	if not is_instance_valid(container):
+		return
+	var pool_id: int = scene.get_instance_id()
+	var projectile = _main.get_node_from_pool(pool_id, container)
+	if not is_instance_valid(projectile):
+		projectile = scene.instance()
+		if not projectile is Projectile or projectile is GroupOfBullet or (not event[8] and not projectile is PlayerProjectile):
+			projectile.free()
+			return
+		projectile.set_meta("pool_id", pool_id)
+		if event[8]:
+			_main.add_enemy_projectile(projectile)
+		else:
+			_main.add_player_projectile(projectile)
+
+	projectile.global_position = event[3]
+	projectile.velocity = event[4]
+	projectile.rotation = event[5]
+	if projectile is PlayerProjectile:
+		# PlayerProjectile.shoot reads speed and range from the weapon stats.
+		var stats: = RangedWeaponStats.new()
+		stats.projectile_speed = int(event[6])
+		stats.max_range = event[7]
+		projectile.set_weapon_stats(stats)
+		projectile.spawn_position = event[3]
+	projectile.shoot()
+	for area in _find_areas(projectile, []):
+		area.set_deferred("monitoring", false)
+		area.set_deferred("monitorable", false)
+	projectile.lan_net_id = event[1]
+	_projectiles[event[1]] = projectile
+
+
+func _client_projectile_stop(event: Array) -> void :
+	# [EVENT_PROJECTILE_STOP, net_id, pos]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2:
+		return
+	var projectile = _projectiles.get(event[1])
+	if projectile == null or not is_instance_valid(projectile) or projectile.lan_net_id != event[1]:
+		return
+	projectile.global_position = event[2]
+	projectile.stop()
+
+
+func _load_scene(path: String):
+	if not _scene_cache.has(path):
+		var scene = load(path) if ResourceLoader.exists(path) else null
+		_scene_cache[path] = scene if scene is PackedScene else null
+	return _scene_cache[path]
 
 
 func _send_own_state() -> void :

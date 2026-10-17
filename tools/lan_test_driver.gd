@@ -175,6 +175,19 @@ func log_enemies(tag: String) -> void :
 	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " queued=", spawner.queue_to_spawn.size(), " removed_for_perf=", spawner.enemies_removed_for_perf, " fps=", Engine.get_frames_per_second(), " time_left=", main._wave_timer.time_left)
 
 
+func center_offset(i: int) -> Vector2:
+	return ZoneService.get_map_center() + Vector2(450, 0).rotated(i * PI / 2)
+
+
+func visible_children(node) -> int:
+	var n = 0
+	if is_instance_valid(node):
+		for c in node.get_children():
+			if c.visible and c.get("velocity") != null and c.velocity != Vector2.ZERO:
+				n += 1
+	return n
+
+
 func log_sync(tag: String) -> void :
 	var main = get_tree().current_scene
 	if main == null or main.filename != MenuData.game_scene:
@@ -199,6 +212,12 @@ func log_sync(tag: String) -> void :
 			var e = sync._entities[net_id]
 			if is_instance_valid(e):
 				sample.append("%d:%s%s" % [net_id, e.global_position.round(), " dead" if e.dead else ""])
+		var swings = 0
+		for p in main._players:
+			for w in p.current_weapons:
+				if w._is_shooting:
+					swings += 1
+		print("[TEST] ", tag, " synced_projectiles=", sync._projectiles.size(), " flying_player_proj=", visible_children(main._player_projectiles), " flying_enemy_proj=", visible_children(main._enemy_projectiles), " weapons_attacking=", swings)
 		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
 	shot(tag)
 
@@ -238,6 +257,9 @@ func _host_step() -> void :
 			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load("res://entities/units/enemies/rhino/rhino.tscn"), rect.end - Vector2(150, 150)])
 			for i in 3:
 				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
+			# Spitters shoot enemy projectiles.
+			for i in 4:
+				spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), center_offset(i)])
 			next_t = 14.0
 		6:
 			Input.action_release("button_move_left_7")
