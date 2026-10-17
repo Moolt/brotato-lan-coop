@@ -58,6 +58,7 @@ func _ready() -> void :
 	_build_ui()
 	if _net != null:
 		var _e = _net.connect("lobby_changed", self, "_on_LanNet_lobby_changed")
+		_e = _net.connect("run_sync_changed", self, "_on_LanNet_run_sync_changed")
 
 
 func init() -> void :
@@ -333,7 +334,18 @@ func _refresh_settings() -> void :
 		else:
 			_start_button.disable()
 
-	if too_many:
+	var sync: Dictionary = _net.get_run_sync_status()
+	var names: = PoolStringArray(sync.names).join(", ")
+	_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	if sync.state == "synced":
+		_hint_label.text = tr("LAN_RUN_SYNCED").replace("{0}", str(_net.get_player_count()))
+		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_OK)
+	elif sync.state == "pending":
+		_hint_label.text = tr("LAN_RUN_PENDING").replace("{0}", names) if is_host else tr("LAN_RUN_RECEIVING")
+	elif sync.state == "failed":
+		_hint_label.text = tr("LAN_RUN_FAILED").replace("{0}", names) if is_host else tr("LAN_RUN_FAILED_CLIENT")
+		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_ERROR)
+	elif too_many:
 		_hint_label.text = tr("LAN_HINT_TOO_MANY").replace("{0}", str(LobbyRules.MAX_RUN_PLAYERS))
 	elif not all_ready:
 		_hint_label.text = "LAN_HINT_WAITING"
@@ -472,6 +484,11 @@ func _on_LanNet_lobby_changed() -> void :
 		_refresh()
 
 
+func _on_LanNet_run_sync_changed() -> void :
+	if visible:
+		_refresh_settings()
+
+
 func _on_CharacterGrid_element_focused(element) -> void :
 	_item_panel.hide()
 	_character_panel.show()
@@ -533,9 +550,10 @@ func _on_DifficultyOption_item_selected(index: int) -> void :
 	_net.set_lobby_settings({"difficulty": _difficulty_option.get_item_id(index)})
 
 
+# Builds the run and syncs it to every client. Loading the wave follows in Milestone 3;
+# until then the lobby stays open and shows whether every peer holds the same run.
 func _on_StartButton_pressed() -> void :
-	# Building and syncing the run follows in Step 3c.
-	ModLoaderLog.info("Start pressed with %d ready players" % _net.get_player_count(), NetProtocol.MOD_ID)
+	var _err = _net.start_run()
 
 
 func _on_ReadyButton_pressed() -> void :

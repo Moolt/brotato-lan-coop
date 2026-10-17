@@ -152,7 +152,7 @@ Leaving the lobby returns to the page it was entered from (Multiplayer page for 
 - **Starting the run (host).**
   1. `RunData.reset()`, `set_player_count(n, true)`, `set_coop_run(true)`, set zone and difficulty.
   2. For each player: `add_character`, then `add_weapon/add_item(…, true)`.
-  3. `add_starting_items_and_weapons()`, then apply difficulty effects to every player. Vanilla only applies them to player 0 (`difficulty_selection.gd`).
+  3. `add_starting_items_and_weapons()`, then apply the difficulty effects to player 0, like vanilla coop. The danger effects are read from player 0 only (`entity_service.gd`), and `double_boss` is summed over all players.
   4. Broadcast the serialized run state, then everyone does `change_scene(MenuData.game_scene)`.
 - **Run-state serialization.** Use `PlayerRunData.serialize()` plus the global fields from `RunData.get_state()`. Mirror how `ProgressData` saves `saved_run_state`.
 
@@ -184,6 +184,20 @@ Done in three increments, each tested by the user and committed separately: 3a (
 - **Start** (host only) is enabled when `are_all_ready()` and there are at most `LobbyRules.MAX_RUN_PLAYERS` (4) players. Step 4 lifts the cap. In 3b it only logs; 3c adds the run build.
 - **Leaving with ui_cancel** needs a press *and* release with no dropdown open, because ui_cancel closes an `OptionButton` popup on press.
 - **Lobby broadcasts** only go to peers in `get_network_connected_peers()`.
+
+**3c status: done.**
+- **Building the run:** `net/run_builder.gd` `build_run` follows `character_selection` → `weapon_selection` → `difficulty_selection` (without the save and stats calls).
+- **Serializing the run:** it uses the save loader, `ProgressDataLoaderV3.new()` (no args = no disk access): `serialize_run_state(ProgressData.get_run_state())`, then `JSON.print`.
+- **The run travels as JSON text.** The deserializers expect JSON types (string keys, floats); raw RPC dictionaries make `PlayerRunData._deserialize_effects` raise script errors.
+- **Loading the run:** `apply_run` mirrors vanilla's load: `JSON.parse` → `deserialize_run_state` → merge into `_get_empty_run_state()` → the int fixes from `progress_data.gd` → `RunData.resume_from_state`. The host applies its own JSON too, so every peer runs the identical deserialized copy.
+- **Sync flow:**
+  - `LanNet.start_run()` (host) builds the run and sends `_rpc_run_state(run_id, json, digest)`.
+  - Each client applies it and compares `RunBuilder.digest()` (md5 of a readable summary: zone, difficulty, per-player character, weapons, items, gold, max HP, elite/boss/event spawns), then answers `_rpc_run_state_ack`.
+  - The lobby hint shows ready / pending / differs.
+  - `lobby_settings.run_id` marks the current run. Any later lobby broadcast resets it to 0, so a stale run is never used.
+- **What's kept:** `LanNet.run_state` holds the JSON for Milestone 3.
+- **Cleanup:** RunData is reset when the session ends if a run replaced it.
+- **Tested:** two instances with different characters at Danger 3. Identical digests; the JSON is about 23 KB and goes in one reliable RPC.
 - **Pitfall:** in GDScript 3, `continue` inside a `match` block falls through to the next pattern instead of continuing the loop. Use `if`/`elif` in loops.
 
 ## Step 4: Lift the 4-player cap to 12
@@ -281,6 +295,10 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
 - Mod config knobs exposed in the manifest `config_schema`: arena factor, enemy count/HP factor, port.
 - Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
+- Unlock everything in multiplayer. While a session is active, every peer uses the full character, weapon, item, upgrade, consumable and zone lists instead of the host's unlocks. This builds on the Step 1 unlock override in `LanNet._apply_host_unlocks`, which then also has to run on the host. Singleplayer progress must stay untouched:
+  - saves are already blocked during a session (`ProgressData.lan_coop_saves_blocked`)
+  - the own lists are restored on leave
+  - unlocks earned in a match must not leak into the save
 - Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
 

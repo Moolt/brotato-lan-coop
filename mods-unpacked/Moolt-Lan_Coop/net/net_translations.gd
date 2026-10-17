@@ -48,6 +48,11 @@ const STRINGS: = {
 		"LAN_HINT_HOST_CAN_START": "Everyone is ready. Press Start!", 
 		"LAN_HINT_CLIENT_WAIT_START": "Everyone is ready. Waiting for the host to start.", 
 		"LAN_HINT_TOO_MANY": "Runs with more than {0} players are not supported yet.", 
+		"LAN_RUN_SYNCED": "Run is ready on all {0} machines.", 
+		"LAN_RUN_PENDING": "Sending the run... waiting for {0}.", 
+		"LAN_RUN_RECEIVING": "Receiving the run...", 
+		"LAN_RUN_FAILED": "The run differs for {0} (see log).", 
+		"LAN_RUN_FAILED_CLIENT": "Your run differs from the host's (see log).", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -94,6 +99,11 @@ const STRINGS: = {
 		"LAN_HINT_HOST_CAN_START": "Alle sind bereit. Drücke Starten!", 
 		"LAN_HINT_CLIENT_WAIT_START": "Alle sind bereit. Warte auf den Host.", 
 		"LAN_HINT_TOO_MANY": "Runden mit mehr als {0} Spielern werden noch nicht unterstützt.", 
+		"LAN_RUN_SYNCED": "Die Runde ist auf allen {0} Rechnern bereit.", 
+		"LAN_RUN_PENDING": "Sende die Runde... warte auf {0}.", 
+		"LAN_RUN_RECEIVING": "Empfange die Runde...", 
+		"LAN_RUN_FAILED": "Die Runde weicht ab bei {0} (siehe Log).", 
+		"LAN_RUN_FAILED_CLIENT": "Deine Runde weicht von der des Hosts ab (siehe Log).", 
 	}, 
 }
 

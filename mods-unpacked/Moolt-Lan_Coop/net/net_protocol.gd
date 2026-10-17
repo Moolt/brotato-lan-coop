@@ -112,6 +112,7 @@ static func default_lobby_settings() -> Dictionary:
 	return {
 		"zone": 0, 
 		"difficulty": 0, 
+		"run_id": 0, 
 	}
 
 

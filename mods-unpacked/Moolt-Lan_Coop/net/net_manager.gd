@@ -9,11 +9,13 @@ signal session_ended(reason)
 signal joined_lobby()
 signal lobby_changed()
 signal player_disconnected(player_index)
+signal run_sync_changed()
 
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd")
 const NetDiscovery = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_discovery.gd")
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
+const RunBuilder = preload("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
 
 const HOST_PEER_ID: = 1
 
@@ -38,6 +40,18 @@ var last_end_reason: = ""
 var _peer: NetworkedMultiplayerENet = null
 var _pending_hello: = {}
 var _own_unlocks: = {}
+
+# Run sync (Start). The host builds the run, sends it with its digest, and clients ack whether
+# their copy matches. lobby_settings.run_id names the current run (0 = none); any lobby change
+# resets it, so a stale run is never started. run_state (JSON text, see RunBuilder) is kept
+# for loading the wave later.
+var run_state: = ""
+var _run_id_counter: = 0
+var _received_run_id: = 0
+var _received_run_ok: = false
+var _run_acks: = {}
+# True once a built or received run replaced RunData (reset when the session ends).
+var _run_data_replaced: = false
 
 
 func _ready() -> void :
@@ -181,6 +195,53 @@ func set_run_in_progress(value: bool) -> void :
 	run_in_progress = value
 
 
+# Host: builds the run from the lobby and sends it to every client.
+func start_run() -> int:
+	if not is_host or not are_all_ready() or players.size() > LobbyRules.MAX_RUN_PLAYERS:
+		return ERR_UNAVAILABLE
+
+	_run_data_replaced = true
+	RunBuilder.build_run(players, lobby_settings)
+	run_state = RunBuilder.serialize_run()
+	var _applied = RunBuilder.apply_run(run_state)
+	var digest: = RunBuilder.digest()
+	_run_id_counter += 1
+	lobby_settings.run_id = _run_id_counter
+	_run_acks = {}
+	ModLoaderLog.info("Run %d built: %s" % [_run_id_counter, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
+
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_run_state", _run_id_counter, run_state, digest)
+	_broadcast_lobby_state(true)
+	emit_signal("run_sync_changed")
+	return OK
+
+
+# {state: "none" | "pending" | "synced" | "failed", names: [...]} for the lobby's status line.
+# Host: names are the clients still pending or with a different run. Client: no names.
+func get_run_sync_status() -> Dictionary:
+	var run_id: int = lobby_settings.get("run_id", 0)
+	if run_id == 0:
+		return {"state": "none", "names": []}
+	if is_client:
+		if _received_run_id != run_id:
+			return {"state": "pending", "names": []}
+		return {"state": "synced" if _received_run_ok else "failed", "names": []}
+
+	var pending: = []
+	var failed: = []
+	for entry in _get_connected_clients():
+		if not _run_acks.has(entry.peer_id):
+			pending.append(entry.name)
+		elif not _run_acks[entry.peer_id]:
+			failed.append(entry.name)
+	if not failed.empty():
+		return {"state": "failed", "names": failed}
+	if not pending.empty():
+		return {"state": "pending", "names": pending}
+	return {"state": "synced", "names": []}
+
+
 func get_player(player_index: int):
 	for entry in players:
 		if entry.player_index == player_index:
@@ -303,6 +364,38 @@ remote func _rpc_rejected(reason) -> void :
 	call_deferred("_end_session", str(reason))
 
 
+remote func _rpc_run_state(run_id, state, digest) -> void :
+	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+		return
+	if typeof(run_id) != TYPE_INT or typeof(state) != TYPE_STRING or typeof(digest) != TYPE_STRING:
+		return
+	run_state = state
+	_received_run_id = run_id
+	_run_data_replaced = true
+	_received_run_ok = RunBuilder.apply_run(state) and RunBuilder.digest() == digest
+	if _received_run_ok:
+		ModLoaderLog.info("Run %d received and verified" % run_id, NetProtocol.MOD_ID)
+	else:
+		ModLoaderLog.warning("Run %d differs from the host's: %s" % [run_id, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
+	rpc_id(HOST_PEER_ID, "_rpc_run_state_ack", run_id, _received_run_ok)
+	emit_signal("run_sync_changed")
+
+
+
+# RPCs: client -> host (run sync)
+
+remote func _rpc_run_state_ack(run_id, ok) -> void :
+	if not is_host or typeof(run_id) != TYPE_INT or typeof(ok) != TYPE_BOOL:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry == null or run_id != lobby_settings.get("run_id", 0):
+		return
+	_run_acks[entry.peer_id] = ok
+	if not ok:
+		ModLoaderLog.warning("%s has a different run" % entry.name, NetProtocol.MOD_ID)
+	emit_signal("run_sync_changed")
+
+
 remote func _rpc_lobby_state(new_players, new_settings) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
@@ -319,14 +412,28 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 
 # Internals
 
-func _broadcast_lobby_state() -> void :
+# Every lobby change makes a built run stale, unless keep_run (start_run itself).
+func _broadcast_lobby_state(keep_run: bool = false) -> void :
 	if not is_host:
 		return
+	if not keep_run and lobby_settings.get("run_id", 0) != 0:
+		lobby_settings.run_id = 0
+		run_state = ""
+		_run_acks = {}
+		emit_signal("run_sync_changed")
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_lobby_state", players, lobby_settings)
+	emit_signal("lobby_changed")
+
+
+# Lobby entries of clients whose peer is connected right now.
+func _get_connected_clients() -> Array:
+	var result: = []
 	var connected_peers: = get_tree().get_network_connected_peers()
 	for entry in players:
 		if entry.peer_id != HOST_PEER_ID and entry.connected and connected_peers.has(entry.peer_id):
-			rpc_id(entry.peer_id, "_rpc_lobby_state", players, lobby_settings)
-	emit_signal("lobby_changed")
+			result.append(entry)
+	return result
 
 
 # Applies the editable keys in order (character, weapon, ready), dropping invalid values.
@@ -430,6 +537,14 @@ func _end_session(reason: String) -> void :
 
 	_restore_own_unlocks()
 	_set_saves_blocked(false)
+	if _run_data_replaced:
+		# A synced run replaced RunData; don't leave it behind for the menus.
+		RunData.reset()
+		_run_data_replaced = false
+	run_state = ""
+	_received_run_id = 0
+	_received_run_ok = false
+	_run_acks = {}
 
 	active = false
 	is_host = false
