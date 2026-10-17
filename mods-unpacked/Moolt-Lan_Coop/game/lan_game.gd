@@ -11,8 +11,21 @@ const MAX_PLAYERS: = NetProtocol.MAX_PLAYERS
 
 
 static func in_session() -> bool:
-	var lan_net = Engine.get_main_loop().root.get_node_or_null("LanNet")
+	var lan_net = get_lan_net()
 	return lan_net != null and lan_net.active
+
+
+static func get_lan_net() -> Node:
+	return Engine.get_main_loop().root.get_node_or_null("LanNet")
+
+
+# The lobby name of a player, "" outside a session.
+static func get_player_name(player_index: int) -> String:
+	var lan_net = get_lan_net()
+	if lan_net == null or not lan_net.active:
+		return ""
+	var entry = lan_net.get_player(player_index)
+	return entry.name if entry != null else ""
 
 
 # Appends value until the array has MAX_PLAYERS slots. Arrays and dictionaries are copied per slot.

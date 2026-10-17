@@ -5,7 +5,9 @@ extends "res://main.gd"
 #   4-slot array, so it has a copy for more than 4 players.
 # - main.tscn has HUD nodes for P1-P4 only. In a session, _enter_tree copies the P4 sets as
 #   P5-P12 before vanilla's _ready looks them up by unique name. Only the local player's screen
-#   HUD is shown (P1 slot); Step 4c lists the others.
+#   HUD is shown (P1 slot).
+# - Other players get their name over their head, in their colour, above the vanilla over-head
+#   health bar, which stays visible for them even at full HP. Dead players' names turn grey.
 # - The coop UpgradesUI has 4 player containers and fails in _ready with more players. It is
 #   never shown in a session (see _on_EndWaveTimer_timeout), so it is marked non-coop, which
 #   makes its _ready return early.
@@ -15,7 +17,16 @@ extends "res://main.gd"
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
+const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+
 const VANILLA_HUD_SLOTS: = 4
+const NAME_LABEL_NAME: = "LanNameLabel"
+const NAME_FONT_SIZE: = 22
+const NAME_OUTLINE_SIZE: = 2
+const NAME_DEAD_COLOR: = Color(0.55, 0.55, 0.55)
+# Box of the name label, relative to the over-head bar container. The bar itself spans
+# (-32, -72) to (32, -56) in main.tscn; the name sits right above it.
+const NAME_RECT: = Rect2(-150, -106, 300, 32)
 # Unique node name of each P4 node set and the suffix that holds the player number.
 const HUD_TEMPLATES: = [
 	["LifeContainerP4", "P4", "P"],
@@ -83,6 +94,51 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void :
 	for i in range(1, _players_ui.size()):
 		_players_ui[i].hud_container.hide()
 		_things_to_process_player_containers[i].hide()
+
+	var font: DynamicFont = NAME_FONT.duplicate()
+	font.size = NAME_FONT_SIZE
+	font.outline_size = NAME_OUTLINE_SIZE
+	for i in _players_ui.size():
+		if not _lan_is_local_player(i):
+			_lan_add_name_label(_players_ui[i].player_life_bar_container, i, font)
+
+
+func _lan_add_name_label(container: Node, player_index: int, font: DynamicFont) -> void :
+	var label: = Label.new()
+	label.name = NAME_LABEL_NAME
+	label.set_message_translation(false)
+	label.text = LanGame.get_player_name(player_index)
+	label.align = Label.ALIGN_CENTER
+	label.valign = Label.VALIGN_BOTTOM
+	label.clip_text = true
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.rect_position = NAME_RECT.position
+	label.rect_size = NAME_RECT.size
+	label.add_font_override("font", font)
+	label.add_color_override("font_color", CoopService.get_player_color(player_index))
+	container.add_child(label)
+
+
+func _lan_is_local_player(player_index: int) -> bool:
+	return player_index == LanGame.get_lan_net().local_player_index
+
+
+# Other players' over-head bars stay visible at full HP (vanilla: only below max, if the
+# hp_bar_on_character option is on). The local player's bar follows the option.
+func _on_player_health_updated(player: Player, current_val: int, max_val: int) -> void :
+	._on_player_health_updated(player, current_val, max_val)
+	if not LanGame.in_session() or player.dead or _lan_is_local_player(player.player_index):
+		return
+	var player_life_bar = _players_ui[player.player_index].player_life_bar
+	player_life_bar.show()
+	player_life_bar.update_value(current_val, max_val)
+
+
+func _on_player_died(p_player: Player, _args: Entity.DieArgs) -> void :
+	._on_player_died(p_player, _args)
+	var label = _players_ui[p_player.player_index].player_life_bar_container.get_node_or_null(NAME_LABEL_NAME)
+	if label != null:
+		label.add_color_override("font_color", NAME_DEAD_COLOR)
 
 
 func on_gold_picked_up(gold: Node, player_index: int) -> void :

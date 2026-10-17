@@ -280,6 +280,15 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - **Dead players:** bar hidden, name greyed out (players stay dead until the wave ends).
   - **Test:** 12 slots via the test driver. Names readable and coloured, bars visible at full HP, a dead player's name greyed.
 
+**4c status: done.**
+- **Implementation** (in the `main.gd` extension):
+  - **Labels:** `_on_EntitySpawner_players_spawned` adds a `LanNameLabel` to each non-local player's `PlayerLifeBarContainerP*`. The font is a copy of `font_smallest_text` at size 22 with a 2 px outline; the label box is `Rect2(-150, -106, 300, 32)`, bottom-aligned above the bar. Because `WorldUI` is a `CanvasLayer`, names keep their pixel size when the camera zooms out.
+  - **Health bars:** `_on_player_health_updated` calls vanilla, then shows the bar for non-local, living players.
+  - **Death:** `_on_player_died` greys the name.
+  - **Lookups:** `LanGame.get_lan_net()` and `get_player_name(i)`; the local player is `LanNet.local_player_index`.
+- **Palette fix:** the 8 extra colours are now `[hue, value]` pairs built with `Color.from_hsv(h, 0.3, v)`. `get_player_color` adds 0.5 saturation, so the old near-white entries turned into near-duplicates of vanilla's colours (two reds from the "grey"). They now end at about 0.8 saturation, like vanilla's: blue, pink, purple, red, spring green, magenta, azure, brown.
+- **Tested:** 12 slots with the test driver. 11 coloured names over the others with visible bars at full HP. Killing a fake player hides its bar and greys its name. No `ERROR:`.
+
 ## Step 5: Arena size and enemy scaling
 - **Arena.** Extend `singletons/zone_service.gd` `set_current_zone(zone)`. In net mode, before calling `.set_current_zone(zone)`, scale `zone.width/height` by `sqrt(1 + 0.25*(n-1))` (default; configurable). That is about 1.94× linear at 12 players. `main.gd:159-161` passes the same object to the tile map, the map limits and the wave manager, so all of them pick it up.
   - The camera `_max_zoom` follows the bounds automatically.
