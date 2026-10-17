@@ -20,7 +20,7 @@ Decisions already made:
 Core architecture (from exploration):
 - **Host-authoritative state sync.** Lockstep is not possible: RNG is spread over 250+ call sites using global `randf`/`rand_range`, and physics is RigidBody2D.
 - **The host runs the real game as a vanilla coop run with N players.**
-- **Clients run `main.tscn` in "puppet mode".** They send their inputs and render snapshots.
+- **Clients run `main.tscn` in "puppet mode".** Each machine moves its own player and sends its position; everything else is rendered from host snapshots and events.
 - **Between waves, every peer runs the *solo* upgrade/shop UI on a 1-player RunData.** It then sends its `PlayerRunData` back to the host. This avoids the coop UIs, which are hardcoded to 4 slots.
 
 ---
@@ -53,9 +53,8 @@ Content comes from the three exploration reports, checked against the source as 
 ```
 net/net_manager.gd     # /root/LanNet: ENet peer, peers, lobby state, RPCs, session flags (is_host/is_client/active)
 net/net_protocol.gd    # message ids, version handshake, StreamPeerBuffer pack/unpack helpers
-net/net_input.gd       # per-player latest input (move Vector2, aim Vector2, aim_mode) on host; local sampling on client
-net/host_sync.gd       # child of main on host: assigns net ids, builds snapshots (20 Hz) + events
-net/client_sync.gd     # child of main on client: applies snapshots, spawns/updates/frees puppets, interpolation
+net/wave_sync.gd       # child of main in a session: host drives remote players and sends snapshots (20 Hz) + events;
+                       # client sends its own player's state, applies snapshots, interpolates puppets
 net/net_config.gd      # user://lan_coop.cfg: last name, last IP, port, scaling knobs
 net/net_discovery.gd   # /root/LanNet/Discovery: host UDP beacon, client listener for the join page
 net/net_translations.gd # runtime Translations (en + de) for the mod's keys
@@ -96,7 +95,7 @@ extensions/...                 # mirrored vanilla paths (below)
 - **Player indices** are compacted when someone leaves the lobby. During a run (`run_in_progress`) the slot is kept with `connected = false` and `player_disconnected` fires; Steps 6 and 7 hook into that.
 - **Security/robustness:** `server_relay` is off, every RPC checks the sender id and argument types, and peers that don't send a hello within 5 s are kicked. Rejected clients get the reason, then are kicked after 0.5 s.
 - **ENet pitfall:** ENet calls `close_connection()` itself right after `server_disconnected` / `connection_failed`, so cleanup runs deferred and the close is guarded by connection status. Closing twice logs an engine `ERROR:`.
-- `net_input.gd`, `host_sync.gd` and `client_sync.gd` belong to Step 6 and don't exist yet.
+- The in-wave sync is one file, `net/wave_sync.gd` (Step 6a), instead of `net_input.gd` / `host_sync.gd` / `client_sync.gd`.
 
 ## Step 2: Main menu entry, host/join pages, LAN discovery
 **Status: done** (reworked once after manual testing: separate host/join flow, digit pad removed, discovery added).
@@ -317,42 +316,40 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Tested:** host + client + 10 fake players, Danger 3, `nb_enemies_mult` 6, invulnerable players, 40 s wave (driver). Arena 41×31 tiles (21×16 after an "Old" character, × 1.94), HP factor 3.92 at Danger 3, damage 2.11. 160 enemies plus 100–170 queued (the spawn queue limits the rate, so the 375 cap was never hit) at about 300 FPS uncapped. After the host player dies, the camera zooms out to 1.37 over the other 11. No `ERROR:`. Vanilla solo wave unchanged.
 
 ## Step 6: In-wave sync
-**Host** (extensions + `host_sync.gd`):
-- **Remote input.**
-  - Extend `entities/units/movement_behaviors/player_movement_behavior.gd` `get_movement()`:
-    - remote player: return `LanNet.input.get_move(player_index)`
-    - host's local player: use the unsuffixed solo actions, so both keyboard and gamepad work
-  - Extend `utils.gd` `get_player_rjoy_vector(i)` and `is_manual_aim` the same way for aim.
-- **Net ids.** Extend `entity_spawner.gd` `spawn_entity` and `main.gd` `spawn_gold`/`spawn_consumables`/`add_player_projectile`/`add_enemy_projectile` to assign `net_id`. Nodes are pooled, so ids are assigned on each (re)spawn.
-- **Snapshot.** 20 Hz, unreliable_ordered, packed with `StreamPeerBuffer`. Contents:
-  - wave `time_left`
-  - per player: pos, flip, hp/max, gold, xp, level, dead
-  - per enemy/neutral/structure/pet: id, type index, pos (int16), flip, hp ratio
-- **Reliable events.**
-  - entity spawn (scene path index) and death (`DieArgs` essentials)
-  - projectile spawn (scene, pos, velocity, rotation; enemy and player)
-  - gold/consumable spawn and pickup
-  - `took_damage` (for floating text)
-  - explosions
-  - wave end / run won / run lost
-- **Pause.** Extend `ui/menus/ingame/pause_menu.gd` so `pause()` shows the menu without `get_tree().paused`. Disable `pause_on_focus_lost` while a session is active.
+**Movement authority (decided before 6a).** Each machine moves its own player; the host decides everything else. Rendering the own player from 20 Hz snapshots would delay one's own movement by about 60–120 ms (snapshot interval, interpolation, round trip), and removing that later would need client-side prediction (numbered inputs, rewind and replay). In LAN co-op a client faking its position doesn't matter.
+- **Client, own player:** a normal vanilla `Player` driven by the local keyboard/gamepad, so speed, the arena clamp and animations work as in solo play. About 30 Hz unreliable it sends `{pos, move, aim, manual_aim}` to the host. It decides nothing else: hurtbox, pickup area, weapon firing and HP regen are off; HP, death, gold and XP come from the host.
+- **Host, remote players:** kinematic mode, moved to the latest reported position. `get_movement()` returns the reported direction, so the walk animation and moving/not-moving item effects work. Everything else stays vanilla on the host: enemies target them there, their hurtbox takes damage, they pick things up, their weapons fire from there.
+- **Snapshots** carry every player's position; a client ignores its own.
+- **Speed during a wave** (temp buffs, `decaying_bonus_speed`, slows) changes on the host. The snapshot carries each player's current speed and the client moves at it.
+- **Death** is decided by the host: when the snapshot says dead, the client's player dies and stops taking input.
+- **Host-side moves of a player** (if any effect does that) must be sent to that client, or it snaps back. Check for them in 6a.
+- **Timing:** the host sees a client's position 1–5 ms late; enemies on a client run 50–100 ms behind (interpolation). A last-moment dodge can occasionally count differently from what the client saw.
 
-**Client** (`client_sync.gd` + extensions):
-- **Players.** Run vanilla `main._ready`, which spawns the N real players from the synced RunData, so weapons and visuals are correct. Right after, call `_wave_manager.set_physics_process(false)` and `_entity_spawner.set_physics_process(false)`.
-- **Player puppets.**
-  - Set every player body to kinematic mode and drive its position from snapshots (lerp toward the latest).
-  - Turn off hurtboxes and pickup areas.
-  - Extend `weapons/weapon.gd` `should_shoot()` to return false on clients. Projectiles come from host events.
-- **Enemies.**
-  - Instance them through `EntitySpawner.spawn_entity` with the same scene.
-  - Then disable `set_physics_process`, set kinematic mode, and turn off hitboxes.
-  - Drive position from snapshots.
-  - On the death event, call `die()`.
-- **Projectiles.** Spawn from events through the existing pools, with hitboxes disabled. They fly locally and are freed on hit events or timeout.
-- **Pickups and wave state.**
-  - Spawn and remove pickups from events. Extend `items/global/item.gd` `pickup()` to do nothing on clients.
-  - Override the wave timer from snapshot `time_left`.
-- **Local input.** Send `{move, aim, manual_aim}` every physics frame (unreliable). The local player is rendered from snapshots. On a LAN (<5 ms) this is fine; client-side prediction is optional polish later.
+**Increments.** Each is tested in two windows (driver plus manual test), then committed.
+- **6a: players in the wave (Milestone 3).**
+  - Start loads `main.tscn` on every peer from the synced run (replaces the 4a test wave and its lobby hint).
+  - Clients: `_wave_manager` and `_entity_spawner` spawn no enemies (players only). Own player as above; other players are puppets (physics off, position interpolated between snapshots, animation and flip from the reported movement).
+  - Host: remote players driven by the reported state; snapshot at 20 Hz (unreliable_ordered, `StreamPeerBuffer`): wave `time_left`, per player pos, move, speed, hp/max, dead. Enemies exist only on the host for now.
+  - Wave end: the host sends a reliable event and every peer returns to the lobby (temporary until Step 7).
+**6a status: done.**
+- **Entering:** `_enter_wave_if_synced` sends `_rpc_enter_wave(run_id)` to every client, which checks the run id against its verified run, fills `CoopService.connected_players` (own device, others -1) and loads `main.tscn`. `PROTOCOL_VERSION` 6.
+- **`net/wave_sync.gd`** (`LanWaveSync`, added by the `main.gd` extension's `_ready`, after vanilla's): holds both roles. RPCs live on `LanNet` (`_rpc_snapshot`, `_rpc_player_state`, `_rpc_wave_cleanup`), which forwards them to `LanNet.wave_sync`.
+  - Client → host every physics frame (unreliable): `pos, move, aim, manual_aim`. The host applies the latest each physics frame (clamped to the arena). Sending every frame instead of 30 Hz avoids choppy remote players on the host without host-side interpolation.
+  - Host → clients every 3 physics frames (20 Hz, unreliable, `StreamPeerBuffer`, 13 + 23 bytes per player): seq, host msec, `time_left`, per player pos, move (int8), `get_move_speed()`, hp, max hp, dead flag.
+  - Client puppets: physics off, positioned 100 ms in the past between the two snapshots around that time (clock offset tracked from the smallest delay seen), `update_animation(move)` for walk animation and flip.
+- **`extensions/entities/units/player/player.gd`:** `lan_net_driven` (host, remote: `get_movement()` returns the reported move, `get_next_velocity()` is zero, since players are kinematic bodies the position is just set), `lan_move_speed` (client: host's speed), `lan_no_regen` (client).
+- **Client own player:** hurtbox, pickup and attract areas off, no regen; HP and death from snapshots (`health_updated` is emitted so the HUD follows). Wave manager and entity spawner physics are off (no enemies, structures or pets); bullet hell nodes are freed.
+- **HUD on clients:** the own `LifeContainerP*` takes P1's anchors and margins, and the own things-to-process container moves into P1's slot.
+- **Aim:** `Utils.is_manual_aim` returns the reported flag for remote players on the host; `gamepad_attack_vector` is set from the reported aim. (`is_manual_aim` returns null, not false, when manual aim is off.)
+- **Wave end:** the client ignores its own `WaveTimer` timeout. The host's `clean_up_room` sends `_rpc_wave_cleanup`; the client runs `clean_up_room` once (that event or vanilla's all-dead check, whichever is first), then its `EndWaveTimer` returns it to the lobby. A client in `main.tscn` also returns when a lobby broadcast says `in_wave` is false (host quit).
+- **Focus:** losing window focus doesn't pause in a session.
+- **Lobby hint** for a client that left the wave: "A wave is in progress. You are back in when it ends."
+- **Tested:** host + client (+1 and +10 fake players), 20 s wave. Client movement shows on the host (1196 → 1871 on both), host movement and both deaths show on the client, the client's camera spectates after its death, both return to the lobby, client HUD shows its own HP and gold colour. No `ERROR:`. Vanilla solo wave unchanged.
+- **Known gaps** (later increments): the host starts the wave without waiting for clients to load (the client's timer resyncs; 6d); a client quitting from its pause menu leaves its player standing on the host (6d); pause only pauses the own machine (6d); the ground texture and decorations are rolled per machine, so backgrounds differ (sync the background in 6b or polish); client-side `RunData` changes during the wave (e.g. random stat rolls at wave start) diverge, which Step 7's state broadcast overwrites.
+
+- **6b: enemies, trees, structures and pets on clients.** Net ids assigned on each (re)spawn (`entity_spawner.gd` `spawn_entity`; nodes are pooled). Reliable spawn (scene index) and death (`DieArgs` essentials) events; snapshot: id, pos (int16), flip, hp ratio. Clients instance through `EntitySpawner.spawn_entity`, then disable physics, set kinematic, turn off hitboxes, interpolate, and call `die()` on the death event.
+- **6c: combat visuals.** Weapon rotation and swings (melee animations), player and enemy projectiles (scene, pos, velocity, rotation; spawned through the pools with hitboxes off, freed on hit events or timeout), `took_damage` floating text, explosions. Extend `weapons/weapon.gd` `should_shoot()` to return false on clients.
+- **6d: the rest of the wave.** Gold and consumables (spawn and pickup events; `items/global/item.gd` `pickup()` does nothing on clients), gold/XP/level in the HUD, pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` off in a session), players dropping out mid-wave, run won/lost events.
 
 ## Step 7: Between-wave flow (upgrades and shop per machine)
 1. **Host, at wave end.** Extend `main.gd` `_on_EndWaveTimer_timeout`. In net mode, do **not** show `_coop_upgrades_ui`. Run `RunData.on_wave_end()`, then broadcast `wave_end` together with the full run state, including each player's `_upgrades_to_process` and `_consumables_to_process`.
@@ -376,21 +373,22 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
 - Spawn rate: `EntitySpawner` releases queued enemies at a fixed rate (1, or 2 with 110+ queued, every 3 physics frames, so 20–40/s), whatever the player count. Measure 12 slots at a late wave (15–20) with the normal multiplier: queue length and enemies alive. If the queue limits the count, release `ceil(n / 4)` per tick before raising enemy HP; watch host CPU and snapshot size.
+- Mouse aim for keyboard players: vanilla coop disables it (`Utils.is_manual_aim`), but in a session every player has their own mouse. Allow it for the local player, and send the aim direction to the host (6a already sends `aim`/`manual_aim`).
 - Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option). Make the duration a config knob, with 0 = off.
 
 ---
 
 ## Milestones
-Status: 1 and 2 are done. Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) are done, ahead of milestone 6. Next is Step 6 for milestone 3.
+Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) are done, ahead of milestone 6. Next is Step 6b.
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
-3. **Sync.** Synced run start, then the host simulates and clients puppet players only, with no enemies.
+3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
 4. **Full wave.** Enemies, projectiles, pickups, and wave end.
 5. **Between waves.** Per-machine upgrades/shop and merge, so the loop runs for multiple waves.
 6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
 **Still to come:** `weapons/weapon.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
 
@@ -422,7 +420,7 @@ Status: 1 and 2 are done. Steps 4 (12 players in a wave, names over heads) and 5
   - **Manual test by the user.** Two windows: `--resolution 1280x720 --position 0,0` and `--position 1280,0`, with no role argument (the driver stays idle), started with `nohup`. Commit only after the user approves.
 - **Per milestone:**
   - M2: names, characters and ready flags show up on every instance. Start is disabled until all players are ready.
-  - M3/M4: client movement is visible on the host and the other way round. Enemies, hits, deaths and gold match. Killing the client process mid-wave doesn't crash the host.
+  - M3/M4: client movement is visible on the host and the other way round, with no delay on one's own player. Enemies, hits, deaths and gold match. Killing the client process mid-wave doesn't crash the host.
   - M5: shops on different machines finish in any order. Bought items persist into the next wave on all peers (compare `RunData` dumps).
   - M6: use debug devices or headless dummy clients that send scripted random input to fill 12 slots. Check FPS and bandwidth with about 300 enemies, check the arena scales, and check spawn counts against the formula.
 - **Also test** keyboard-only and gamepad-only on both host and client, including menu and lobby navigation.

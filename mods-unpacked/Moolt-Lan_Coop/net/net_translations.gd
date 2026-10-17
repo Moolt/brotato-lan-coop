@@ -52,7 +52,7 @@ const STRINGS: = {
 		"LAN_RUN_RECEIVING": "Receiving the run...", 
 		"LAN_RUN_FAILED": "The run differs for {0} (see log).", 
 		"LAN_RUN_FAILED_CLIENT": "Your run differs from the host's (see log).", 
-		"LAN_HINT_HOST_IN_WAVE": "The host is playing a test wave. Joining the wave comes later.", 
+		"LAN_HINT_HOST_IN_WAVE": "A wave is in progress. You are back in when it ends.", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -103,7 +103,7 @@ const STRINGS: = {
 		"LAN_RUN_RECEIVING": "Empfange die Runde...", 
 		"LAN_RUN_FAILED": "Die Runde weicht ab bei {0} (siehe Log).", 
 		"LAN_RUN_FAILED_CLIENT": "Deine Runde weicht von der des Hosts ab (siehe Log).", 
-		"LAN_HINT_HOST_IN_WAVE": "Der Host spielt eine Testwelle. Mitspielen kommt später.", 
+		"LAN_HINT_HOST_IN_WAVE": "Eine Welle läuft gerade. Wenn sie endet, bist du wieder dabei.", 
 	}, 
 }
 

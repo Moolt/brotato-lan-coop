@@ -19,6 +19,8 @@
 
 ### Player
 - `player_index`.
+- `player.tscn` sets `mode = 3` (`MODE_KINEMATIC`): `Unit._physics_process` moves it with `test_motion`, and `_integrate_forces` copies `global_position` into the body state. Setting `global_position` directly therefore moves a player (the LAN mod does this for remote players).
+- `_physics_process` only runs HP regeneration (`_health_regen_timer` → `on_health_regen`). Movement and animation come from `Unit._physics_process` (`get_movement()` → `update_animation`, `get_next_velocity()`); `get_move_speed()` is `current_stats.speed + bonus_speed + decaying_bonus_speed`.
 - `_movement_behavior` is a `PlayerMovementBehavior` (see coop-and-input.md).
 - `gamepad_attack_vector` is used for manual aim.
 - Pickups: `_on_ItemPickupArea_area_entered` calls `area.pickup(player_index)`.

@@ -18,6 +18,10 @@
 - Sets starting HP.
 - Connects `health_updated`, `healed`, `died`, `took_damage`, `wanted_to_spawn_gold`.
 
+## HUD layout
+- `LifeContainerP1..P4` are `VBoxContainer`s directly under `UI/HUD`, placed by anchors and margins at the four screen corners (P1 top left, P2 top right, P3 bottom left, P4 bottom right). `PlayerUIElements.set_hud_position(i)` only sets size flags and the gold row order for that corner.
+- `UIThingsToProcessPlayerContainer1..4` sit in `UI/HUD/ThingsToProcessMarginContainer/VBoxContainer/HBoxContainer` (1, 2) and `HBoxContainer2` (3, 4).
+
 ## Timers (`main.tscn`)
 - `WaveTimer` (`ui/hud/wave_timer.gd`) has child timers `TickTimer` (ticks under 6 s) and `HalfWaveTimer`.
 - `WaveManager` polls `wave_timer.time_left` itself.
@@ -47,7 +51,7 @@
 - `_pause_menu = $UI/PauseMenu` (`ui/menus/ingame/pause_menu.gd`).
   - `pause(player_index)` sets `get_tree().paused = true` and shows the menu. `unpause()` undoes it.
   - `enabled` turns the menu on or off.
-  - `on_game_lost_focus()` pauses if `ProgressData.settings.pause_on_focus_lost` is set.
+  - `on_game_lost_focus()` pauses if `ProgressData.settings.pause_on_focus_lost` is set. `main.gd` connects `InputService.game_lost_focus` to its own `_on_game_lost_focus` (~L1706), which the LAN mod skips in a session.
 - PauseMenu, Camera and StatsManager have `pause_mode = 2`, so they keep processing while paused.
 - The shop pauses through `base_shop.gd` `_input`. Its `on_paused` saves the run state.
 - Other writers of `get_tree().paused`: bug_reporter, streamplay, run_data (~L1878), menu_confirm, menu_restart.

@@ -5,7 +5,7 @@ extends "res://main.gd"
 #   4-slot array, so it has a copy for more than 4 players.
 # - main.tscn has HUD nodes for P1-P4 only. In a session, _enter_tree copies the P4 sets as
 #   P5-P12 before vanilla's _ready looks them up by unique name. Only the local player's screen
-#   HUD is shown (P1 slot).
+#   HUD is shown, in the P1 slot (top left).
 # - Other players get their name over their head, in their colour, above the vanilla over-head
 #   health bar, which stays visible for them even at full HP. Dead players' names turn grey.
 # - The coop UpgradesUI has 4 player containers and fails in _ready with more players. It is
@@ -17,10 +17,15 @@ extends "res://main.gd"
 #   and the lock_coop_camera option is ignored. Once the local player dies, the camera follows
 #   the players still alive.
 # - Remote players have device -1 (see LanNet._fill_coop_players), so the pause check skips them.
+# - LanWaveSync (net/wave_sync.gd) syncs the wave. On clients the own wave timer doesn't end the
+#   wave; the host's cleanup event does. clean_up_room runs once there, whether that event or
+#   vanilla's all-players-dead check (deaths come from the host too) comes first.
+# - Losing window focus doesn't pause in a session (the others keep playing).
 # - Temporary until Step 7: the end of a wave goes back to the title screen (and its lobby)
 #   instead of the coop upgrade UI and shop, which only have 4 slots.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
+const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
 
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 
@@ -57,6 +62,12 @@ func _enter_tree() -> void :
 		var original: Node = get_node("%" + template[0])
 		for player_index in range(VANILLA_HUD_SLOTS, LanGame.MAX_PLAYERS):
 			_add_hud_copy(original, template[1], template[2] + str(player_index + 1))
+
+
+# Runs after vanilla's _ready, so the players exist.
+func _ready() -> void :
+	if LanGame.in_session():
+		add_child(WaveSync.new())
 
 
 # Copies a HUD node set with the player number in its names. Names are changed before the owner
@@ -97,11 +108,14 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void :
 	._on_EntitySpawner_players_spawned(players)
 	if not LanGame.in_session():
 		return
-	for i in range(1, _players_ui.size()):
-		_players_ui[i].hud_container.hide()
-		_things_to_process_player_containers[i].hide()
-
 	var local_player_index: int = LanGame.get_lan_net().local_player_index
+	for i in _players_ui.size():
+		if i != local_player_index:
+			_players_ui[i].hud_container.hide()
+			_things_to_process_player_containers[i].hide()
+
+	if local_player_index > 0 and local_player_index < players.size():
+		_lan_move_hud_to_first_slot(local_player_index)
 	if local_player_index >= 0 and local_player_index < players.size():
 		_camera.targets = [players[local_player_index]]
 		_camera._is_snapped = true
@@ -112,6 +126,26 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void :
 	for i in _players_ui.size():
 		if not _lan_is_local_player(i):
 			_lan_add_name_label(_players_ui[i].player_life_bar_container, i, font)
+
+
+# Clients: the own HUD takes the top-left corner and the first things-to-process slot, where
+# the host's HUD sits on the host.
+func _lan_move_hud_to_first_slot(player_index: int) -> void :
+	var hud: Control = _players_ui[player_index].hud_container
+	var first_hud: Control = _players_ui[0].hud_container
+	for property in ["anchor_left", "anchor_top", "anchor_right", "anchor_bottom", "margin_left", "margin_top", "margin_right", "margin_bottom", "grow_horizontal", "grow_vertical"]:
+		hud.set(property, first_hud.get(property))
+	_players_ui[player_index].set_hud_position(0)
+
+	var things: Control = _things_to_process_player_containers[player_index]
+	var first_things: Control = _things_to_process_player_containers[0]
+	things.horizontal_alignment = first_things.horizontal_alignment
+	things.vertical_alignment = first_things.vertical_alignment
+	var parent: Node = first_things.get_parent()
+	if things.get_parent() != parent:
+		things.get_parent().remove_child(things)
+		parent.add_child(things)
+	parent.move_child(things, first_things.get_index())
 
 
 func _lan_add_name_label(container: Node, player_index: int, font: DynamicFont) -> void :
@@ -260,6 +294,40 @@ func _check_for_pause() -> void :
 		if remapped_device >= 0 and Input.is_action_just_released("ui_pause_%s" % remapped_device):
 			_pause_menu.pause(player_index)
 			break
+
+
+func _on_WaveTimer_timeout() -> void :
+	if _lan_is_client():
+		return
+	._on_WaveTimer_timeout()
+
+
+func clean_up_room() -> void :
+	if LanGame.in_session():
+		if _lan_is_client() and _cleaning_up:
+			return
+		if LanGame.get_lan_net().is_host:
+			LanGame.get_lan_net().send_wave_cleanup()
+	.clean_up_room()
+
+
+# Client: the host's wave ended (the timer ran out or everyone died).
+func lan_clean_up_from_host() -> void :
+	if _cleaning_up:
+		return
+	_wave_timer.stop()
+	clean_up_room()
+
+
+func _lan_is_client() -> bool:
+	var lan_net = LanGame.get_lan_net()
+	return lan_net != null and lan_net.active and lan_net.is_client
+
+
+func _on_game_lost_focus() -> void :
+	if LanGame.in_session():
+		return
+	._on_game_lost_focus()
 
 
 func _on_EndWaveTimer_timeout() -> void :

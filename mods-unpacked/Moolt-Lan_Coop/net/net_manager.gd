@@ -56,6 +56,10 @@ var _start_requested: = false
 # True once a built or received run replaced RunData (reset when the session ends).
 var _run_data_replaced: = false
 
+# The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
+# In-wave RPCs are forwarded to it.
+var wave_sync: Node = null
+
 
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
@@ -425,6 +429,65 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 	if me != null:
 		local_player_index = me.player_index
 	emit_signal("lobby_changed")
+	# The host is back in the lobby (wave over, or it quit): follow it.
+	if not lobby_settings.get("in_wave", false) and _is_in_wave_scene():
+		var _e = get_tree().change_scene(MenuData.title_screen_scene)
+
+
+# Host -> client: the run every client acked is starting.
+remote func _rpc_enter_wave(run_id) -> void :
+	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+		return
+	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or not _received_run_ok or _is_in_wave_scene():
+		return
+	_fill_coop_players()
+	ModLoaderLog.info("Run %d: loading the wave" % run_id, NetProtocol.MOD_ID)
+	var _e = get_tree().change_scene(MenuData.game_scene)
+
+
+remote func _rpc_snapshot(data) -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(data) != TYPE_RAW_ARRAY:
+		return
+	if wave_sync != null:
+		wave_sync.on_snapshot(data)
+
+
+remote func _rpc_wave_cleanup() -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+		return
+	if wave_sync != null:
+		wave_sync.on_wave_cleanup()
+
+
+
+# RPCs: client -> host (in-wave)
+
+remote func _rpc_player_state(pos, move, aim, manual_aim) -> void :
+	if not is_host or wave_sync == null:
+		return
+	if typeof(pos) != TYPE_VECTOR2 or typeof(move) != TYPE_VECTOR2 or typeof(aim) != TYPE_VECTOR2 or typeof(manual_aim) != TYPE_BOOL:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry != null:
+		wave_sync.on_player_state(entry.player_index, pos, move, aim, manual_aim)
+
+
+
+# In-wave sending (called by LanWaveSync)
+
+func send_snapshot(data: PoolByteArray) -> void :
+	for entry in _get_connected_clients():
+		rpc_unreliable_id(entry.peer_id, "_rpc_snapshot", data)
+
+
+func send_wave_cleanup() -> void :
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_wave_cleanup")
+
+
+func send_player_state(pos: Vector2, move: Vector2, aim: Vector2, manual_aim: bool) -> void :
+	if is_client and joined:
+		rpc_unreliable_id(HOST_PEER_ID, "_rpc_player_state", pos, move, aim, manual_aim)
 
 
 
@@ -499,21 +562,28 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 	return changed
 
 
-# Host, temporary until clients get an in-wave view (Step 6): once every client holds the run,
-# the host alone plays the wave while the clients wait in the lobby.
+# Host: once every client holds the run, everyone loads the wave.
 func _enter_wave_if_synced() -> void :
 	if not _start_requested or get_run_sync_status().state != "synced":
 		return
 	_start_requested = false
 	set_run_in_progress(true)
 	_fill_coop_players()
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_enter_wave", lobby_settings.run_id)
 	ModLoaderLog.info("Run %d: loading the wave" % lobby_settings.run_id, NetProtocol.MOD_ID)
 	var _e = get_tree().change_scene(MenuData.game_scene)
 
 
+func _is_in_wave_scene() -> bool:
+	var current_scene: = get_tree().current_scene
+	return current_scene != null and current_scene.filename == MenuData.game_scene
+
+
 # CoopService.connected_players: one [device, type] per player, in player_index order.
 # The local player uses the keyboard (7) or the first gamepad (6). Remote players get
-# device -1, which reads no input (see the main.gd and player_movement_behavior.gd extensions).
+# device -1, which reads no input (see the main.gd and player_movement_behavior.gd extensions);
+# their own machine moves them (net/wave_sync.gd).
 func _fill_coop_players() -> void :
 	CoopService.connected_players.clear()
 	for entry in players:

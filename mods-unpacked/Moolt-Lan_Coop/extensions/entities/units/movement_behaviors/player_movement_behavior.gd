@@ -1,7 +1,7 @@
 extends "res://entities/units/movement_behaviors/player_movement_behavior.gd"
 
 # Remote players of a LAN session get device -1 (see LanNet._fill_coop_players), which has no
-# input actions. Until Step 6 feeds their network input, they stand still.
+# input actions. Their own machine moves them (net/wave_sync.gd, the player.gd extension).
 
 
 func get_vector_for_input_prefix(prefix: String) -> Vector2:

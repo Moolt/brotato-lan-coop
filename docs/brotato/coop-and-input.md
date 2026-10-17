@@ -37,7 +37,8 @@
 ## Aim and other per-player input (`singletons/utils.gd`)
 - `is_player_action_pressed/released(event, i, action)` (~L701/710) test `"%s_%s" % [action, device_of(i)]`.
 - `get_player_rjoy_vector(i)` (~L729) is the right-stick aim. `main.gd` `_physics_process` (~L452) uses it to set `player.gamepad_attack_vector`.
-- `is_manual_aim(i)` (~L813) uses `_manual_aim_cache`, which has 4 slots.
+- `is_manual_aim(i)` (~L813) uses `_manual_aim_cache`, which has 4 slots. It returns `null`, not `false`, when no manual-aim setting is on; compare with `== true` before passing it to a typed `bool`.
+- In coop, keyboard players never get manual (mouse) aim: `is_manual_aim` is `not is_coop_run or is_player_using_gamepad(i)`, and the mouse-press check is solo only.
 - Pause: `main.gd` `_check_for_pause` (~L417) polls `ui_pause_<dev>` for each player.
 
 ## FocusEmulator (per-player UI focus in coop menus)

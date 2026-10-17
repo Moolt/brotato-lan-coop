@@ -2,11 +2,11 @@ extends Node
 
 # Test-only driver (not part of the mod, not in the release zip). tools/make_test_copy.sh links it
 # into a throwaway game copy as the LanTestDriver autoload. Role = argument after "--":
-#   host: hosts, picks and readies, adds 10 fake lobby players, starts a 40 s 12-player wave with
-#         $ENEMY_MULT (default 6) times the enemies and invulnerable players, logs arena size,
-#         enemy scaling, enemy counts and FPS, kills the host player to check the spectator
-#         camera, waits for the wave end, leaves
-#   join: joins the first discovered game, picks and readies, logs the lobby hints
+#   host: hosts, picks and readies, adds $FAKES (default 1) fake lobby players, starts a 20 s wave
+#         with invulnerable players, moves left, kills the fake player 2 and then the client's
+#         player 1, logs players/HP/speed/timer, waits for the wave end, leaves
+#   join: joins the first discovered game, picks and readies, enters the wave with the host,
+#         moves right, logs the same, follows the host back to the lobby
 #   solo: builds a 1-player run without a session and plays a vanilla wave
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
@@ -168,6 +168,19 @@ func log_enemies(tag: String) -> void :
 	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " queued=", spawner.queue_to_spawn.size(), " removed_for_perf=", spawner.enemies_removed_for_perf, " fps=", Engine.get_frames_per_second(), " time_left=", main._wave_timer.time_left)
 
 
+func log_sync(tag: String) -> void :
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene:
+		print("[TEST] ", tag, " not in wave, scene=", scene_name())
+		return
+	var out = []
+	for p in main._players:
+		out.append("%d:%s%s hp=%d/%d spd=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed()])
+	var cam = main._camera
+	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " enemies=", main._entity_spawner.enemies.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
+	shot(tag)
+
+
 func _host_step() -> void :
 	var net = get_node("/root/LanNet")
 	var m = menus()
@@ -184,45 +197,39 @@ func _host_step() -> void :
 			pick_and_ready(m.get_node("LanLobby"), 0)
 			next_t = 9.0
 		3:
-			add_fake_players(net, 10)
-			next_t = t + 1.0
+			add_fake_players(net, int(OS.get_environment("FAKES")) if OS.get_environment("FAKES") != "" else 1)
+			next_t = 10.0
 		4:
 			log_lobby("host_before_start")
-			# Stress test: many enemies, and nobody dies from them.
-			DebugService.nb_enemies_mult = float(OS.get_environment("ENEMY_MULT")) if OS.get_environment("ENEMY_MULT") != "" else 6.0
 			DebugService.invulnerable = true
-			DebugService.custom_wave_duration = 40
+			DebugService.custom_wave_duration = 20
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
-			next_t = t + 3.0
+			next_t = 13.0
 		5:
-			log_scaling("host_in_wave")
-			log_camera("host_in_wave")
-			log_hud("host_in_wave")
-			shot("host_in_wave")
-			next_t = t + 8.0
+			log_sync("host_w13")
+			Input.action_press("button_move_left_7")
+			next_t = 14.0
 		6:
-			log_enemies("host_t11")
-			log_camera("host_t11")
-			shot("host_t11")
-			next_t = t + 8.0
+			Input.action_release("button_move_left_7")
+			log_sync("host_w14")
+			next_t = 16.0
 		7:
-			log_enemies("host_t19")
-			get_tree().current_scene._players[0].die()
-			next_t = t + 4.0
+			log_sync("host_w16")
+			next_t = 18.0
 		8:
-			log_camera("host_spectate")
-			log_enemies("host_t23")
-			shot("host_spectate")
-			next_t = t + 8.0
+			get_tree().current_scene._players[2].die()
+			next_t = 20.0
 		9:
-			log_enemies("host_t31")
-			log_camera("host_t31")
-			shot("host_t31")
-			next_t = t + 14.0
+			log_sync("host_w20")
+			get_tree().current_scene._players[1].die()
+			next_t = 23.0
 		10:
+			log_sync("host_w23")
+			next_t = 37.0
+		11:
 			log_lobby("host_after_wave_end")
 			next_t = t + 2.0
-		11:
+		12:
 			net.leave()
 			get_tree().quit()
 
@@ -243,14 +250,25 @@ func _client_step() -> void :
 			next_t = t + 1.5
 		3:
 			pick_and_ready(m.get_node("LanLobby"), 1)
-			next_t = 11.0
+			next_t = 14.0
 		4:
-			log_lobby("client_lobby_12")
-			next_t = 16.0
+			log_sync("client_w14")
+			Input.action_press("button_move_right_7")
+			next_t = 15.5
 		5:
-			log_lobby("client_host_in_wave")
-			next_t = 62.0
+			Input.action_release("button_move_right_7")
+			log_sync("client_w15")
+			next_t = 16.0
 		6:
+			log_sync("client_w16")
+			next_t = 19.0
+		7:
+			log_sync("client_w19")
+			next_t = 23.0
+		8:
+			log_sync("client_w23")
+			next_t = 36.0
+		9:
 			log_lobby("client_end")
 			get_tree().quit()
 
