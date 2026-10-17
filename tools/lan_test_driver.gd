@@ -227,6 +227,16 @@ func log_sync(tag: String) -> void :
 				if w._is_shooting:
 					swings += 1
 		print("[TEST] ", tag, " event_counts=", sync.event_counts)
+		var birth_positions = []
+		for birth_id in sync._births:
+			var birth = sync._births[birth_id]
+			if is_instance_valid(birth) and birth.visible:
+				birth_positions.append("%d:%s" % [birth_id, birth.global_position.round()])
+		var gold_scales = []
+		for gold in main._active_golds:
+			if gold.scale.x > 1.0:
+				gold_scales.append(stepify(gold.scale.x, 0.01))
+		print("[TEST] ", tag, " births=", birth_positions, " grown_golds=", gold_scales.size(), " max_gold_scale=", gold_scales.max() if not gold_scales.empty() else 1.0)
 		print("[TEST] ", tag, " synced_projectiles=", sync._projectiles.size(), " flying_player_proj=", visible_children(main._player_projectiles), " flying_enemy_proj=", visible_children(main._enemy_projectiles), " weapons_attacking=", swings)
 		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
 	shot(tag)
@@ -267,6 +277,8 @@ func _host_step() -> void :
 			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load("res://entities/units/enemies/rhino/rhino.tscn"), rect.end - Vector2(150, 150)])
 			for i in 3:
 				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
+			# An enemy spawning right on the host player: vanilla moves its marker elsewhere.
+			spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), get_tree().current_scene._players[0].global_position])
 			# Spitters shoot enemy projectiles.
 			for i in 4:
 				spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), center_offset(i)])

@@ -10,7 +10,8 @@ extends Node
 #     bodies) and feeds move to its animation and moving/not-moving item effects.
 #   - Every entity the spawner creates during the wave (enemies, bosses, trees, structures,
 #     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
-#     events, collected per physics frame.
+#     events, collected per physics frame. Spawn markers have ids too: vanilla moves an enemy's
+#     marker elsewhere when a player stands on it, and the host sends the new position.
 #   - Weapon attacks (player, weapon index, rotation, distance, melee attack type) and
 #     projectiles (spawn: scene, position, velocity, rotation, speed and range, wave motion and
 #     bullet-hell direction; stop) are events too. Projectiles inside a GroupOfBullet aren't
@@ -18,8 +19,9 @@ extends Node
 #   - So are enemy and turret animations other than idle/death (attacks, charges), damage taken
 #     by players and entities (for floating text, flashes, blood) and explosions.
 #   - Materials and consumables get their own net ids: drop (with vanilla's push-back target),
-#     attraction (whenever attracted_by changes to a player or a synced entity) and pickup by a
-#     player are events; so is a crate going into a player's things-to-process.
+#     attraction (whenever attracted_by changes to a player or a synced entity), size (vanilla
+#     merges new materials into existing ones once 50 lie around) and pickup by a player are
+#     events; so is a crate going into a player's things-to-process.
 #   - The wave timer (and so the enemy spawns) waits until every client has loaded the wave, at
 #     most LOAD_TIMEOUT seconds; every screen says "Waiting for players..." meanwhile.
 #   - A client that disconnects or quits the wave loses its player (it dies).
@@ -80,6 +82,8 @@ const EVENT_ITEM_DROP: = 9
 const EVENT_ITEM_ATTRACT: = 10
 const EVENT_ITEM_PICKUP: = 11
 const EVENT_CRATE_TO_PROCESS: = 12
+const EVENT_ITEM_SCALE: = 13
+const EVENT_BIRTH_MOVED: = 14
 const ITEM_GOLD: = 0
 const ITEM_CONSUMABLE: = 1
 const NO_TARGET: = - 1
@@ -123,6 +127,14 @@ var _scene_cache: = {}
 # last sent per item ([kind, id]).
 var _items: = {}
 var _item_targets: = {}
+var _item_scales: = {}
+
+# Spawn marker net id -> EntityBirth, on both sides; host: also the position last sent. Markers
+# are pooled, so each one keeps its current id in the "lan_birth_id" meta and older ids that
+# still point at it are ignored.
+var _births: = {}
+var _birth_positions: = {}
+var _next_birth_id: = 0
 var _next_item_id: = 0
 
 # Client: received snapshots, oldest first:
@@ -197,6 +209,7 @@ func _physics_process(delta: float) -> void :
 		_apply_remote_states()
 		_flush_pending_projectiles()
 		_check_item_attraction()
+		_check_births()
 		if not _events.empty():
 			_count_events(_events)
 			_net.send_events(_events)
@@ -239,9 +252,33 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by])
 
 
-# Called by the entity_spawner.gd extension when a spawn marker appears.
+# Called by the entity_spawner.gd extension right after vanilla started a spawn marker, which is
+# then the last child of the births container (taken from the pool or newly added).
 func on_birth(type: int, pos: Vector2, charmed_by: int) -> void :
-	_events.append([EVENT_BIRTH, type, pos, charmed_by])
+	var container: Node = _main._births_container
+	if container.get_child_count() == 0:
+		return
+	_next_birth_id = _next_birth_id % MAX_NET_ID + 1
+	var birth: Node = container.get_child(container.get_child_count() - 1)
+	birth.set_meta("lan_birth_id", _next_birth_id)
+	_births[_next_birth_id] = birth
+	_birth_positions[_next_birth_id] = pos
+	_events.append([EVENT_BIRTH, _next_birth_id, type, pos, charmed_by])
+
+
+# Finished markers hide themselves; moved ones (a player stood on an enemy's marker) are sent.
+func _check_births() -> void :
+	var done: = []
+	for birth_id in _births:
+		var birth = _births[birth_id]
+		if not is_instance_valid(birth) or not birth.visible or birth.get_meta("lan_birth_id") != birth_id:
+			done.append(birth_id)
+		elif birth.global_position != _birth_positions[birth_id]:
+			_birth_positions[birth_id] = birth.global_position
+			_events.append([EVENT_BIRTH_MOVED, birth_id, birth.global_position])
+	for birth_id in done:
+		var _erased = _births.erase(birth_id)
+		_erased = _birth_positions.erase(birth_id)
 
 
 func on_client_loaded(peer_id: int) -> void :
@@ -379,6 +416,7 @@ func on_item_dropped(item: Node) -> void :
 	item.lan_net_id = _next_item_id
 	_items[_next_item_id] = item
 	_item_targets[_next_item_id] = [NO_TARGET, 0]
+	_item_scales[_next_item_id] = item.scale.x
 	var kind: = ITEM_GOLD if item is Gold else ITEM_CONSUMABLE
 	var texture_path: = ""
 	var consumable_id: = ""
@@ -399,6 +437,7 @@ func on_item_picked_up(item: Node, player_index: int) -> void :
 		return
 	var _erased = _items.erase(net_id)
 	_erased = _item_targets.erase(net_id)
+	_erased = _item_scales.erase(net_id)
 	# The gold bag (player -1) collects everything at the end of the wave, on every machine.
 	if is_host and player_index >= 0:
 		_events.append([EVENT_ITEM_PICKUP, net_id, player_index])
@@ -417,6 +456,9 @@ func _check_item_attraction() -> void :
 		if target != _item_targets[net_id]:
 			_item_targets[net_id] = target
 			_events.append([EVENT_ITEM_ATTRACT, net_id, target[0], target[1]])
+		if item.scale.x != _item_scales[net_id]:
+			_item_scales[net_id] = item.scale.x
+			_events.append([EVENT_ITEM_SCALE, net_id, item.scale.x])
 
 
 # [TARGET_PLAYER, player_index], [TARGET_ENTITY, net id] or [NO_TARGET, 0]. The gold bag
@@ -652,8 +694,12 @@ func on_events(events: Array) -> void :
 			_client_spawn(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
 			_client_die(event)
-		elif event[0] == EVENT_BIRTH and event.size() == 4:
+		elif event[0] == EVENT_BIRTH and event.size() == 5:
 			_client_birth(event)
+		elif event[0] == EVENT_BIRTH_MOVED and event.size() == 3:
+			_client_birth_moved(event)
+		elif event[0] == EVENT_ITEM_SCALE and event.size() == 3:
+			_client_item_scale(event)
 		elif event[0] == EVENT_WEAPON and event.size() == 6:
 			_client_weapon_shot(event)
 		elif event[0] == EVENT_PROJECTILE and event.size() == 12:
@@ -754,11 +800,41 @@ func _client_die(event: Array) -> void :
 
 
 func _client_birth(event: Array) -> void :
-	# [EVENT_BIRTH, type, pos, charmed_by]
-	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2 or typeof(event[3]) != TYPE_INT:
+	# [EVENT_BIRTH, birth id, type, pos, charmed_by]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_INT:
 		return
-	if not _main._cleaning_up:
-		_main._entity_spawner.spawn_entity_birth(event[1], null, event[2], null, - 1, null, event[3])
+	if _main._cleaning_up:
+		return
+	_main._entity_spawner.spawn_entity_birth(event[2], null, event[3], null, - 1, null, event[4])
+	var container: Node = _main._births_container
+	if container.get_child_count() > 0:
+		var birth: Node = container.get_child(container.get_child_count() - 1)
+		if birth.has_meta("lan_birth_id"):
+			var _erased = _births.erase(birth.get_meta("lan_birth_id"))
+		birth.set_meta("lan_birth_id", event[1])
+		_births[event[1]] = birth
+
+
+func _client_birth_moved(event: Array) -> void :
+	# [EVENT_BIRTH_MOVED, birth id, pos]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2:
+		return
+	var birth = _births.get(event[1])
+	if birth == null or not is_instance_valid(birth) or not birth.visible or birth.get_meta("lan_birth_id") != event[1]:
+		var _erased = _births.erase(event[1])
+		return
+	# As vanilla does when it moves the marker: the countdown starts over.
+	birth.global_position = event[2]
+	birth._current_time_before_spawn = birth.time_before_spawn
+
+
+func _client_item_scale(event: Array) -> void :
+	# [EVENT_ITEM_SCALE, net id, scale]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_REAL:
+		return
+	var item = _items.get(event[1])
+	if item != null and is_instance_valid(item):
+		item.scale = Vector2(event[2], event[2])
 
 
 func _client_weapon_shot(event: Array) -> void :
