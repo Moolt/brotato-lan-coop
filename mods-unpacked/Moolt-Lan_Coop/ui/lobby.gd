@@ -1,7 +1,8 @@
 extends Control
 
 # Title screen page shown while in a LAN session.
-# Left: every player (colour, character, name, weapon, ready). Right: the local player's
+# Left: every player (colour, character, name, weapon, ready), the run settings (host: zone and
+# difficulty pickers, clients: a summary), Leave and the host's Start. Right: the local player's
 # character grid, info panel, starting weapon grid and Ready button. The grids reuse vanilla's
 # Inventory (inventory.tscn) and the info panels the ones from the run selection screens.
 # Picks are sent to the host (LanNet.set_local_player_info), which validates them and
@@ -17,6 +18,7 @@ const CHARACTER_PANEL_SCENE = preload("res://ui/menus/ingame/character_panel_ui.
 const ITEM_PANEL_SCENE = preload("res://ui/menus/ingame/item_panel_ui.tscn")
 const RANDOM_ICON = preload("res://items/global/random_icon.png")
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
+const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
 
 const WIDTH: = 1800.0
 const LEFT_WIDTH: = 660.0
@@ -29,6 +31,11 @@ var _address_label: Label
 var _count_label: Label
 var _player_list: VBoxContainer
 var _leave_button: Button
+var _zone_option: OptionButton
+var _difficulty_option: OptionButton
+var _settings_label: Label
+var _hint_label: Label
+var _start_button: Button
 var _character_grid: GridContainer
 var _weapon_grid: GridContainer
 var _weapon_scroll: ScrollContainer
@@ -42,6 +49,8 @@ var _ready_button: Button
 var _weapon_grid_character_id: = ""
 # Where to move focus after the host confirmed the next pick: "", "weapons" or "ready".
 var _focus_on_update: = ""
+# ui_cancel closes an open dropdown on press; only a press with no dropdown open may leave.
+var _cancel_armed: = false
 
 
 func _ready() -> void :
@@ -53,6 +62,7 @@ func _ready() -> void :
 
 func init() -> void :
 	_update_address()
+	_fill_setting_options()
 	_fill_character_grid()
 	_weapon_grid_character_id = "-"
 	_refresh()
@@ -60,7 +70,12 @@ func init() -> void :
 
 
 func _input(event: InputEvent) -> void :
-	if visible and event.is_action_released("ui_cancel"):
+	if not visible:
+		return
+	if event.is_action_pressed("ui_cancel"):
+		_cancel_armed = not (_zone_option.get_popup().visible or _difficulty_option.get_popup().visible)
+	elif event.is_action_released("ui_cancel") and _cancel_armed:
+		_cancel_armed = false
 		# Stop the page that becomes visible from handling the same event.
 		get_tree().set_input_as_handled()
 		_on_LeaveButton_pressed()
@@ -100,9 +115,36 @@ func _build_ui() -> void :
 	_player_list.add_constant_override("separation", 4)
 	player_scroll.add_child(_player_list)
 
+	# Run settings: pickers for the host, a summary line for clients.
+	var settings_row: = HBoxContainer.new()
+	settings_row.add_constant_override("separation", 16)
+	left.add_child(settings_row)
+	_zone_option = _new_option_button()
+	settings_row.add_child(_zone_option)
+	var _e = _zone_option.connect("item_selected", self, "_on_ZoneOption_item_selected")
+	_difficulty_option = _new_option_button()
+	settings_row.add_child(_difficulty_option)
+	_e = _difficulty_option.connect("item_selected", self, "_on_DifficultyOption_item_selected")
+	_settings_label = Label.new()
+	_settings_label.rect_min_size = Vector2(0, 56)
+	_settings_label.valign = Label.VALIGN_CENTER
+	settings_row.add_child(_settings_label)
+
+	_hint_label = Label.new()
+	_hint_label.add_font_override("font", ROW_FONT)
+	_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	left.add_child(_hint_label)
+
+	var buttons: = HBoxContainer.new()
+	buttons.add_constant_override("separation", 16)
+	left.add_child(buttons)
 	_leave_button = UiKit.new_back_button("LAN_LEAVE")
-	var _e = _leave_button.connect("pressed", self, "_on_LeaveButton_pressed")
-	left.add_child(_leave_button)
+	_e = _leave_button.connect("pressed", self, "_on_LeaveButton_pressed")
+	buttons.add_child(_leave_button)
+	_start_button = UiKit.new_button("LAN_START", Vector2(0, 64))
+	_start_button.size_flags_horizontal = SIZE_EXPAND_FILL
+	_e = _start_button.connect("pressed", self, "_on_StartButton_pressed")
+	buttons.add_child(_start_button)
 
 	# Right: the local player's picks
 	var right: = VBoxContainer.new()
@@ -176,6 +218,14 @@ func _build_ui() -> void :
 	weapon_column.add_child(_ready_button)
 
 
+func _new_option_button() -> OptionButton:
+	var option: = OptionButton.new()
+	option.theme = OPTION_THEME
+	option.rect_min_size = Vector2(0, 56)
+	option.size_flags_horizontal = SIZE_EXPAND_FILL
+	return option
+
+
 func _new_inventory(columns: int) -> GridContainer:
 	var inventory: GridContainer = INVENTORY_SCENE.instance()
 	inventory.element_size = ELEMENT_SIZE
@@ -213,12 +263,23 @@ func _fill_weapon_grid(character: CharacterData) -> void :
 
 
 
+func _fill_setting_options() -> void :
+	_zone_option.clear()
+	for zone in ZoneService.zones:
+		_zone_option.add_item(tr(zone.name), zone.my_id)
+	_difficulty_option.clear()
+	for difficulty in ItemService.difficulties:
+		_difficulty_option.add_item(difficulty.get_name_text(), difficulty.value)
+
+
+
 # Content
 
 func _refresh() -> void :
 	if _net == null:
 		return
 	_refresh_players()
+	_refresh_settings()
 
 	var me = _net.get_local_player()
 	if me == null:
@@ -242,6 +303,44 @@ func _refresh() -> void :
 		_weapon_grid.focus_element_index(0)
 	elif focus_target != "" and can_ready:
 		_ready_button.call_deferred("grab_focus")
+
+
+func _refresh_settings() -> void :
+	var is_host: bool = _net.is_host
+	_zone_option.visible = is_host
+	_difficulty_option.visible = is_host
+	_settings_label.visible = not is_host
+	_start_button.visible = is_host
+
+	var zone_id: int = _net.lobby_settings.get("zone", 0)
+	var difficulty_value: int = _net.lobby_settings.get("difficulty", 0)
+	if is_host:
+		# select() doesn't emit item_selected, so this never loops back.
+		_zone_option.select(_zone_option.get_item_index(zone_id))
+		_difficulty_option.select(_difficulty_option.get_item_index(difficulty_value))
+	else:
+		var zone: = LobbyRules.get_zone(zone_id)
+		var difficulty: = LobbyRules.get_difficulty(difficulty_value)
+		_settings_label.text = tr("LAN_SETTINGS_SUMMARY") \
+				.replace("{0}", tr(zone.name) if zone != null else "?") \
+				.replace("{1}", difficulty.get_name_text() if difficulty != null else "?")
+
+	var too_many: bool = _net.get_player_count() > LobbyRules.MAX_RUN_PLAYERS
+	var all_ready: bool = _net.are_all_ready()
+	if is_host:
+		if all_ready and not too_many:
+			_start_button.activate()
+		else:
+			_start_button.disable()
+
+	if too_many:
+		_hint_label.text = tr("LAN_HINT_TOO_MANY").replace("{0}", str(LobbyRules.MAX_RUN_PLAYERS))
+	elif not all_ready:
+		_hint_label.text = "LAN_HINT_WAITING"
+	elif is_host:
+		_hint_label.text = "LAN_HINT_HOST_CAN_START"
+	else:
+		_hint_label.text = "LAN_HINT_CLIENT_WAIT_START"
 
 
 # Marks the picked character and weapon, and makes "up" from the weapon grid (or from Ready,
@@ -424,6 +523,19 @@ func _on_WeaponGrid_element_pressed(element) -> void :
 
 	_focus_on_update = "ready"
 	_net.set_local_player_info({"weapon_id": choice_id})
+
+
+func _on_ZoneOption_item_selected(index: int) -> void :
+	_net.set_lobby_settings({"zone": _zone_option.get_item_id(index)})
+
+
+func _on_DifficultyOption_item_selected(index: int) -> void :
+	_net.set_lobby_settings({"difficulty": _difficulty_option.get_item_id(index)})
+
+
+func _on_StartButton_pressed() -> void :
+	# Building and syncing the run follows in Step 3c.
+	ModLoaderLog.info("Start pressed with %d ready players" % _net.get_player_count(), NetProtocol.MOD_ID)
 
 
 func _on_ReadyButton_pressed() -> void :

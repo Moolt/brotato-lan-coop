@@ -1,5 +1,8 @@
 extends Reference
 
+# Players a run can be started with until Step 4 lifts vanilla's 4-player limits.
+const MAX_RUN_PLAYERS: = 4
+
 # What a lobby entry may contain. The lobby UI, the host's validation and the run builder all
 # use these, so they never disagree. Unlock lists are the host's on every peer (see LanNet).
 # Starting choices follow vanilla weapon_selection.gd: the character's starting weapons and
@@ -62,3 +65,31 @@ static func is_entry_complete(entry: Dictionary) -> bool:
 	if not needs_starting_choice(character):
 		return true
 	return get_starting_choice(character, entry.get("weapon_id")) != null
+
+
+# Zones and difficulties the host can pick: every zone in ZoneService (as vanilla's zone
+# button lists them) and every difficulty, regardless of the host's save progress.
+static func get_zone(zone_id) -> ZoneData:
+	if typeof(zone_id) != TYPE_INT:
+		return null
+	for zone in ZoneService.zones:
+		if zone.my_id == zone_id:
+			return zone
+	return null
+
+
+static func is_valid_zone(zone_id) -> bool:
+	return get_zone(zone_id) != null
+
+
+static func get_difficulty(difficulty_value) -> DifficultyData:
+	if typeof(difficulty_value) != TYPE_INT:
+		return null
+	for difficulty in ItemService.difficulties:
+		if difficulty.value == difficulty_value:
+			return difficulty
+	return null
+
+
+static func is_valid_difficulty(difficulty_value) -> bool:
+	return get_difficulty(difficulty_value) != null

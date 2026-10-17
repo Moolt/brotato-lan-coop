@@ -173,6 +173,17 @@ Done in three increments, each tested by the user and committed separately: 3a (
   - **Scrolling:** both grids and the player list (sized for 12 rows) sit in `ScrollContainer`s with `follow_focus`, so the page height never changes.
   - **Focus up:** "up" from the weapon grid's top row goes back to the picked character, via Inventory's own `set_neighbour_top` + `focus_neighbour_top`, which survive its neighbour recomputation.
   - **Host address:** the host sees one address, `IP: ip:port`, from `NetProtocol.get_primary_lan_address()`. Private LAN addresses come first, wired before wireless; Windows virtual adapters are skipped.
+
+**3b status: done.**
+- **Host controls** under the player list: Zone and Difficulty `OptionButton`s (`zone_selection_button_theme.tres`).
+  - They list every `ZoneService.zones` entry and every `ItemService.difficulties` entry.
+  - They go through `LanNet.set_lobby_settings`, which validates via `LobbyRules.is_valid_zone/difficulty` and remembers the values in `net_config` (`last_zone`, `last_difficulty`).
+  - `host()` restores them.
+- **Clients** see a "Zone, Danger N" summary.
+- **Hint line:** waiting / host can start / waiting for the host / too many players.
+- **Start** (host only) is enabled when `are_all_ready()` and there are at most `LobbyRules.MAX_RUN_PLAYERS` (4) players. Step 4 lifts the cap. In 3b it only logs; 3c adds the run build.
+- **Leaving with ui_cancel** needs a press *and* release with no dropdown open, because ui_cancel closes an `OptionButton` popup on press.
+- **Lobby broadcasts** only go to peers in `get_network_connected_peers()`.
 - **Pitfall:** in GDScript 3, `continue` inside a `match` block falls through to the next pattern instead of continuing the loop. Use `if`/`elif` in loops.
 
 ## Step 4: Lift the 4-player cap to 12

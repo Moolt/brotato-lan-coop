@@ -42,6 +42,12 @@ const STRINGS: = {
 		"LAN_UNREADY": "Unready", 
 		"LAN_STATUS_READY": "Ready", 
 		"LAN_STATUS_CHOOSING": "Choosing...", 
+		"LAN_START": "Start", 
+		"LAN_SETTINGS_SUMMARY": "{0}, {1}", 
+		"LAN_HINT_WAITING": "Waiting for all players to be ready.", 
+		"LAN_HINT_HOST_CAN_START": "Everyone is ready. Press Start!", 
+		"LAN_HINT_CLIENT_WAIT_START": "Everyone is ready. Waiting for the host to start.", 
+		"LAN_HINT_TOO_MANY": "Runs with more than {0} players are not supported yet.", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -82,6 +88,12 @@ const STRINGS: = {
 		"LAN_UNREADY": "Doch nicht bereit", 
 		"LAN_STATUS_READY": "Bereit", 
 		"LAN_STATUS_CHOOSING": "Wählt...", 
+		"LAN_START": "Starten", 
+		"LAN_SETTINGS_SUMMARY": "{0}, {1}", 
+		"LAN_HINT_WAITING": "Warte, bis alle Spieler bereit sind.", 
+		"LAN_HINT_HOST_CAN_START": "Alle sind bereit. Drücke Starten!", 
+		"LAN_HINT_CLIENT_WAIT_START": "Alle sind bereit. Warte auf den Host.", 
+		"LAN_HINT_TOO_MANY": "Runden mit mehr als {0} Spielern werden noch nicht unterstützt.", 
 	}, 
 }
 

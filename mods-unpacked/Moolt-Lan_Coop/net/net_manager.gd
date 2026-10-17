@@ -94,6 +94,7 @@ func host(port: int = - 1) -> int:
 	local_player_index = 0
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
+	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty})
 	last_end_reason = ""
 	_set_saves_blocked(true)
 	set_process(true)
@@ -162,14 +163,15 @@ func set_local_player_info(changes: Dictionary) -> void :
 		rpc_id(HOST_PEER_ID, "_rpc_update_player", changes)
 
 
-# Host only: zone, difficulty.
+# Host only: zone, difficulty. Invalid values are ignored; valid ones are remembered.
 func set_lobby_settings(changes: Dictionary) -> void :
 	if not is_host:
 		return
-	for key in changes:
-		if lobby_settings.has(key):
-			lobby_settings[key] = changes[key]
-	_broadcast_lobby_state()
+	if _apply_lobby_settings(changes):
+		config.last_zone = lobby_settings.zone
+		config.last_difficulty = lobby_settings.difficulty
+		config.save_config()
+		_broadcast_lobby_state()
 
 
 # Host only: while true, new joins are rejected and dropped players keep their slot.
@@ -320,8 +322,9 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 func _broadcast_lobby_state() -> void :
 	if not is_host:
 		return
+	var connected_peers: = get_tree().get_network_connected_peers()
 	for entry in players:
-		if entry.peer_id != HOST_PEER_ID and entry.connected:
+		if entry.peer_id != HOST_PEER_ID and entry.connected and connected_peers.has(entry.peer_id):
 			rpc_id(entry.peer_id, "_rpc_lobby_state", players, lobby_settings)
 	emit_signal("lobby_changed")
 
@@ -354,6 +357,18 @@ func _apply_player_changes(entry: Dictionary, changes: Dictionary) -> bool:
 		if key != "ready":
 			entry.ready = false
 		entry[key] = value
+		changed = true
+	return changed
+
+
+# Returns true if anything changed.
+func _apply_lobby_settings(changes: Dictionary) -> bool:
+	var changed: = false
+	if changes.has("zone") and LobbyRules.is_valid_zone(changes.zone) and lobby_settings.zone != int(changes.zone):
+		lobby_settings.zone = int(changes.zone)
+		changed = true
+	if changes.has("difficulty") and LobbyRules.is_valid_difficulty(changes.difficulty) and lobby_settings.difficulty != int(changes.difficulty):
+		lobby_settings.difficulty = int(changes.difficulty)
 		changed = true
 	return changed
 
