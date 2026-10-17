@@ -57,9 +57,12 @@ net/net_input.gd       # per-player latest input (move Vector2, aim Vector2, aim
 net/host_sync.gd       # child of main on host: assigns net ids, builds snapshots (20 Hz) + events
 net/client_sync.gd     # child of main on client: applies snapshots, spawns/updates/frees puppets, interpolation
 net/net_config.gd      # user://lan_coop.cfg: last name, last IP, port, scaling knobs
-ui/multiplayer_menu.tscn/.gd  # name LineEdit, IP LineEdit, port, Host / Join / Back
-ui/lobby.tscn/.gd              # player list, character grid, weapon pick, ready toggle, host: zone/difficulty/Start
-ui/net_player_list.tscn/.gd    # in-wave compact HUD: name + HP bar per other player; "waiting for X" in shop
+net/net_discovery.gd   # /root/LanNet/Discovery: host UDP beacon, client listener for the join page
+ui/ui_kit.gd           # shared page building blocks (pages are built in code, no .tscn)
+ui/multiplayer_menu.gd # name, Host game / Join game / Back
+ui/join_menu.gd        # discovered games list, join by address
+ui/lobby.gd            # player list, character grid, weapon pick, ready toggle, host: zone/difficulty/Start
+ui/net_player_list.gd  # in-wave compact HUD: name + HP bar per other player; "waiting for X" in shop
 extensions/...                 # mirrored vanilla paths (below)
 ```
 
@@ -91,25 +94,48 @@ extensions/...                 # mirrored vanilla paths (below)
 - **ENet pitfall:** ENet calls `close_connection()` itself right after `server_disconnected` / `connection_failed`, so cleanup runs deferred and the close is guarded by connection status. Closing twice logs an engine `ERROR:`.
 - `net_input.gd`, `host_sync.gd` and `client_sync.gd` belong to Step 6 and don't exist yet.
 
-## Step 2: Main menu entry
-- **Extend `ui/menus/title_screen/title_screen_menus.gd`.** In `_ready()`:
-  1. Instance `multiplayer_menu.tscn` and `lobby.tscn` as hidden children.
-  2. Create a `Button` with the script `res://ui/menus/global/my_menu_button.gd` and text `MENU_MULTIPLAYER`.
-  3. Insert it into `_main_menu.left_container` right after StartButton.
-  4. Set its `focus_neighbour_left/right` to `ModsButton`.
-  5. Wire it with `switch(_main_menu, mp_menu)`.
-- **Pages.** Each page follows the `menu_credits.gd` pattern: an `init()` that grabs focus, `ui_cancel` goes back, and a `back_button_pressed` signal. Native Godot focus gives gamepad navigation.
-- **Name and IP text entry.**
-  - **Name:** a LineEdit with a default of "Player" plus a random number. The name is saved in `net_config`, so a gamepad-only player can skip typing.
-  - **IP:** the last IP is remembered.
-  - **Gamepad input:** add a small on-screen digit pad for the IP field.
+## Step 2: Main menu entry, host/join pages, LAN discovery
+**Status: done** (reworked once after manual testing: separate host/join flow, digit pad removed, discovery added).
 
-**Status: done.** Files: `extensions/ui/menus/title_screen/title_screen_menus.gd`, `ui/multiplayer_menu.gd`, `ui/lobby.gd`, new keys in `net/net_translations.gd`. Notes on what was built:
-- **Pages are built in code** (`Control` scripts, `.new()`), not `.tscn`. Both use `base_theme.tres`, the `font_60_outline` title, `MyMenuButton` buttons, and the page pattern (`init()`, `ui_cancel`). Step 3 adds its lobby widgets to `ui/lobby.gd` the same way.
-- **Multiplayer menu:** Name / Host IP / Port fields filled from `net_config`, a 12-key digit pad (`0-9 . <`) that edits whichever of IP/port was focused last, Host / Join / Back, and a status label. While connecting, everything except Back is disabled through `MyMenuButton.disable()/activate()` (setting `disabled` directly is undone by its press-delay timer). Back while connecting calls `LanNet.leave()`.
-- **Lobby (Step 2 version):** the host sees "Others join with: <LAN IPv4s> (port N)" (from `IP.get_local_interfaces()`, skipping loopback, link-local and docker/bridge/VM interfaces), the player count, one row per player with `(host)` / `(you)` / `(disconnected)` tags, and Leave (also `ui_cancel`).
-- **No popup:** session-end reasons are shown in the multiplayer menu's status line instead. The menus extension switches lobby → multiplayer menu on `LanNet.session_ended`, and on title screen load (deferred, after `TitleScreen._ready`) opens the multiplayer menu if `last_end_reason` is set, or the lobby if a session is still joined. Shown reasons are cleared.
-- **Verified** with two instances on 127.0.0.1 driven by a test-only autoload in a throwaway copy of the project: button placement, port/IP validation, digit pad, host, join, lobby list on both sides, host leaving → client back in the multiplayer menu with "The host closed the session." No `ERROR:` lines from mod code.
+**Flow**
+```
+Main menu ─ Multiplayer ─► Multiplayer page: Name, [Host game], [Join game], [Back]
+                              Host game ─► hosts on the saved port ─► Lobby
+                              Join game ─► Join page: found games list + "IP or IP:port" + Connect ─► Lobby
+```
+Leaving the lobby returns to the page it was entered from (Multiplayer page for hosts, Join page for clients). Session-end reasons show in that page's status line, not in a popup.
+
+**Files**
+- `extensions/ui/menus/title_screen/title_screen_menus.gd`:
+  - inserts the `MyMenuButton` "Multiplayer" after StartButton in `_main_menu.left_container`, with left/right focus going to ModsButton
+  - adds the three pages as hidden children and wires the `switch()` calls
+  - on title load (deferred, after `TitleScreen._ready`), opens the Join page if `LanNet.last_end_reason` is set, or the lobby if a session is still joined
+- `ui/ui_kit.gd`: shared page building (dimmed background, centred column, `font_60_outline` title, `MyMenuButton`s, status label).
+- `ui/multiplayer_menu.gd`: the Name field (saved on every edit; empty keeps the stored name), Host game, Join game, Back.
+- `ui/join_menu.gd`:
+  - the discovered games as button rows ("name  n/12"; incompatible versions disabled), updated in place so focus survives
+  - an address field (`NetProtocol.parse_address`), Connect, status, Back
+- `ui/lobby.gd` (Step 2 version):
+  - host only: "Others join with: <LAN IPv4s> (port N)"
+  - player count, rows with `(host)` / `(you)` / `(disconnected)`, Leave
+- `net/net_discovery.gd` (`/root/LanNet/Discovery`):
+  - **Host:** while hosting and not `run_in_progress`, sends a JSON beacon every second to UDP `DISCOVERY_PORT` (24568). Targets are `255.255.255.255` plus the /24 broadcast of each private LAN address, because Linux sends the limited broadcast only on the default interface.
+  - **Client:** listens only while the Join page is visible. Games expire 3.5 s after their last beacon.
+  - **Listen failure:** if `listen` fails (e.g. a second client on the same PC), the page says so and manual join still works.
+- `net/net_protocol.gd`: beacon build/parse (types checked before comparing), `parse_address`, `get_lan_addresses` (skips loopback, link-local, docker/bridge/VM interfaces), `get_broadcast_addresses`.
+
+**Pitfalls found**
+- `MyMenuButton` re-enables itself after its 0.05 s press delay. Disable and enable it with its own `disable()` / `activate()`, not `disabled`.
+- Every page's `_input` must call `get_tree().set_input_as_handled()` after handling `ui_cancel`. Otherwise the page that becomes visible handles the same event and navigation skips a page.
+- `var x: = <untyped>.split(".")` is a parse error ("can't infer type"). Give an explicit type when the source is untyped.
+
+**Verified** with two instances driven by a test-only autoload in a throwaway copy of the project:
+- the host is found within about 0.5 s and joined from its row
+- bad IP and bad port messages show
+- manual join with `127.0.0.1:port` works
+- Escape in the lobby goes back exactly one page
+- when the host leaves, the client lands on the Join page with "The host closed the session." and the game leaves the list
+- no `ERROR:` lines from mod code
 
 ## Step 3: Lobby
 - **Layout.**
@@ -224,6 +250,8 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - Floating names above players.
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
 - Mod config knobs exposed in the manifest `config_schema`: arena factor, enemy count/HP factor, port.
+- Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
+- Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
 
 ---

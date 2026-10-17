@@ -7,6 +7,9 @@ const MOD_ID: = "Moolt-Lan_Coop"
 const PROTOCOL_VERSION: = 1
 
 const DEFAULT_PORT: = 24567
+const DISCOVERY_PORT: = DEFAULT_PORT + 1
+const BEACON_MAGIC: = "BROTATO_LAN_COOP"
+const MAX_BEACON_SIZE: = 1024
 const MAX_PLAYERS: = 12
 const MAX_CLIENTS: = MAX_PLAYERS - 1
 const MAX_NAME_LENGTH: = 16
@@ -24,6 +27,7 @@ const MSG_HOST_LEFT: = "LAN_MSG_HOST_LEFT"
 const MSG_CONNECTION_FAILED: = "LAN_MSG_CONNECTION_FAILED"
 const MSG_SERVER_FAILED: = "LAN_MSG_SERVER_FAILED"
 const MSG_INVALID_IP: = "LAN_MSG_INVALID_IP"
+const MSG_INVALID_PORT: = "LAN_MSG_INVALID_PORT"
 
 # Keys a client may change on its own lobby entry.
 const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready"]
@@ -116,3 +120,112 @@ static func get_unlocks_snapshot() -> Dictionary:
 	for key in UNLOCK_KEYS:
 		unlocks[key] = ProgressData.get(key).duplicate()
 	return unlocks
+
+
+# LAN discovery beacon, sent by the host as UTF-8 JSON (see net_discovery.gd).
+static func build_beacon(host_name: String, port: int, player_count: int) -> PoolByteArray:
+	return to_json({
+		"magic": BEACON_MAGIC, 
+		"protocol_version": PROTOCOL_VERSION, 
+		"mod_version": get_mod_version(), 
+		"game_version": ProgressData.VERSION, 
+		"name": host_name, 
+		"port": port, 
+		"players": player_count, 
+		"max_players": MAX_PLAYERS, 
+	}).to_utf8()
+
+
+# Returns the beacon as a Dictionary (with "compatible" added), or null if it is not one.
+static func parse_beacon(bytes: PoolByteArray):
+	if bytes.size() > MAX_BEACON_SIZE:
+		return null
+	var parsed: = JSON.parse(bytes.get_string_from_utf8())
+	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY:
+		return null
+	var beacon: Dictionary = parsed.result
+	# Check types before comparing: comparing a String to a number is a script error.
+	for key in ["protocol_version", "port", "players", "max_players"]:
+		if typeof(beacon.get(key)) != TYPE_REAL:
+			return null
+	for key in ["magic", "mod_version", "game_version", "name"]:
+		if typeof(beacon.get(key)) != TYPE_STRING:
+			return null
+	if beacon.magic != BEACON_MAGIC:
+		return null
+
+	var port: = int(beacon.port)
+	if port <= 0 or port > 65535:
+		return null
+	return {
+		"name": sanitize_name(beacon.name), 
+		"port": port, 
+		"players": int(beacon.players), 
+		"max_players": int(beacon.max_players), 
+		"compatible": int(beacon.protocol_version) == PROTOCOL_VERSION and beacon.mod_version == get_mod_version() and beacon.game_version == ProgressData.VERSION, 
+	}
+
+
+# Parses "ip" or "ip:port". Returns {ip, port} or {error} (a translation key).
+static func parse_address(text: String, default_port: int) -> Dictionary:
+	var parts: = text.strip_edges().split(":")
+	if parts.size() > 2:
+		return {"error": MSG_INVALID_IP}
+	var ip: String = parts[0].strip_edges()
+	if not ip.is_valid_ip_address():
+		return {"error": MSG_INVALID_IP}
+	var port: = default_port
+	if parts.size() == 2:
+		var port_text: String = parts[1].strip_edges()
+		if not port_text.is_valid_integer() or int(port_text) <= 0 or int(port_text) > 65535:
+			return {"error": MSG_INVALID_PORT}
+		port = int(port_text)
+	return {"ip": ip, "port": port}
+
+
+# IPv4 addresses other machines can use to reach this one
+# (no loopback, no link-local, no container/VM bridges).
+static func get_lan_addresses() -> Array:
+	var result: = []
+	for interface in IP.get_local_interfaces():
+		if _is_virtual_interface(str(interface.name).to_lower()):
+			continue
+		for address in interface.addresses:
+			if not address.is_valid_ip_address() or ":" in address:
+				continue
+			if address.begins_with("127.") or address.begins_with("169.254."):
+				continue
+			if not result.has(address):
+				result.append(address)
+	result.sort()
+	return result
+
+
+# Where the host sends beacons: the limited broadcast (Linux only uses the default interface for it)
+# plus the /24 broadcast of every private LAN address. Interface netmasks aren't exposed in Godot 3.
+static func get_broadcast_addresses() -> Array:
+	var result: = ["255.255.255.255"]
+	for address in get_lan_addresses():
+		if not _is_private_address(address):
+			continue
+		var octets: PoolStringArray = address.split(".")
+		var broadcast: String = "%s.%s.%s.255" % [octets[0], octets[1], octets[2]]
+		if not result.has(broadcast):
+			result.append(broadcast)
+	return result
+
+
+static func _is_private_address(address: String) -> bool:
+	if address.begins_with("10.") or address.begins_with("192.168."):
+		return true
+	if address.begins_with("172."):
+		var second: = int(address.split(".")[1])
+		return second >= 16 and second <= 31
+	return false
+
+
+static func _is_virtual_interface(interface_name: String) -> bool:
+	for prefix in ["lo", "docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "podman", "cni", "flannel"]:
+		if interface_name.begins_with(prefix):
+			return true
+	return false

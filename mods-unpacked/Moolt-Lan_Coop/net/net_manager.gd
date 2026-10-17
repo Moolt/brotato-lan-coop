@@ -12,10 +12,12 @@ signal player_disconnected(player_index)
 
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd")
+const NetDiscovery = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_discovery.gd")
 
 const HOST_PEER_ID: = 1
 
 var config = NetConfig.new()
+var discovery: Node = null
 
 var active: = false
 var is_host: = false
@@ -40,6 +42,9 @@ var _own_unlocks: = {}
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
 	config.load_config()
+	discovery = NetDiscovery.new()
+	discovery.name = "Discovery"
+	add_child(discovery)
 
 	var tree: = get_tree()
 	var _e = tree.connect("network_peer_connected", self, "_on_network_peer_connected")
