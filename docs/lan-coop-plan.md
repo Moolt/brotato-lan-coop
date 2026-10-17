@@ -398,6 +398,14 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 
 - **6e: pause, dropouts and run end.** Pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` is already off in a session), the host waiting for clients to load before the wave timer starts, players dropping out or quitting mid-wave (their player dies or stands still on the host; the host leaving ends the session), run won/lost events.
 
+**6e status: done.**
+- **Pause** (`ui/menus/ingame/pause_menu.gd` extension): in a session `pause()`/`unpause()` show and hide the menu without `get_tree().paused`, which would also stop the physics server. Vanilla's `_input` decides open/closed by `get_tree().paused`, so it calls `pause()` again on the pause button while the menu is open; that closes the menu. The extension's `_input` runs before vanilla's for the same event (Godot 3 `call_multilevel` goes derived → base) and handles cancel; `_lan_skip_pause` stops vanilla from reopening the menu when one key is both cancel and pause. `LanNet.pause_menu_open` makes the local player's movement zero (`player_movement_behavior.gd`) and makes `main._check_for_pause` stand aside.
+- **Waiting for clients:** the host pauses the `WaveTimer` and its `HalfWaveTimer` (enemy spawns follow the timer) until every connected client sent `_rpc_wave_loaded` from its `LanWaveSync._ready`, at most 15 s. A snapshot header flag carries the state (header 14 bytes); every screen shows "Waiting for players..." (`LAN_WAITING_FOR_PLAYERS`, en + de) meanwhile. The host logs `Wave starts after X s (every client loaded | timed out)`.
+- **Dropouts:** a client that quits the wave (its `LanWaveSync._exit_tree` before cleanup sends `_rpc_left_wave`) or disconnects (`LanNet.player_disconnected`) loses its player: the host calls `die()`, which greys its name everywhere and counts for the run-lost check. The client that quit waits in the lobby with the in-wave hint and rejoins with the next run; one that disconnected is dropped from the lobby when the wave ends.
+- **Run end:** the `main.gd` extension's `_set_run_states` sends the host's verdict `[wave failed, run lost, run won]` with `_rpc_wave_cleanup`; a client's `clean_up_room` uses it instead of its own, which could miss the last death (deaths travel in unreliable snapshots). Both still return to the lobby afterwards (until Step 7). `PROTOCOL_VERSION` 11.
+- **Tested:** host + client + 3 fakes. Pause on the client: menu open, tree not paused, own player didn't move with a key held, the wave timer kept running; pause on the host: the wave kept running. Everyone killed on the host: both report wave failed and run lost. Client quitting the wave: its player dies on the host, the client sits in the lobby with the in-wave hint, then rejoins the lobby. Client process closed mid-wave: "ClientPlayer left", its player dies, the host plays on. 12 slots with 5× enemies: no `ERROR:`. Vanilla solo unchanged (cleared with an invulnerable player).
+- **Not covered by the driver:** the 15 s load timeout (clients on one PC load within 0.1 s).
+
 ## Step 7: Between-wave flow (upgrades and shop per machine)
 1. **Host, at wave end.** Extend `main.gd` `_on_EndWaveTimer_timeout`. In net mode, do **not** show `_coop_upgrades_ui`. Run `RunData.on_wave_end()`, then broadcast `wave_end` together with the full run state, including each player's `_upgrades_to_process` and `_consumables_to_process`.
 2. **Every peer, host included, sets up a solo between-wave phase:**
@@ -432,18 +440,18 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 ---
 
 ## Milestones
-Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads), 5 (arena, enemy scaling, camera) 6b (enemies on clients) and 6c (attacks, projectiles, hit feedback) are done. 6d (materials, consumables, player stats) is done too. Next is Step 6e (pause, dropouts, run end).
+Status: milestones 1–4 are done (3 and 4 with Step 6). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Next is Step 7 (between-wave flow, milestone 5).
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
-4. **Full wave.** Enemies, projectiles, pickups, and wave end.
+4. **Full wave.** ~~Enemies, projectiles, pickups, and wave end~~ (Step 6).
 5. **Between waves.** Per-machine upgrades/shop and merge, so the loop runs for multiple waves.
 6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
-**Still to come:** `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
+**Still to come:** `ui/menus/shop/base_shop.gd` (Step 7).
 
 ## Verification
 - **Local multi-instance testing.**

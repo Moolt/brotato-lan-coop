@@ -20,8 +20,12 @@ extends Node
 #   - Materials and consumables get their own net ids: drop (with vanilla's push-back target),
 #     attraction (whenever attracted_by changes to a player or a synced entity) and pickup by a
 #     player are events; so is a crate going into a player's things-to-process.
+#   - The wave timer (and so the enemy spawns) waits until every client has loaded the wave, at
+#     most LOAD_TIMEOUT seconds; every screen says "Waiting for players..." meanwhile.
+#   - A client that disconnects or quits the wave loses its player (it dies).
+#   - The end of the wave goes out with the host's verdict (wave failed, run lost, run won).
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
-#     wave time left; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
+#     wave time left, whether the wave still waits for clients; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
 #     excluded, they don't move) position, HP ratio (0-255) and a burning flag.
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
@@ -44,6 +48,7 @@ extends Node
 #   - The wave timer follows the host's. The wave ends when the host says so.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
+const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 
 const SNAPSHOT_INTERVAL: = 3
 const INTERP_DELAY_MS: = 100
@@ -52,7 +57,11 @@ const TIMER_RESYNC_THRESHOLD: = 0.5
 const MOVE_SCALE: = 127.0
 const HP_SCALE: = 255.0
 const FLAG_DEAD: = 1
-const SNAPSHOT_HEADER_SIZE: = 13
+const SNAPSHOT_HEADER_SIZE: = 14
+const SNAPSHOT_FLAG_WAITING: = 1
+const LOAD_TIMEOUT: = 15.0
+const WAITING_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+const WAITING_FONT_SIZE: = 40
 const SNAPSHOT_PLAYER_SIZE: = 33
 const SNAPSHOT_ENTITY_SIZE: = 8
 const ENTITY_FLAG_BURNING: = 1
@@ -124,6 +133,12 @@ var _last_seq: = - 1
 var _clock_offset = null
 var _spawn_args = null
 
+# Host: peers whose wave isn't loaded yet; both: whether the wave waits for them.
+var _waiting_peers: = []
+var _waiting_time: = 0.0
+var _waiting: = false
+var _waiting_label: Label = null
+
 
 func _init() -> void :
 	name = "LanWaveSync"
@@ -137,11 +152,15 @@ func _ready() -> void :
 	_local_index = _net.local_player_index
 	_net.wave_sync = self
 
+	_add_waiting_label()
 	if is_host:
+		_waiting_peers = _net.get_connected_client_peers()
+		_set_waiting(not _waiting_peers.empty())
+		var _e = _net.connect("player_disconnected", self, "_on_player_disconnected")
 		for player in _main._players:
 			if player.player_index != _local_index:
 				player.lan_net_driven = true
-			var _e = player.connect("took_damage", self, "_on_host_took_damage", [TARGET_PLAYER, player.player_index])
+			_e = player.connect("took_damage", self, "_on_host_took_damage", [TARGET_PLAYER, player.player_index])
 	else:
 		_spawn_args = EntitySpawner.SpawnEntityArgs.new(Vector2.ZERO, EntityType.ENEMY)
 		_main._wave_manager.set_physics_process(false)
@@ -157,16 +176,24 @@ func _ready() -> void :
 			player.lan_no_regen = true
 			if player.player_index != _local_index:
 				player.set_physics_process(false)
+		_net.send_wave_loaded()
 
 
 func _exit_tree() -> void :
 	if _net != null and _net.wave_sync == self:
 		_net.wave_sync = null
+	# Leaving before the end of the wave (pause menu Quit): the host lets the player die.
+	if not is_host and _net != null and not _main._cleaning_up:
+		_net.send_left_wave()
 
 
-func _physics_process(_delta: float) -> void :
+func _physics_process(delta: float) -> void :
 	_frame += 1
 	if is_host:
+		if _waiting:
+			_waiting_time += delta
+			if _waiting_time >= LOAD_TIMEOUT:
+				_set_waiting(false)
 		_apply_remote_states()
 		_flush_pending_projectiles()
 		_check_item_attraction()
@@ -215,6 +242,27 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 # Called by the entity_spawner.gd extension when a spawn marker appears.
 func on_birth(type: int, pos: Vector2, charmed_by: int) -> void :
 	_events.append([EVENT_BIRTH, type, pos, charmed_by])
+
+
+func on_client_loaded(peer_id: int) -> void :
+	_waiting_peers.erase(peer_id)
+	if _waiting and _waiting_peers.empty():
+		_set_waiting(false)
+
+
+func on_player_left(player_index: int, peer_id: int) -> void :
+	on_client_loaded(peer_id)
+	var _erased = _remote_states.erase(player_index)
+	if player_index < 0 or player_index >= _main._players.size() or _main._cleaning_up:
+		return
+	var player = _main._players[player_index]
+	if is_instance_valid(player) and not player.dead:
+		player.die()
+
+
+func _on_player_disconnected(player_index: int) -> void :
+	var entry = _net.get_player(player_index)
+	on_player_left(player_index, entry.peer_id if entry != null else 0)
 
 
 func on_weapon_shot(weapon: Node, distance: float) -> void :
@@ -432,6 +480,7 @@ func _build_snapshot() -> PoolByteArray:
 	buffer.put_u32(_snapshot_seq)
 	buffer.put_u32(OS.get_ticks_msec())
 	buffer.put_float(_main._wave_timer.time_left)
+	buffer.put_u8(SNAPSHOT_FLAG_WAITING if _waiting else 0)
 	buffer.put_u8(_main._players.size())
 	for player in _main._players:
 		buffer.put_float(player.global_position.x)
@@ -483,6 +532,7 @@ func on_snapshot(data: PoolByteArray) -> void :
 		return
 	var host_time: = buffer.get_u32()
 	var time_left: = buffer.get_float()
+	var snapshot_flags: = buffer.get_u8()
 	var count: = buffer.get_u8()
 	var entities_offset: = SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_PLAYER_SIZE
 	if count != _main._players.size() or data.size() < entities_offset + 2:
@@ -528,8 +578,13 @@ func on_snapshot(data: PoolByteArray) -> void :
 	if _snapshots.size() > MAX_BUFFERED_SNAPSHOTS:
 		_snapshots.pop_front()
 
+	var waiting: = (snapshot_flags & SNAPSHOT_FLAG_WAITING) != 0
+	if waiting != _waiting and not _main._cleaning_up:
+		_set_waiting(waiting)
 	if not _main._cleaning_up and abs(_main._wave_timer.time_left - time_left) > TIMER_RESYNC_THRESHOLD and time_left > 0.0:
 		_main._wave_timer.start(time_left)
+		_main._wave_timer.paused = _waiting
+		_main._wave_timer.half_wave_timer.paused = _waiting
 
 
 func _apply_player_state(player, speed: float, health: int, max_health: int, dead: bool) -> void :
@@ -1044,6 +1099,40 @@ func _update_puppets() -> void :
 			entity.update_animation(b - a)
 
 
-# Host event: the wave ends (time out or everyone dead).
-func on_wave_cleanup() -> void :
-	_main.lan_clean_up_from_host()
+# Holds the wave timer (enemy spawns follow it) and its half-wave timer.
+func _set_waiting(value: bool) -> void :
+	if is_host and _waiting and not value:
+		var reason: = "every client loaded" if _waiting_peers.empty() else "timed out"
+		ModLoaderLog.info("Wave starts after %.1f s (%s)" % [_waiting_time, reason], NetProtocol.MOD_ID)
+	_waiting = value
+	_main._wave_timer.paused = value
+	_main._wave_timer.half_wave_timer.paused = value
+	_waiting_label.visible = value
+
+
+func _add_waiting_label() -> void :
+	var font: DynamicFont = WAITING_FONT.duplicate()
+	font.size = WAITING_FONT_SIZE
+	font.outline_size = 3
+	font.outline_color = Color.black
+	_waiting_label = Label.new()
+	_waiting_label.name = "LanWaitingLabel"
+	_waiting_label.text = "LAN_WAITING_FOR_PLAYERS"
+	_waiting_label.align = Label.ALIGN_CENTER
+	_waiting_label.anchor_right = 1.0
+	_waiting_label.margin_top = 180
+	_waiting_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_waiting_label.add_font_override("font", font)
+	_waiting_label.visible = false
+	_main.get_node("UI/HUD").add_child(_waiting_label)
+
+
+# Host event: the wave ends (time out or everyone dead), with the host's
+# [wave failed, run lost, run won].
+func on_wave_cleanup(run_states: Array) -> void :
+	if run_states.size() != 3:
+		return
+	for state in run_states:
+		if typeof(state) != TYPE_BOOL:
+			return
+	_main.lan_clean_up_from_host(run_states)

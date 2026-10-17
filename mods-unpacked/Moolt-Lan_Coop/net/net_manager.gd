@@ -59,6 +59,8 @@ var _run_data_replaced: = false
 # The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
 # In-wave RPCs are forwarded to it.
 var wave_sync: Node = null
+# True while this machine's in-wave pause menu is open (the game keeps running in a session).
+var pause_menu_open: = false
 
 
 func _ready() -> void :
@@ -459,11 +461,11 @@ remote func _rpc_events(events) -> void :
 		wave_sync.on_events(events)
 
 
-remote func _rpc_wave_cleanup() -> void :
-	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+remote func _rpc_wave_cleanup(run_states) -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(run_states) != TYPE_ARRAY:
 		return
 	if wave_sync != null:
-		wave_sync.on_wave_cleanup()
+		wave_sync.on_wave_cleanup(run_states)
 
 
 
@@ -479,6 +481,24 @@ remote func _rpc_player_state(pos, move, aim, manual_aim) -> void :
 		wave_sync.on_player_state(entry.player_index, pos, move, aim, manual_aim)
 
 
+# The client's wave scene is up (the host holds the wave timer until every client sent this).
+remote func _rpc_wave_loaded() -> void :
+	if not is_host or wave_sync == null:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry != null:
+		wave_sync.on_client_loaded(entry.peer_id)
+
+
+# The client quit the wave from its pause menu.
+remote func _rpc_left_wave() -> void :
+	if not is_host or wave_sync == null:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry != null:
+		wave_sync.on_player_left(entry.player_index, entry.peer_id)
+
+
 
 # In-wave sending (called by LanWaveSync)
 
@@ -492,9 +512,27 @@ func send_events(events: Array) -> void :
 		rpc_id(entry.peer_id, "_rpc_events", events)
 
 
-func send_wave_cleanup() -> void :
+func send_wave_cleanup(run_states: Array) -> void :
 	for entry in _get_connected_clients():
-		rpc_id(entry.peer_id, "_rpc_wave_cleanup")
+		rpc_id(entry.peer_id, "_rpc_wave_cleanup", run_states)
+
+
+func send_wave_loaded() -> void :
+	if is_client and joined:
+		rpc_id(HOST_PEER_ID, "_rpc_wave_loaded")
+
+
+func send_left_wave() -> void :
+	if is_client and joined:
+		rpc_id(HOST_PEER_ID, "_rpc_left_wave")
+
+
+# Host: lobby entries of the clients that are connected right now (the wave waits for them).
+func get_connected_client_peers() -> Array:
+	var peers: = []
+	for entry in _get_connected_clients():
+		peers.append(entry.peer_id)
+	return peers
 
 
 func send_player_state(pos: Vector2, move: Vector2, aim: Vector2, manual_aim: bool) -> void :

@@ -30,6 +30,8 @@ const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 
 const VANILLA_HUD_SLOTS: = 4
+
+var _lan_host_run_states: = []
 const NAME_LABEL_NAME: = "LanNameLabel"
 const NAME_FONT_SIZE: = 22
 const NAME_OUTLINE_SIZE: = 2
@@ -286,6 +288,9 @@ func _check_for_pause() -> void :
 	if not LanGame.in_session() or RunData.is_streamplay_run:
 		._check_for_pause()
 		return
+	# The open menu handles the pause button itself (see the pause_menu.gd extension).
+	if LanGame.get_lan_net().pause_menu_open:
+		return
 	if _skip_pause_check:
 		_skip_pause_check = false
 		return
@@ -303,18 +308,31 @@ func _on_WaveTimer_timeout() -> void :
 
 
 func clean_up_room() -> void :
-	if LanGame.in_session():
-		if _lan_is_client() and _cleaning_up:
-			return
-		if LanGame.get_lan_net().is_host:
-			LanGame.get_lan_net().send_wave_cleanup()
+	if _lan_is_client() and _cleaning_up:
+		return
 	.clean_up_room()
 
 
+# clean_up_room starts with this. The host sends its verdict (wave failed, run lost, run won)
+# with the cleanup event; a client uses it instead of its own, which may miss the last death.
+func _set_run_states() -> void :
+	if _lan_is_client() and _lan_host_run_states.size() == 3:
+		_is_wave_failed = _lan_host_run_states[0]
+		_is_run_lost = _lan_host_run_states[1]
+		_is_run_won = _lan_host_run_states[2]
+		RunData.run_won = _is_run_won
+		return
+	._set_run_states()
+	var lan_net = LanGame.get_lan_net()
+	if lan_net != null and lan_net.active and lan_net.is_host:
+		lan_net.send_wave_cleanup([_is_wave_failed, _is_run_lost, _is_run_won])
+
+
 # Client: the host's wave ended (the timer ran out or everyone died).
-func lan_clean_up_from_host() -> void :
+func lan_clean_up_from_host(run_states: Array) -> void :
 	if _cleaning_up:
 		return
+	_lan_host_run_states = run_states
 	_wave_timer.stop()
 	clean_up_room()
 

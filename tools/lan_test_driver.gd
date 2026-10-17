@@ -5,10 +5,12 @@ extends Node
 #   host: hosts, picks and readies, adds $FAKES (default 1) fake lobby players (the first is an
 #         Engineer, for turrets), starts a 20 s wave with invulnerable players and $ENEMY_MULT
 #         times the enemies, moves left, spawns a boss and three trees, sets the boss to
-#         5000 HP and then half, kills a tree, the fake player 2 and the client's player 1, logs
-#         players/HP/speed/timer and entities, waits for the wave end, leaves
+#         5000 HP and then half, kills a tree and the fake player 2, opens its pause menu, kills
+#         everyone (run lost), logs players/HP/speed/timer, entities and the run verdict, leaves
 #   join: joins the first discovered game, picks and readies, enters the wave with the host,
-#         moves right, logs the same, follows the host back to the lobby
+#         moves right, opens its pause menu and checks it stands still, then (with
+#         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, or stays and
+#         logs the host's run verdict, follows the host back to the lobby
 #   solo: builds a 1-player run without a session and plays a vanilla wave
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
@@ -20,6 +22,7 @@ var step: = 0
 var next_t: = 0.0
 var start_pos = null
 var started: = false
+var run_states_logged: = false
 
 
 func _ready() -> void :
@@ -93,6 +96,11 @@ func _process(delta: float) -> void :
 		started = menus() != null
 		return
 	t += delta
+	# The wave's verdict, once, as soon as its cleanup starts (the scene changes soon after).
+	var scene = get_tree().current_scene
+	if not run_states_logged and scene != null and scene.filename == MenuData.game_scene and scene._cleaning_up:
+		run_states_logged = true
+		log_run_states(role + "_cleanup")
 	if t < next_t:
 		return
 	if role == "quit" or get_node_or_null("/root/LanNet") == null:
@@ -310,21 +318,40 @@ func _host_step() -> void :
 			next_t = 20.0
 		9:
 			log_sync("host_w20")
-			get_tree().current_scene._players[1].die()
+			# Pause menu on the host: the wave keeps running everywhere.
+			get_tree().current_scene._pause_menu.pause(0)
+			print("[TEST] host_pause open=", get_tree().current_scene._pause_menu.visible, " tree_paused=", get_tree().paused)
 			next_t = 23.0
 		10:
 			log_sync("host_w23")
-			next_t = 37.0
+			var main = get_tree().current_scene
+			main._pause_menu.unpause()
+			# Everyone dies: the run is lost.
+			for p in main._players:
+				if not p.dead:
+					p.die()
+			next_t = 24.0
 		11:
+			next_t = 30.0
+		12:
 			log_lobby("host_after_wave_end")
 			next_t = t + 2.0
-		12:
+		13:
 			net.leave()
 			get_tree().quit()
 
 
+func log_run_states(tag: String) -> void :
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene:
+		print("[TEST] ", tag, " not in wave, scene=", scene_name())
+		return
+	print("[TEST] ", tag, " cleaning_up=", main._cleaning_up, " wave_failed=", main._is_wave_failed, " run_lost=", main._is_run_lost, " run_won=", main._is_run_won)
+
+
 func _client_step() -> void :
 	var m = menus()
+	var quits = OS.get_environment("CLIENT_QUITS") == "1"
 	match step:
 		0:
 			next_t = 4.0
@@ -349,15 +376,41 @@ func _client_step() -> void :
 			log_sync("client_w15")
 			next_t = 16.0
 		6:
-			log_sync("client_w16")
-			next_t = 19.0
+			# Pause menu on the client: its player stands still, the wave goes on.
+			var main = get_tree().current_scene
+			main._pause_menu.pause(0)
+			start_pos = main._players[main.get_node("LanWaveSync")._local_index].global_position
+			Input.action_press("button_move_down_7")
+			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
+			next_t = 17.0
 		7:
-			log_sync("client_w19")
-			next_t = 23.0
+			var main = get_tree().current_scene
+			var player = main._players[main.get_node("LanWaveSync")._local_index]
+			print("[TEST] client_paused_moved=", player.global_position.distance_to(start_pos), " time_left=", stepify(main._wave_timer.time_left, 0.1))
+			Input.action_release("button_move_down_7")
+			main._pause_menu.unpause()
+			print("[TEST] client_unpaused open=", main._pause_menu.visible, " net_flag=", get_node("/root/LanNet").pause_menu_open)
+			next_t = 18.5
 		8:
-			log_sync("client_w23")
-			next_t = 36.0
+			if OS.get_environment("CLIENT_QUITS") == "2":
+				# The process ends mid-wave (crash, closed window): the host sees a disconnect.
+				get_tree().quit()
+				return
+			if quits:
+				# Quit the wave (like the pause menu's Quit): the host's copy of this player dies.
+				var _e = get_tree().change_scene(MenuData.title_screen_scene)
+			else:
+				log_sync("client_w18")
+			next_t = 21.0
 		9:
+			if quits:
+				log_lobby("client_left_wave")
+			else:
+				log_sync("client_w21")
+			next_t = 23.6
+		10:
+			next_t = 29.0
+		11:
 			log_lobby("client_end")
 			get_tree().quit()
 
@@ -372,6 +425,8 @@ func _solo_step() -> void :
 			var entry = NetProtocol.new_player_entry(1, 0, "Solo")
 			entry.character_id = "character_well_rounded"
 			entry.weapon_id = "weapon_knife_1"
+			# Invulnerable, so the wave ends cleared ($SOLO_MORTAL=1 lets it die).
+			DebugService.invulnerable = OS.get_environment("SOLO_MORTAL") != "1"
 			RB.build_run([entry], {"zone": 0, "difficulty": 0})
 			RunData.set_coop_run(false)
 			RunData.play_mode = RunData.PlayMode.SOLO
