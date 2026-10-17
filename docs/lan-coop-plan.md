@@ -156,6 +156,21 @@ Leaving the lobby returns to the page it was entered from (Multiplayer page for 
   4. Broadcast the serialized run state, then everyone does `change_scene(MenuData.game_scene)`.
 - **Run-state serialization.** Use `PlayerRunData.serialize()` plus the global fields from `RunData.get_state()`. Mirror how `ProgressData` saves `saved_run_state`.
 
+Done in three increments, each tested by the user and committed separately: 3a (picks and ready), 3b (host settings and Start), 3c (run build and sync).
+- **Difficulty:** all difficulties (Danger 0–5) are always selectable.
+- **Start** builds the run and syncs it to every peer, but stays in the lobby. Loading the wave needs Step 4 (input devices for remote players: `entity_spawner.gd:105` reads `CoopService.connected_players[i]`) and Step 6, so it is part of Milestone 3.
+
+**3a status: done.**
+- **Shared rules** live in `net/lobby_rules.gd`: character lookup and unlock, starting choices as in `weapon_selection.gd`, `is_entry_complete`. The UI, the host's validation in `LanNet._apply_player_changes` and `are_all_ready()` all use it.
+- **Host validation:** invalid or locked picks are dropped. Changing character or weapon un-readies the player. `PROTOCOL_VERSION` is now 2.
+- **Lobby UI** (`ui/lobby.gd`):
+  - **Left:** player rows with colour (temporary 12-colour palette in `ui_kit.gd`), character icon, name and tags, weapon icon, Ready/Choosing.
+  - **Right:** a character grid and a starting weapon grid built from vanilla `inventory.tscn`, with random tiles. Random is resolved locally and the real id is sent. Locked characters show as lock tiles.
+  - **Info panel:** vanilla `character_panel_ui.tscn` for a focused character, `item_panel_ui.tscn` for a focused weapon.
+  - **Ready** toggles ready.
+  - **Focus** moves character → weapons → Ready once the host has confirmed each pick.
+- **Pitfall:** in GDScript 3, `continue` inside a `match` block falls through to the next pattern instead of continuing the loop. Use `if`/`elif` in loops.
+
 ## Step 4: Lift the 4-player cap to 12
 Scope: only code that runs in-wave on every machine, plus `RunData`. The coop shop, upgrade and char-select UIs are never used in net mode.
 - **`CoopService`** (`singletons/coop_service.gd`):

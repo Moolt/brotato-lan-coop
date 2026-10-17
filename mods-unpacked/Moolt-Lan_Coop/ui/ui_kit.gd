@@ -8,6 +8,23 @@ const BACK_ICON = preload("res://ui/menus/global/arrow_left_border.png")
 
 const STATUS_COLOR_ERROR: = Color(1, 0.45, 0.45)
 const STATUS_COLOR_INFO: = Color(1, 1, 1)
+const STATUS_COLOR_OK: = Color(0.55, 1, 0.55)
+const STATUS_COLOR_MUTED: = Color(1, 1, 1, 0.6)
+
+# Vanilla's 4 coop colours (coop_service.tscn) plus 8 more for 12 players.
+# Temporary: Step 4 moves the palette into CoopService.
+const PLAYER_COLORS: = [
+	Color(0.7227, 0.99, 0.92763), Color(0.95, 0.7277, 0.608), Color(0.87451, 0.988235, 0.721569), Color(0.99, 0.94842, 0.6336),
+	Color(0.72, 0.84, 0.99), Color(0.99, 0.72, 0.88), Color(0.84, 0.75, 0.99), Color(0.99, 0.75, 0.75),
+	Color(0.70, 0.96, 0.99), Color(0.86, 0.86, 0.86), Color(0.99, 0.86, 0.72), Color(0.78, 0.99, 0.80),
+]
+
+
+# Same saturation boost as CoopService.get_player_color.
+static func get_player_color(player_index: int) -> Color:
+	var color: Color = PLAYER_COLORS[player_index % PLAYER_COLORS.size()]
+	color.s = min(color.s + 0.5, 1.0)
+	return color
 
 
 # Dims the background like vanilla pages and returns a centred column to fill.

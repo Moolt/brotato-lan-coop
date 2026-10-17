@@ -13,6 +13,7 @@ signal player_disconnected(player_index)
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd")
 const NetDiscovery = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_discovery.gd")
+const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 
 const HOST_PEER_ID: = 1
 
@@ -197,7 +198,7 @@ func are_all_ready() -> bool:
 	if players.empty():
 		return false
 	for entry in players:
-		if not entry.connected or entry.character_id.empty() or not entry.ready:
+		if not entry.connected or not entry.ready or not LobbyRules.is_entry_complete(entry):
 			return false
 	return true
 
@@ -325,26 +326,33 @@ func _broadcast_lobby_state() -> void :
 	emit_signal("lobby_changed")
 
 
-# Returns true if anything changed.
+# Applies the editable keys in order (character, weapon, ready), dropping invalid values.
+# Changing character or weapon un-readies the player. Returns true if anything changed.
 func _apply_player_changes(entry: Dictionary, changes: Dictionary) -> bool:
 	var changed: = false
 	for key in NetProtocol.PLAYER_EDITABLE_KEYS:
 		if not changes.has(key):
 			continue
 		var value = changes[key]
+		# (No match block here: "continue" inside match falls through to the next pattern.)
 		if key == "ready":
 			if typeof(value) != TYPE_BOOL:
 				continue
-			if value and entry.character_id.empty():
+			if value and not LobbyRules.is_entry_complete(entry):
 				value = false
 		elif typeof(value) != TYPE_STRING:
+			continue
+		elif key == "character_id" and not value.empty() and not LobbyRules.is_character_unlocked(LobbyRules.get_character(value)):
+			continue
+		elif key == "weapon_id" and not value.empty() and LobbyRules.get_starting_choice(LobbyRules.get_character(entry.character_id), value) == null:
 			continue
 
 		if entry[key] == value:
 			continue
 		if key == "character_id":
-			entry.ready = false
 			entry.weapon_id = ""
+		if key != "ready":
+			entry.ready = false
 		entry[key] = value
 		changed = true
 	return changed
