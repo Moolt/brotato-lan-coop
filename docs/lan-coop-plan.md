@@ -383,6 +383,19 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Tested:** host + client + 3 fakes with injected spitters, boss and an explosion: animation, damage and explosion events arrive (same counts as sent), damage numbers, hit flashes and blood show on the client. 12 slots with 5× enemies: about 450 damage events in 20 s, no `ERROR:`, client about 590 FPS. Vanilla solo unchanged.
 
 - **6d: materials, consumables and player stats.** Materials (gold), consumables and crates: spawn, attraction and pickup events (`items/global/item.gd` `pickup()` does nothing on clients); gold, XP and level in the HUD, level-up and pickup feedback; the things-to-process icons (upgrades and crates collected during the wave).
+**6d status: done.**
+- **`items/global/item.gd` extension** (covers `Gold` and `Consumable`): on the host, `drop()` gives the item a u16 net id and `pickup()` reports pickups; `lan_net_id` is 0 while unsynced.
+- **Events** (`PROTOCOL_VERSION` 10):
+  - drop: `[9, id, kind (0 gold, 1 consumable), gold texture path, consumable id, pos, rotation, push-back target, scale, boosted]`. Clients take the item from their own pool (or instance `gold_scene`/`consumable_scene`), add it to `_active_golds`/`_consumables` and call vanilla's `drop()`, so the push-back looks the same.
+  - attraction: the host checks every physics frame whether an item's `attracted_by` changed and sends `[10, id, target kind, target id]` for players and synced entities (lootworms). The gold bag at wave end counts as none: every machine sends its own items there in `clean_up_room`.
+  - pickup: `[11, id, player_index]`, only for players (the gold bag's pickups stay local). Clients play vanilla's gold or consumable pickup sound, the gold pickup effect and floating text, and pool the item.
+  - crate to process: `[12, player_index, consumable id]`. The `main.gd` extension's `on_consumable_picked_up` finds which player's `_consumables_to_process` grew (any player with `share_coop_loot`); clients add the icon to that player's things-to-process.
+- **Snapshot** per player adds gold (s32), XP (float) and level (u16): 33 bytes per player. Clients write them into `RunData.players_data` and emit `gold_changed`, `xp_added` and, per level gained, `levelled_up`, so vanilla's HUD, level-up sound, floating text and upgrade icon follow.
+- **Client side:** `main.spawn_gold` and `spawn_consumables` do nothing (with `spawn_loot` and garden fruit, nothing drops locally).
+- **Tested:** host + client + 3 fakes with an injected level-up and a crate dropped onto the host player: gold, XP and level match (host player level 1, XP 18 on both), the drop/attract/pickup/crate events arrive in the counts sent, materials on the ground match (50 at the cap). 12 slots with 5× enemies: no `ERROR:`, client about 600 FPS. Vanilla solo unchanged.
+- **Gaps:** once 50 materials lie on the ground, vanilla adds new value to a random existing one and grows it; that size change isn't synced (pickup values are, through the gold stat). Level-ups on clients run vanilla's `on_levelled_up`, which also adds +1 max HP to the client's copy of `RunData` and queues an upgrade in `_upgrades_to_process`; Step 7 replaces the client's run data from the host anyway.
+- **Test driver pitfall:** a test that instances a pooled node itself must call `main.get_node_from_pool(pool_id, container)` once first. Vanilla's `add_node_to_pool` asserts that the pool exists, and the failed assert is a `SCRIPT ERROR` attributed to the mod's `main.gd`.
+
 - **6e: pause, dropouts and run end.** Pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` is already off in a session), the host waiting for clients to load before the wave timer starts, players dropping out or quitting mid-wave (their player dies or stands still on the host; the host leaving ends the session), run won/lost events.
 
 ## Step 7: Between-wave flow (upgrades and shop per machine)
@@ -419,7 +432,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 ---
 
 ## Milestones
-Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads), 5 (arena, enemy scaling, camera) 6b (enemies on clients) and 6c (attacks, projectiles, hit feedback) are done. Next is Step 6d (materials, consumables, player stats), then 6e (pause, dropouts, run end).
+Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads), 5 (arena, enemy scaling, camera) 6b (enemies on clients) and 6c (attacks, projectiles, hit feedback) are done. 6d (materials, consumables, player stats) is done too. Next is Step 6e (pause, dropouts, run end).
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
@@ -428,9 +441,9 @@ Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, nam
 6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
-**Still to come:** `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
+**Still to come:** `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
 
 ## Verification
 - **Local multi-instance testing.**

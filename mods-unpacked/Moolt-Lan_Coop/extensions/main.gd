@@ -324,11 +324,39 @@ func _lan_is_client() -> bool:
 	return lan_net != null and lan_net.active and lan_net.is_client
 
 
-# Client: loot comes from the host (6d), not from local deaths or garden turrets.
+# Client: materials and consumables come from the host (net/wave_sync.gd), never from local
+# deaths, item effects or garden turrets.
 func spawn_loot(unit: Unit, entity_type: int, args: Entity.DieArgs) -> void :
 	if _lan_is_client():
 		return
 	.spawn_loot(unit, entity_type, args)
+
+
+func spawn_gold(value: float, pos: Vector2, spread: int) -> void :
+	if _lan_is_client():
+		return
+	.spawn_gold(value, pos, spread)
+
+
+func spawn_consumables(unit: Unit) -> void :
+	if _lan_is_client():
+		return
+	.spawn_consumables(unit)
+
+
+# Host: a crate that waits for the end of the wave goes to a player chosen here (any player with
+# the share_coop_loot option); clients show it in that player's things-to-process icons.
+func on_consumable_picked_up(consumable: Node, player_index: int) -> void :
+	var sizes: = []
+	for queue in _consumables_to_process:
+		sizes.append(queue.size())
+	.on_consumable_picked_up(consumable, player_index)
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync == null or not wave_sync.is_host:
+		return
+	for i in int(min(sizes.size(), RunData.get_player_count())):
+		if _consumables_to_process[i].size() > sizes[i]:
+			wave_sync.on_crate_to_process(i, consumable.consumable_data)
 
 
 func on_structure_wanted_to_spawn_fruit(pos: Vector2) -> void :

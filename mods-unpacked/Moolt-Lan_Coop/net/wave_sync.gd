@@ -17,8 +17,11 @@ extends Node
 #     synced (no bullet-hell pattern in use spawns groups).
 #   - So are enemy and turret animations other than idle/death (attacks, charges), damage taken
 #     by players and entities (for floating text, flashes, blood) and explosions.
+#   - Materials and consumables get their own net ids: drop (with vanilla's push-back target),
+#     attraction (whenever attracted_by changes to a player or a synced entity) and pickup by a
+#     player are events; so is a crate going into a player's things-to-process.
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
-#     wave time left; per player position, movement, speed, HP and death; per entity (trees
+#     wave time left; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
 #     excluded, they don't move) position, HP ratio (0-255) and a burning flag.
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
@@ -33,6 +36,9 @@ extends Node
 #   - Attack animations play, but their shoot()/start_shoot() calls do nothing (enemy.gd and
 #     turret.gd extensions). Damage events flash the unit, play its hurt sound and emit
 #     took_damage, which drives vanilla's floating text, blood and screen shake.
+#   - Item copies drop, fly to whoever attracts them and vanish on the host's pickup (sound,
+#     effect, floating text). Gold, XP and level follow the snapshot; RunData's signals update the
+#     HUD, and a level-up runs vanilla's on_levelled_up (sound, things-to-process icon).
 #   - Other players and entities are puppets, interpolated between snapshots
 #     INTERP_DELAY_MS in the past.
 #   - The wave timer follows the host's. The wave ends when the host says so.
@@ -47,7 +53,7 @@ const MOVE_SCALE: = 127.0
 const HP_SCALE: = 255.0
 const FLAG_DEAD: = 1
 const SNAPSHOT_HEADER_SIZE: = 13
-const SNAPSHOT_PLAYER_SIZE: = 23
+const SNAPSHOT_PLAYER_SIZE: = 33
 const SNAPSHOT_ENTITY_SIZE: = 8
 const ENTITY_FLAG_BURNING: = 1
 const MAX_NET_ID: = 65535
@@ -61,6 +67,13 @@ const EVENT_PROJECTILE_STOP: = 5
 const EVENT_ANIMATION: = 6
 const EVENT_DAMAGE: = 7
 const EVENT_EXPLOSION: = 8
+const EVENT_ITEM_DROP: = 9
+const EVENT_ITEM_ATTRACT: = 10
+const EVENT_ITEM_PICKUP: = 11
+const EVENT_CRATE_TO_PROCESS: = 12
+const ITEM_GOLD: = 0
+const ITEM_CONSUMABLE: = 1
+const NO_TARGET: = - 1
 const RANGED_ATTACK: = - 1
 const TARGET_ENTITY: = 0
 const TARGET_PLAYER: = 1
@@ -96,6 +109,12 @@ var _next_projectile_id: = 0
 # Projectile net id -> projectile, on both sides (host: shot and not yet returned to the pool).
 var _projectiles: = {}
 var _scene_cache: = {}
+
+# Item (material, consumable) net id -> item, on both sides. Host: also the attraction target
+# last sent per item ([kind, id]).
+var _items: = {}
+var _item_targets: = {}
+var _next_item_id: = 0
 
 # Client: received snapshots, oldest first:
 # {time (host msec), players: [{pos, move}], entities: {net id: pos}}.
@@ -150,6 +169,7 @@ func _physics_process(_delta: float) -> void :
 	if is_host:
 		_apply_remote_states()
 		_flush_pending_projectiles()
+		_check_item_attraction()
 		if not _events.empty():
 			_count_events(_events)
 			_net.send_events(_events)
@@ -303,6 +323,66 @@ func on_explosion(instance: Node, effect: Resource) -> void :
 	_events.append([EVENT_EXPLOSION, path, instance.global_position, instance.scale.x, instance._explosion_smoke.amount, instance.sound_db_mod])
 
 
+# Called by the item.gd extension after vanilla dropped a material or consumable.
+func on_item_dropped(item: Node) -> void :
+	if _main._cleaning_up:
+		return
+	_next_item_id = _next_item_id % MAX_NET_ID + 1
+	item.lan_net_id = _next_item_id
+	_items[_next_item_id] = item
+	_item_targets[_next_item_id] = [NO_TARGET, 0]
+	var kind: = ITEM_GOLD if item is Gold else ITEM_CONSUMABLE
+	var texture_path: = ""
+	var consumable_id: = ""
+	var boosted: = 1
+	if item is Gold:
+		boosted = item.boosted
+		if item.sprite.texture != null:
+			texture_path = item.sprite.texture.resource_path
+	elif item.consumable_data != null:
+		consumable_id = item.consumable_data.my_id
+	_events.append([EVENT_ITEM_DROP, item.lan_net_id, kind, texture_path, consumable_id, item.global_position, item.rotation, item.push_back_destination, item.scale.x, boosted])
+
+
+# Called by the item.gd extension before vanilla handles a pickup, on both sides.
+func on_item_picked_up(item: Node, player_index: int) -> void :
+	var net_id: int = item.lan_net_id
+	if _items.get(net_id) != item:
+		return
+	var _erased = _items.erase(net_id)
+	_erased = _item_targets.erase(net_id)
+	# The gold bag (player -1) collects everything at the end of the wave, on every machine.
+	if is_host and player_index >= 0:
+		_events.append([EVENT_ITEM_PICKUP, net_id, player_index])
+
+
+func on_crate_to_process(player_index: int, consumable_data: Resource) -> void :
+	_events.append([EVENT_CRATE_TO_PROCESS, player_index, consumable_data.my_id])
+
+
+func _check_item_attraction() -> void :
+	for net_id in _items:
+		var item = _items[net_id]
+		if not is_instance_valid(item):
+			continue
+		var target: = _get_target_ref(item.attracted_by)
+		if target != _item_targets[net_id]:
+			_item_targets[net_id] = target
+			_events.append([EVENT_ITEM_ATTRACT, net_id, target[0], target[1]])
+
+
+# [TARGET_PLAYER, player_index], [TARGET_ENTITY, net id] or [NO_TARGET, 0]. The gold bag
+# (end of the wave) counts as none: every machine sends its own items there.
+func _get_target_ref(node) -> Array:
+	if node == null or not is_instance_valid(node):
+		return [NO_TARGET, 0]
+	if node is Player:
+		return [TARGET_PLAYER, node.player_index]
+	if node.has_meta("lan_net_id") and _entities.get(node.get_meta("lan_net_id")) == node:
+		return [TARGET_ENTITY, node.get_meta("lan_net_id")]
+	return [NO_TARGET, 0]
+
+
 func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 	var net_id = entity.get_meta("lan_net_id") if entity.has_meta("lan_net_id") else null
 	if net_id == null or _entities.get(net_id) != entity:
@@ -363,6 +443,10 @@ func _build_snapshot() -> PoolByteArray:
 		buffer.put_32(player.current_stats.health)
 		buffer.put_32(player.max_stats.health)
 		buffer.put_u8(FLAG_DEAD if player.dead else 0)
+		var player_data = RunData.players_data[player.player_index]
+		buffer.put_32(player_data.gold)
+		buffer.put_float(player_data.current_xp)
+		buffer.put_u16(player_data.current_level)
 
 	var moving: = []
 	for net_id in _entities:
@@ -424,8 +508,12 @@ func on_snapshot(data: PoolByteArray) -> void :
 		var health: = buffer.get_32()
 		var max_health: = buffer.get_32()
 		var flags: = buffer.get_u8()
+		var gold: = buffer.get_32()
+		var xp: = buffer.get_float()
+		var level: = buffer.get_u16()
 		positions.append({"pos": pos, "move": move})
 		_apply_player_state(_main._players[player_index], speed, health, max_health, (flags & FLAG_DEAD) != 0)
+		_apply_player_progress(player_index, gold, xp, level)
 
 	var entity_positions: = {}
 	var _count = buffer.get_u16()
@@ -454,6 +542,22 @@ func _apply_player_state(player, speed: float, health: int, max_health: int, dea
 		player.emit_signal("health_updated", player, health, max_health)
 	if dead:
 		player.die()
+
+
+# RunData's signals drive the HUD (gold, XP bar) and, for a level-up, vanilla's on_levelled_up.
+func _apply_player_progress(player_index: int, gold: int, xp: float, level: int) -> void :
+	var player_data = RunData.players_data[player_index]
+	if player_data.gold != gold:
+		player_data.gold = gold
+		RunData.emit_signal("gold_changed", gold, player_index)
+	var xp_changed: bool = player_data.current_xp != xp or player_data.current_level != level
+	while player_data.current_level < level:
+		player_data.current_level += 1
+		RunData.emit_signal("levelled_up", player_index)
+	player_data.current_level = level
+	if xp_changed:
+		player_data.current_xp = xp
+		RunData.emit_signal("xp_added", xp, RunData.get_next_level_xp_needed(player_index), player_index)
 
 
 # Boss and other over-head life bars follow health_updated. The client's max HP can differ from
@@ -507,6 +611,14 @@ func on_events(events: Array) -> void :
 			_client_damage(event)
 		elif event[0] == EVENT_EXPLOSION and event.size() == 6:
 			_client_explosion(event)
+		elif event[0] == EVENT_ITEM_DROP and event.size() == 10:
+			_client_item_drop(event)
+		elif event[0] == EVENT_ITEM_ATTRACT and event.size() == 4:
+			_client_item_attract(event)
+		elif event[0] == EVENT_ITEM_PICKUP and event.size() == 3:
+			_client_item_pickup(event)
+		elif event[0] == EVENT_CRATE_TO_PROCESS and event.size() == 3:
+			_client_crate_to_process(event)
 
 
 func _client_spawn(event: Array) -> void :
@@ -773,6 +885,106 @@ func _client_explosion(event: Array) -> void :
 		area.set_deferred("monitoring", false)
 		area.set_deferred("monitorable", false)
 	instance.start_explosion()
+
+
+func _client_item_drop(event: Array) -> void :
+	# [EVENT_ITEM_DROP, net id, kind, texture path, consumable id, pos, rotation, push-back target,
+	#  scale, boosted]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_STRING or typeof(event[4]) != TYPE_STRING:
+		return
+	if typeof(event[5]) != TYPE_VECTOR2 or typeof(event[6]) != TYPE_REAL or typeof(event[7]) != TYPE_VECTOR2 or typeof(event[8]) != TYPE_REAL or typeof(event[9]) != TYPE_INT:
+		return
+	if _main._cleaning_up:
+		return
+	var is_gold: bool = event[2] == ITEM_GOLD
+	var consumable_data = null
+	var texture = null
+	if is_gold:
+		if not event[3].empty() and ResourceLoader.exists(event[3]):
+			texture = load(event[3])
+	else:
+		consumable_data = ItemService.get_element_safe(ItemService.consumables, event[4])
+		if consumable_data == null:
+			return
+		texture = consumable_data.icon
+
+	var pool_id: int = _main._gold_pool_id if is_gold else _main._consumable_pool_id
+	var container: Node = _main._materials_container if is_gold else _main._consumables_container
+	var item = _main.get_node_from_pool(pool_id, container)
+	if item == null:
+		item = (_main.gold_scene if is_gold else _main.consumable_scene).instance()
+		container.add_child(item)
+	item.already_picked_up = false
+	if is_gold:
+		item.boosted = event[9]
+		item.scale = Vector2(event[8], event[8])
+		_main._active_golds.push_back(item)
+	else:
+		item.consumable_data = consumable_data
+		_main._consumables.push_back(item)
+	if texture != null:
+		item.set_texture(texture)
+	item.drop(event[5], event[6], event[7])
+	item.lan_net_id = event[1]
+	_items[event[1]] = item
+
+
+func _client_item_attract(event: Array) -> void :
+	# [EVENT_ITEM_ATTRACT, net id, target kind, target id]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_INT:
+		return
+	var item = _items.get(event[1])
+	if item == null or not is_instance_valid(item) or _main._cleaning_up:
+		return
+	var target = null
+	if event[2] == TARGET_PLAYER and event[3] >= 0 and event[3] < _main._players.size():
+		target = _main._players[event[3]]
+	elif event[2] == TARGET_ENTITY:
+		target = _entities.get(event[3])
+	if target != null and not is_instance_valid(target):
+		target = null
+	item.attracted_by = target
+	if target != null:
+		item.set_physics_process(true)
+
+
+func _client_item_pickup(event: Array) -> void :
+	# [EVENT_ITEM_PICKUP, net id, player_index]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT:
+		return
+	var item = _items.get(event[1])
+	var _erased = _items.erase(event[1])
+	if item == null or not is_instance_valid(item) or item.already_picked_up or item.lan_net_id != event[1]:
+		return
+	item.already_picked_up = true
+	item.lan_net_id = 0
+	# What main.on_gold_picked_up / on_consumable_picked_up and Item.pickup show.
+	if item is Gold:
+		_main._active_golds.erase(item)
+		if ProgressData.settings.alt_gold_sounds:
+			SoundManager.play(Utils.get_rand_element(_main.gold_alt_pickup_sounds), - 5, 0.2)
+		else:
+			SoundManager.play(Utils.get_rand_element(_main.gold_pickup_sounds), 0, 0.2)
+		_main._effects_manager.on_gold_picked_up(item, event[2])
+		_main._floating_text_manager.on_gold_picked_up(item, event[2])
+		_main.add_node_to_pool(item, _main._gold_pool_id)
+	else:
+		_main._consumables.erase(item)
+		if item.consumable_data != null:
+			SoundManager.play(Utils.get_rand_element(item.consumable_data.pickup_sounds))
+		_main.add_node_to_pool(item, _main._consumable_pool_id)
+	item.reset()
+
+
+func _client_crate_to_process(event: Array) -> void :
+	# [EVENT_CRATE_TO_PROCESS, player_index, consumable id]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING:
+		return
+	if event[1] < 0 or event[1] >= _main._players.size():
+		return
+	var consumable_data = ItemService.get_element_safe(ItemService.consumables, event[2])
+	if consumable_data != null:
+		_main._things_to_process_player_containers[event[1]].consumables.add_element(consumable_data)
 
 
 func _load_scene(path: String):

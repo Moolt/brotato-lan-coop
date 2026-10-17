@@ -195,14 +195,15 @@ func log_sync(tag: String) -> void :
 		return
 	var out = []
 	for p in main._players:
-		out.append("%d:%s%s hp=%d/%d spd=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed()])
+		var pd = RunData.players_data[p.player_index]
+		out.append("%d:%s%s hp=%d/%d spd=%d g=%d xp=%.1f lvl=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed(), pd.gold, pd.current_xp, pd.current_level])
 	var cam = main._camera
 	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
 	var spawner = main._entity_spawner
 	var boss_hp = []
 	for boss in spawner.bosses:
 		boss_hp.append("%d/%d bar=%s" % [boss.current_stats.health, boss.max_stats.health, boss.life_bar.visible])
-	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " bosses=", spawner.bosses.size(), " boss_hp=", boss_hp, " neutrals=", spawner.neutrals.size(), " structures=", spawner.structures.size(), " pets=", spawner.pets.size(), " births=", spawner.active_births, " gold=", main._active_golds.size())
+	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " bosses=", spawner.bosses.size(), " boss_hp=", boss_hp, " neutrals=", spawner.neutrals.size(), " structures=", spawner.structures.size(), " pets=", spawner.pets.size(), " births=", spawner.active_births, " gold=", main._active_golds.size(), " consumables=", main._consumables.size(), " p0_upgrade_icons=", main._things_to_process_player_containers[0].upgrades.get_child_count(), " p0_crate_icons=", main._things_to_process_player_containers[0].consumables.get_child_count())
 	var sync = main.get_node_or_null("LanWaveSync")
 	if sync != null:
 		var ids = sync._entities.keys()
@@ -267,6 +268,21 @@ func _host_step() -> void :
 			log_sync("host_w14")
 			next_t = 16.0
 		7:
+			var main7 = get_tree().current_scene
+			# A level-up for the host player and a crate right next to it.
+			RunData.add_xp(30, 0)
+			# get_node_from_pool creates the pool, which vanilla's pickup returns the crate to.
+			var crate = main7.get_node_from_pool(main7._consumable_pool_id, main7._consumables_container)
+			if crate == null:
+				crate = main7.consumable_scene.instance()
+				main7._consumables_container.add_child(crate)
+			var _c = crate.connect("picked_up", main7, "on_consumable_picked_up")
+			crate.already_picked_up = false
+			crate.consumable_data = ItemService.get_element_safe(ItemService.consumables, "consumable_item_box")
+			crate.set_texture(crate.consumable_data.icon)
+			var crate_pos = main7._players[0].global_position + Vector2(5, 0)
+			crate.drop(crate_pos, 0, crate_pos)
+			main7._consumables.push_back(crate)
 			# An explosion next to the host player.
 			var explode_args = WeaponServiceExplodeArgs.new()
 			explode_args.pos = get_tree().current_scene._players[0].global_position + Vector2(150, 0)
