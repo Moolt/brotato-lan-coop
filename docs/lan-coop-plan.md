@@ -58,6 +58,10 @@ net/host_sync.gd       # child of main on host: assigns net ids, builds snapshot
 net/client_sync.gd     # child of main on client: applies snapshots, spawns/updates/frees puppets, interpolation
 net/net_config.gd      # user://lan_coop.cfg: last name, last IP, port, scaling knobs
 net/net_discovery.gd   # /root/LanNet/Discovery: host UDP beacon, client listener for the join page
+net/net_translations.gd # runtime Translations (en + de) for the mod's keys
+net/lobby_rules.gd     # character/weapon lookup and unlock checks shared by the lobby UI, host validation, run builder
+net/run_builder.gd     # builds the run from the lobby, (de)serializes it as JSON, digest for the sync check
+game/lan_game.gd       # in-wave helpers: MAX_PLAYERS, in_session(), get_player_name(), grow() for 4-slot arrays
 ui/ui_kit.gd           # shared page building blocks (pages are built in code, no .tscn)
 ui/multiplayer_menu.gd # name, Host game / Join game / Back
 ui/join_menu.gd        # discovered games list, join by address
@@ -368,15 +372,18 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 ---
 
 ## Milestones
+Status: 1 and 2 are done. Step 4 (12 players in a wave, names over heads) is done, ahead of milestone 6. Next is Step 5, then Step 6 for milestone 3.
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** Synced run start, then the host simulates and clients puppet players only, with no enemies.
 4. **Full wave.** Enemies, projectiles, pickups, and wave end.
 5. **Between waves.** Per-machine upgrades/shop and merge, so the loop runs for multiple waves.
-6. **Scale.** 12-player caps, larger arena, enemy scaling, HUD list, disconnect handling, perf pass.
+6. **Scale.** ~~12-player caps~~ (Step 4), larger arena, enemy scaling, ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-`ui/menus/title_screen/title_screen_menus.gd`, `singletons/coop_service.gd`, `singletons/run_data.gd`, `singletons/zone_service.gd`, `singletons/utils.gd`, `singletons/temp_stats.gd`, `singletons/linked_stats.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `weapons/weapon.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd`, `ui/menus/shop/base_shop.gd`, `ui/menus/global/popup_manager.gd`.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+
+**Still to come:** `singletons/zone_service.gd` (Step 5), `weapons/weapon.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
 
 ## Verification
 - **Local multi-instance testing.**
@@ -385,21 +392,24 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - Run with `-vvv` and watch `ModLoaderLog` output.
   - **Windows that are covered or unfocused stall on vsync** under Wayland/XWayland, which also stops the network poll. Turn vsync off (`display/window/vsync/use_vsync=false`) and tile the windows with `--position`.
   - Without `config/custom_user_dir_name`, instances use the real `~/.local/share/Brotato` save and log. For throwaway tests, copy the project and set a separate user dir name in the copy.
-- **Test setup used so far (Steps 2–3).** It lives in the session scratchpad and has to be rebuilt per session:
-  - **Throwaway copy.** `cp -a Decompiled <scratch>/game`, then remove its `.git`. Replace `mods-unpacked/Moolt-Lan_Coop` with an **absolute** symlink to `brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop`. In the copy's `project.godot`:
+- **Test setup used so far (Steps 2–4).** `tools/make_test_copy.sh <scratch>/game` builds it in one go (about 300 MB, a few seconds). The driver lives in the repo as `tools/lan_test_driver.gd` and is symlinked into the copy, so edits to it are tracked. It is not in the release zip.
+  - **Throwaway copy** (what the script does). `cp -a Decompiled <scratch>/game`, then remove its `.git`. Replace `mods-unpacked/Moolt-Lan_Coop` with an **absolute** symlink to `brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop`, and symlink `tools/lan_test_driver.gd` as `lan_test_driver.gd`. In the copy's `project.godot`:
     - `config/custom_user_dir_name="BrotatoLanTest"` (under `[application]`)
     - `window/vsync/use_vsync=false` (under `[display]`)
     - an autoload `LanTestDriver="*res://lan_test_driver.gd"` after `OS_Seaven`
-  - **Running.** `Godot/Godot_v3.7-dev1_x11.64 --path <scratch>/game --resolution 1920x1080 -- <role>`. One instance runs in the background with role `host`, a second in the foreground with role `join`, each under `timeout 60` with stdout to a log file.
+  - **Running.** `Godot/Godot_v3.7-dev1_x11.64 --path <scratch>/game --resolution 1280x720 --position 0,0 -- <role>` (second instance at `--position 1280,0`). Start `host` with `nohup ... &`, wait 1 s, start `join` the same way, then `wait`; stdout goes to `host.log` / `join.log`. The driver quits each instance at the end of its script.
     - First run one instance with role `quit` (quit as soon as the title screen loads) to catch parse errors cheaply.
     - The two instances share `user://lan_coop.cfg` (names, port 24999 in that profile).
-  - **Driver.** `lan_test_driver.gd` reads the role from `OS.get_cmdline_args()`. In `_process` it waits for `current_scene.filename == MenuData.title_screen_scene`, then finds `Menus` and runs a timed `match step` script that drives the pages by calling their handlers directly:
+  - **Driver.** Roles: `host`, `join`, `solo`, `quit`, or none (idle, for manual tests); see its header. Its step scripts follow the latest feature under test and get edited for the next one. `lan_test_driver.gd` reads the role from `OS.get_cmdline_args()`. In `_process` it waits for `current_scene.filename == MenuData.title_screen_scene`, then finds `Menus` and runs a timed `match step` script that drives the pages by calling their handlers directly:
     - `LanMultiplayerButton.emit_signal("pressed")`, `mp._host_button`, `join._first_row()`
     - lobby `_on_CharacterGrid_element_pressed(element)`, `_on_ReadyButton_pressed()`, `_on_StartButton_pressed`
     - it prints `[TEST] ...` lines and saves screenshots: `get_viewport().get_texture().get_data()`, `flip_y()`, `save_png()` into `$SHOT_DIR`
     - each step sets `next_t` *before* any `yield`, otherwise `_process` re-enters the same step
-    - fake lobby players: append `NetProtocol.new_player_entry(...)` to `LanNet.players`, then `_broadcast_lobby_state()`
-  - **Log check.** `grep -a "SCRIPT\|ERROR"` the logs, then filter out the engine shutdown errors (`_first != nullptr`, resources/MemoryPool still in use, ObjectDB leaks). `--disable-mods` shows vanilla prints these too. A stray background instance from an earlier run can mix into results, so check `ps` first.
+    - fake lobby players: append `NetProtocol.new_player_entry(...)` to `LanNet.players` (peer ids 1000+, with `character_id`, `weapon_id`, `ready = true`), then `_broadcast_lobby_state()`. They are never sent anything, because only connected peers count, so the host can start a 12-player wave alone.
+    - in the wave (Step 4): `get_tree().current_scene` is `main`; read `_players`, `_players_ui`, `_wave_timer`, `get_node("%LifeContainerP12")`; move the host with `Input.action_press("button_move_right_7")`; kill a player with `_players[i].die()`; open/close the pause menu with `_pause_menu.pause(0)` / `unpause()`; Quit with `_pause_menu.get_node("Menus/MenuConfirm")._on_ConfirmButton_pressed()`
+    - role `solo`: `RunBuilder.build_run` with one entry, then `set_coop_run(false)` and `change_scene(MenuData.game_scene)`, to check that vanilla solo play still works without a session
+    - the game starts in a splash scene (`res://pause.tscn`); wait for the title screen before counting time
+  - **Log check.** `grep -a "SCRIPT\|ERROR"` the logs, then filter out the engine shutdown errors (`_first != nullptr`, resources/MemoryPool still in use, ObjectDB leaks). `--disable-mods` shows vanilla prints these too. `WARNING: Node './Attach' was modified from inside an instance` on wave load is vanilla as well. A stray background instance from an earlier run can mix into results, so check `ps` first.
   - **Manual test by the user.** Two windows: `--resolution 1280x720 --position 0,0` and `--position 1280,0`, with no role argument (the driver stays idle), started with `nohup`. Commit only after the user approves.
 - **Per milestone:**
   - M2: names, characters and ready flags show up on every instance. Start is disabled until all players are ready.

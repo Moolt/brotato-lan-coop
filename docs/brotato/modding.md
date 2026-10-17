@@ -36,10 +36,12 @@
 - **Godot 3 runs engine callbacks at every inheritance level:** `_init`, `_ready`, `_process`, `_physics_process`, `_input`, `_enter_tree`. An override **does not** replace the vanilla callback, and both run. To stop a vanilla callback, call `set_process(false)` / `set_physics_process(false)` / `set_process_input(false)`, or override the regular methods it calls.
 - Regular methods are true overrides. Call the parent with `.method(args)`.
 - Member variables: vanilla initialisers run first, then the extension's. Reassign arrays in the extension's `_init()` or with its own initialiser.
+- **A parse error makes the extension silently absent.** ModLoader then logs `Invalid get index 'resource_path' (on base: 'null instance')` from `script_extension.gd`, and vanilla runs unchanged. A common cause: `var x: = expr` where `expr` has no static type (e.g. arithmetic on an untyped member such as `args.player_index`). Write `var x: float = ...` instead. Run a quick `quit`-role launch after editing to catch these.
+- **Adding nodes with unique names (`%Name`) at runtime:** `duplicate()` a node set, rename the copies, add them to the tree, then set `owner` and `unique_name_in_owner`. Setting the owner while a copy still has the original's name fails, because the unique name is already taken. Do it in the extension's `_enter_tree` if vanilla's `_ready` looks the nodes up (see `extensions/main.gd`).
 
 ## Loading and the crash trap
 - Mods load from `res://mods-unpacked` (unpacked) and `<game>/mods/*.zip`. The Steam profile loads workshop zips only. CLI flags: `--mods-path`, `--disable-mods`, `-vvv`.
-- **Crash recovery** (`singletons/crash_reporter.gd` ~L55-98): if the previous log contains an `ERROR:` line that mentions `mods-unpacked`, mods are **disabled** on the next start for the steam and epic profiles, and `main_menu` shows `CRASH_RECOVERY_MESSAGE_*`. Keep mod code free of errors and `push_error`.
+- **Crash recovery** (`singletons/crash_reporter.gd` ~L55-98): if the previous log contains an `ERROR:` line that mentions `mods-unpacked`, mods are **disabled** on the next start for the steam and epic profiles, and `main_menu` shows `CRASH_RECOVERY_MESSAGE_*`. Keep mod code free of errors and `push_error`. `SCRIPT ERROR:` lines count too (they contain `ERROR:`). The disable only flips `enable_mods` on the steam/epic option resources in memory, so a run from the editor or a test copy is not affected.
 
 ## This mod
 - `mods-unpacked/Moolt-Lan_Coop/mod_main.gd`. Extensions go in `extensions/` and mirror vanilla paths.
