@@ -16,6 +16,7 @@ const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd"
 const NetDiscovery = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_discovery.gd")
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 const RunBuilder = preload("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
+const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
 const HOST_PEER_ID: = 1
 
@@ -58,6 +59,7 @@ var _run_data_replaced: = false
 
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
+	LanGame.grow_autoload_arrays()
 	config.load_config()
 	discovery = NetDiscovery.new()
 	discovery.name = "Discovery"
@@ -209,7 +211,7 @@ func set_run_in_progress(value: bool) -> void :
 
 # Host: builds the run from the lobby and sends it to every client.
 func start_run() -> int:
-	if not is_host or not are_all_ready() or players.size() > LobbyRules.MAX_RUN_PLAYERS:
+	if not is_host or not are_all_ready():
 		return ERR_UNAVAILABLE
 
 	_run_data_replaced = true

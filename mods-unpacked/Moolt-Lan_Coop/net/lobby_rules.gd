@@ -1,8 +1,5 @@
 extends Reference
 
-# Players a run can be started with until Step 4 lifts vanilla's 4-player limits.
-const MAX_RUN_PLAYERS: = 4
-
 # What a lobby entry may contain. The lobby UI, the host's validation and the run builder all
 # use these, so they never disagree. During a session everything is unlocked on every peer
 # (LanNet._apply_multiplayer_unlocks), so the unlock checks only matter outside of one.

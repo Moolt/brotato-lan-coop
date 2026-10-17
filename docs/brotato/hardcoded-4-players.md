@@ -14,10 +14,11 @@ Lifting the cap means fixing everything below. Line numbers are approximate.
 | `main.gd` | `_upgrades_to_process`, `_consumables_to_process` (L31-32); `_proj_on_death_stat_caches` (L48); `_player_is_under_half_health` (L50); local `player_gold`/`player_xp` in `on_gold_picked_up` (~L879) |
 | `global/entity_spawner.gd` | `lootworms` (L33); `queues_to_spawn_structures`, `queues_to_spawn_pets` (L40-41); spawn positions only give 4 spots (L93-98) |
 | `global/stats_manager.gd` | `_structure_queues`, `_pet_queues` (L10-11) |
-| `singletons/utils.gd` | `last_elt_selected` (L60, ~L653); `_stat_caches` (L65, ~L454); `_manual_aim_cache` (L66, ~L126) |
+| `singletons/utils.gd` | `last_elt_selected` (L60, ~L653); `_stat_caches` (L65, ~L454); `_manual_aim_cache` (L66; `_process` resets it to 4 slots every frame, ~L126) |
 | `singletons/temp_stats.gd` | `player_stats`, `are_player_stats_dirty` (L5-6) |
 | `singletons/linked_stats.gd` | `update_for_player_every_half_sec` (L4) |
-| `singletons/debug_service.gd` | L53-55; `for i in 4` (L61) |
+| `singletons/debug_service.gd` | L53-55; `for i in 4` (L61); `log_run_info` default arguments `[[], [], [], []]` (L175), indexed for every player and called from `main.gd` (~L1455) |
+| `ui/menus/ingame/upgrades_ui.gd` | `_showing_option`, `_player_is_choosing`, `_extra_items_to_process` (L34-36); `_ready` indexes `_get_player_container(i)` and 4 stat popups for every player, so the coop UI in `main.tscn` fails with > 4 players |
 | `ui/menus/global/popup_manager.gd` | `_item_popups`, `_elements_hovered`, `_elements_focused`, `_elements_pressed`, `_stat_popups` (L11-15) |
 | `ui/menus/shop/base_shop.gd` | 13 per-player arrays (L8-20). `if (i < 4)` at ~L400 is the shop slot count, not a player count. |
 | `progress_data_loader_*.gd` | `locked_shop_items`, `shop_items`, `item_steals` defaults for loading saves |

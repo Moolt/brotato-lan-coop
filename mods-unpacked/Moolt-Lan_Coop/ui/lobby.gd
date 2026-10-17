@@ -326,10 +326,9 @@ func _refresh_settings() -> void :
 				.replace("{0}", tr(zone.name) if zone != null else "?") \
 				.replace("{1}", difficulty.get_name_text() if difficulty != null else "?")
 
-	var too_many: bool = _net.get_player_count() > LobbyRules.MAX_RUN_PLAYERS
 	var all_ready: bool = _net.are_all_ready()
 	if is_host:
-		if all_ready and not too_many:
+		if all_ready:
 			_start_button.activate()
 		else:
 			_start_button.disable()
@@ -347,8 +346,6 @@ func _refresh_settings() -> void :
 	elif sync.state == "failed":
 		_hint_label.text = tr("LAN_RUN_FAILED").replace("{0}", names) if is_host else tr("LAN_RUN_FAILED_CLIENT")
 		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_ERROR)
-	elif too_many:
-		_hint_label.text = tr("LAN_HINT_TOO_MANY").replace("{0}", str(LobbyRules.MAX_RUN_PLAYERS))
 	elif not all_ready:
 		_hint_label.text = "LAN_HINT_WAITING"
 	elif is_host:

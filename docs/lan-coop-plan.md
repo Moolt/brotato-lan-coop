@@ -62,7 +62,7 @@ ui/ui_kit.gd           # shared page building blocks (pages are built in code, n
 ui/multiplayer_menu.gd # name, Host game / Join game / Back
 ui/join_menu.gd        # discovered games list, join by address
 ui/lobby.gd            # player list, character grid, weapon pick, ready toggle, host: zone/difficulty/Start
-ui/net_player_list.gd  # in-wave compact HUD: name + HP bar per other player; "waiting for X" in shop
+ui/net_player_list.gd  # "waiting for X" list in the shop (Step 7)
 extensions/...                 # mirrored vanilla paths (below)
 ```
 
@@ -222,8 +222,8 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **HUD** (`main.gd` `_on_EntitySpawner_players_spawned`, L1361-1430).
   - The P1–P4 HUD nodes only exist up to 4.
   - In net mode, map the **local** player to the P1 HUD slot.
-  - Hide P2–P4 and use `net_player_list` for everyone else.
-  - Create the over-head `PlayerLifeBarContainer` for each player at runtime by duplicating the P1 node.
+  - Hide P2–P12; other players get a name and health bar over their head instead (4c).
+  - Create the over-head `PlayerLifeBarContainer` for each player at runtime by duplicating the P4 node.
 - **Spawn positions** (`entity_spawner.gd` `init`, L93-98): replace the 2×2 offset with a circle of radius `60 + 15*n` around the map centre.
 
 **Increments.** Nothing in a session loads `main.tscn` yet, so lifting the caps can't be tested until the host can enter a wave. Clients only get an in-wave view in Step 6. Until then they stay in the lobby while the host plays a test wave. Each increment is tested in two windows, then committed.
@@ -252,7 +252,33 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - `LobbyRules.MAX_RUN_PLAYERS` removed.
   - **HUD:** the extension's `_enter_tree` duplicates the P4 node sets (`LifeContainerP4`, `PlayerLifeBarContainerP4`, `UIThingsToProcessPlayerContainer4`) as P5–P12, with `owner = main` and `unique_name_in_owner`, before vanilla's `_ready` looks them up by `%` name. Screen HUDs beyond P1 are hidden in a session. `set_hud_position(i)` gets a safe slot for i ≥ 4.
   - **Test:** the host plus fake lobby entries (test driver) fill 12 slots. The wave runs about 20 s with no `ERROR:`. Check the spawn circle and the over-head life bars.
-- **4c: other players' HUD.** `ui/net_player_list.gd`: a compact list (colour, name, HP bar) of the other players, in place of the hidden P2–P12 HUDs. The local player is always in the P1 slot. On the host that is index 0; Step 6 remaps it for clients.
+
+**4b status: done.**
+- **`game/lan_game.gd`:** `MAX_PLAYERS` (= `NetProtocol.MAX_PLAYERS`), `in_session()`, and `grow(array, value)`. Arrays grow to 12 slots **always**, not only in a session: vanilla already keeps 4 slots for 1–2 players, so it never reads slots beyond the player count.
+- **Where arrays grow:**
+  - Extension `_init`: `main.gd`, `entity_spawner.gd`, `stats_manager.gd`, `popup_manager.gd`, `run_data.gd`, `utils.gd`, `debug_service.gd`.
+  - After the vanilla functions that reassign 4-slot literals: `RunData.reset`, `_reset_per_wave_properties`, `reset_run_caches`, `resume_from_state`; `Utils.reset_stat_caches`, `reset_last_elt_selected`.
+  - `Utils._process` resets `_manual_aim_cache` to 4 slots every frame (deferred), so `is_manual_aim` grows it on demand.
+  - `TempStats`/`LinkedStats` are never reassigned; `LanNet._ready` grows them once (`LanGame.grow_autoload_arrays`).
+- **Crash sites the list above missed:**
+  - `DebugService.log_run_info()` (called from `main.gd` with its 4-slot default arguments). The extension grows its arguments.
+  - The coop `UpgradesUI._ready` indexes 4 containers and 4 stat popups. With more than 4 players, the `main.gd` extension sets `is_coop_ui = false` in `_enter_tree`, so its `_ready` returns early. Step 7 replaces that UI.
+  - The pause menu's `PopupManager` adds popups for every player.
+  - `DebugService.handle_player_spawn_debug_options` only indexes its arrays when a debug flag is on.
+- **`on_gold_picked_up`:** calls vanilla for ≤ 4 players. For more players it runs a copy with player-sized `player_gold`/`player_xp`.
+- **Colours:** the `CoopService` extension appends 8 colours to `player_colors` in `_ready`. `UiKit.get_player_color` delegates to `CoopService.get_player_color`.
+- **Spawn circle:** `EntitySpawner.spawn_entity` override for `EntityType.PLAYER` in a session (radius `60 + 15n` around `_zone_max_pos / 2`).
+- **HUD:** in `_enter_tree`, P4 node sets are copied as P5–P12. Names are changed before the owner is set, because setting `owner` claims the unique names. In a session, screen HUDs and things-to-process containers of players ≥ 1 are hidden. `set_hud_position(i ≥ 4)` already resolves to bottom-right, so it needs no change.
+- **Tested:**
+  - Host, one real client and 10 fake lobby entries. 12 players on the circle, distinct outlines, HUD P1–P12 found, pause menu opens. Gold splits over all 12. The wave ends back in the lobby with no `ERROR:`.
+  - Vanilla solo wave outside a session: the run-lost screen works, no errors.
+  - `WARNING: Node './Attach' was modified from inside an instance` also appears with 4a code; it is not new.
+- **4c: names and health bars over players' heads.** A list of 12 players in the screen HUD would be hard to read in a fast game, so the other players' state sits on their characters instead. The screen HUD stays local-only (top-left: HP, XP, level, gold); nobody needs the others' gold or XP during a wave. The local player is always in the P1 slot. On the host that is index 0; Step 6 remaps it for clients.
+  - **Name:** a `Label` under each `PlayerLifeBarContainerP*` (the `Node2D` the player's `RemoteTransform2D` drives), above the bar. It shows the lobby name in the player's colour (`CoopService.get_player_color`), in a small vanilla font with a dark outline (`font_22` or an outlined copy).
+  - **Health bar:** in a session, other players' bars are always visible, even at full HP. Extend `main.gd` `_on_player_health_updated` (~L1658), which vanilla gates on `hp_bar_on_character` and HP < max. The local player's bar follows the vanilla option.
+  - **Local player:** no name over the own character.
+  - **Dead players:** bar hidden, name greyed out (players stay dead until the wave ends).
+  - **Test:** 12 slots via the test driver. Names readable and coloured, bars visible at full HP, a dead player's name greyed.
 
 ## Step 5: Arena size and enemy scaling
 - **Arena.** Extend `singletons/zone_service.gd` `set_current_zone(zone)`. In net mode, before calling `.set_current_zone(zone)`, scale `zone.width/height` by `sqrt(1 + 0.25*(n-1))` (default; configurable). That is about 1.94× linear at 12 players. `main.gd:159-161` passes the same object to the tile map, the map limits and the wave manager, so all of them pick it up.
@@ -319,7 +345,9 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 5. **Run end.** On run won or lost, every peer shows the solo end screen for its own player. "Back" leaves the session for clients. The host returns to the lobby.
 
 ## Step 8: Polish
-- Floating names above players.
+- ~~Floating names above players.~~ Moved into 4c.
+- Name overlap: 12 names overlap when players stand close together, for example on the spawn circle at wave start. If plain labels are too busy, fade names while they overlap, or shorten long names.
+- Off-screen teammates: clients' cameras follow only the local player (Step 5), so teammates can be off-screen. Show a small arrow at the screen edge in their colour, pointing towards them.
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
 - Mod config knobs exposed in the manifest `config_schema`: arena factor, enemy count/HP factor, port.
 - Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
