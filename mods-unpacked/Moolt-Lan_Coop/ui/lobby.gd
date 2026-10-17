@@ -21,7 +21,8 @@ const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres
 const WIDTH: = 1800.0
 const LEFT_WIDTH: = 660.0
 const ELEMENT_SIZE: = Vector2(72, 72)
-const ROW_ICON_SIZE: = Vector2(44, 44)
+const ROW_ICON_SIZE: = Vector2(40, 40)
+const SELECTED_MARKER_NAME: = "LanSelectedMarker"
 
 var _net: Node = null
 var _address_label: Label
@@ -87,12 +88,17 @@ func _build_ui() -> void :
 	_count_label = Label.new()
 	left.add_child(_count_label)
 
+	# Fits 12 rows; scrolls if rows ever get taller.
 	var panel: = PanelContainer.new()
-	panel.rect_min_size = Vector2(0, 560)
 	left.add_child(panel)
+	var player_scroll: = ScrollContainer.new()
+	player_scroll.rect_min_size = Vector2(0, 540)
+	player_scroll.scroll_horizontal_enabled = false
+	panel.add_child(player_scroll)
 	_player_list = VBoxContainer.new()
+	_player_list.size_flags_horizontal = SIZE_EXPAND_FILL
 	_player_list.add_constant_override("separation", 4)
-	panel.add_child(_player_list)
+	player_scroll.add_child(_player_list)
 
 	_leave_button = UiKit.new_back_button("LAN_LEAVE")
 	var _e = _leave_button.connect("pressed", self, "_on_LeaveButton_pressed")
@@ -221,6 +227,8 @@ func _refresh() -> void :
 		_weapon_grid_character_id = me.character_id
 		_fill_weapon_grid(LobbyRules.get_character(me.character_id))
 
+	_update_selection(me)
+
 	var can_ready: bool = me.ready or LobbyRules.is_entry_complete(me)
 	_ready_button.text = "LAN_UNREADY" if me.ready else "LAN_READY"
 	if can_ready:
@@ -236,14 +244,62 @@ func _refresh() -> void :
 		_ready_button.call_deferred("grab_focus")
 
 
+# Marks the picked character and weapon, and makes "up" from the weapon grid (or from Ready,
+# when there are no weapons) return to the picked character instead of the grid's bottom row.
+func _update_selection(me: Dictionary) -> void :
+	var color: = UiKit.get_player_color(me.player_index)
+	var character_element: = _mark_selected(_character_grid, me.character_id, color)
+	var _weapon_element: = _mark_selected(_weapon_grid, me.weapon_id, color)
+
+	_weapon_grid.set_neighbour_top = character_element != null
+	_weapon_grid.focus_neighbour_top = _weapon_grid.get_path_to(character_element) if character_element != null else NodePath("")
+	_weapon_grid.queue_set_focus_neighbours()
+	var ready_up: = NodePath("")
+	if character_element != null and not _weapon_scroll.visible:
+		ready_up = _ready_button.get_path_to(character_element)
+	_ready_button.focus_neighbour_top = ready_up
+
+
+# Adds a border in the player's colour to the element whose item has item_id, removes it
+# from the others. Returns the marked element or null.
+func _mark_selected(grid: Control, item_id: String, color: Color) -> Control:
+	var marked: Control = null
+	for element in grid.get_children():
+		var is_selected: bool = not item_id.empty() and not element.is_special and element.item != null and element.item.my_id == item_id
+		var marker = element.get_node_or_null(SELECTED_MARKER_NAME)
+		if is_selected and marker == null:
+			element.add_child(_new_selected_marker(color))
+		elif not is_selected and marker != null:
+			element.remove_child(marker)
+			marker.queue_free()
+		if is_selected:
+			marked = element
+	return marked
+
+
+func _new_selected_marker(color: Color) -> Control:
+	var style: = StyleBoxFlat.new()
+	style.draw_center = false
+	style.border_color = color
+	style.set_border_width_all(5)
+	style.set_corner_radius_all(6)
+	var marker: = Panel.new()
+	marker.name = SELECTED_MARKER_NAME
+	marker.mouse_filter = MOUSE_FILTER_IGNORE
+	marker.add_stylebox_override("panel", style)
+	marker.set_anchors_and_margins_preset(PRESET_WIDE)
+	return marker
+
+
 func _update_address() -> void :
 	if _net == null or not _net.is_host:
 		_address_label.text = ""
 		_address_label.hide()
 		return
-	var addresses: = NetProtocol.get_lan_addresses()
-	var address_text: String = PoolStringArray(addresses).join(", ") if not addresses.empty() else "127.0.0.1"
-	_address_label.text = tr("LAN_JOIN_ADDRESS").replace("{0}", address_text).replace("{1}", str(_net.config.port))
+	var address: = NetProtocol.get_primary_lan_address()
+	if address.empty():
+		address = "127.0.0.1"
+	_address_label.text = tr("LAN_JOIN_ADDRESS").replace("{0}", address + ":" + str(_net.config.port))
 	_address_label.show()
 
 
@@ -289,6 +345,7 @@ func _new_player_row(entry: Dictionary) -> Control:
 	row.add_child(_new_row_icon(choice.get_icon() if choice != null else null))
 
 	var status: = Label.new()
+	status.rect_min_size = Vector2(150, 0)
 	status.align = Label.ALIGN_RIGHT
 	status.valign = Label.VALIGN_CENTER
 	status.size_flags_vertical = SIZE_FILL

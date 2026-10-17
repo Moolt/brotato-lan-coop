@@ -169,6 +169,10 @@ Done in three increments, each tested by the user and committed separately: 3a (
   - **Info panel:** vanilla `character_panel_ui.tscn` for a focused character, `item_panel_ui.tscn` for a focused weapon.
   - **Ready** toggles ready.
   - **Focus** moves character → weapons → Ready once the host has confirmed each pick.
+  - **Selection markers:** the picked character and weapon get a border in the player's colour (a `Panel` child named `LanSelectedMarker` on the `InventoryElement`).
+  - **Scrolling:** both grids and the player list (sized for 12 rows) sit in `ScrollContainer`s with `follow_focus`, so the page height never changes.
+  - **Focus up:** "up" from the weapon grid's top row goes back to the picked character, via Inventory's own `set_neighbour_top` + `focus_neighbour_top`, which survive its neighbour recomputation.
+  - **Host address:** the host sees one address, `IP: ip:port`, from `NetProtocol.get_primary_lan_address()`. Private LAN addresses come first, wired before wireless; Windows virtual adapters are skipped.
 - **Pitfall:** in GDScript 3, `continue` inside a `match` block falls through to the next pattern instead of continuing the loop. Use `if`/`elif` in loops.
 
 ## Step 4: Lift the 4-player cap to 12

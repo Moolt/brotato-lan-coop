@@ -187,17 +187,49 @@ static func parse_address(text: String, default_port: int) -> Dictionary:
 # (no loopback, no link-local, no container/VM bridges).
 static func get_lan_addresses() -> Array:
 	var result: = []
+	for candidate in _get_address_candidates():
+		if not result.has(candidate.address):
+			result.append(candidate.address)
+	result.sort()
+	return result
+
+
+# The single address shown to other players: private LAN addresses first, wired before
+# wireless, then anything else (e.g. a VPN). "" if there is none.
+static func get_primary_lan_address() -> String:
+	var best: = ""
+	var best_score: = - 1
+	for candidate in _get_address_candidates():
+		var score: = 0
+		if _is_private_address(candidate.address):
+			score += 4
+		var interface_name: String = candidate.interface
+		if interface_name.begins_with("en") or interface_name.begins_with("eth") or "ethernet" in interface_name:
+			score += 2
+		elif interface_name.begins_with("wl") or "wi-fi" in interface_name or "wireless" in interface_name:
+			score += 1
+		if score > best_score:
+			best_score = score
+			best = candidate.address
+	return best
+
+
+# [{address, interface}] for every usable IPv4 address. interface is the lowercased
+# name (Linux) or friendly name (Windows).
+static func _get_address_candidates() -> Array:
+	var result: = []
 	for interface in IP.get_local_interfaces():
-		if _is_virtual_interface(str(interface.name).to_lower()):
+		var interface_name: = str(interface.get("friendly", "")).to_lower()
+		if interface_name.empty():
+			interface_name = str(interface.get("name", "")).to_lower()
+		if _is_virtual_interface(interface_name) or _is_virtual_interface(str(interface.get("name", "")).to_lower()):
 			continue
 		for address in interface.addresses:
 			if not address.is_valid_ip_address() or ":" in address:
 				continue
 			if address.begins_with("127.") or address.begins_with("169.254."):
 				continue
-			if not result.has(address):
-				result.append(address)
-	result.sort()
+			result.append({"address": address, "interface": interface_name})
 	return result
 
 
@@ -227,5 +259,9 @@ static func _is_private_address(address: String) -> bool:
 static func _is_virtual_interface(interface_name: String) -> bool:
 	for prefix in ["lo", "docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "podman", "cni", "flannel"]:
 		if interface_name.begins_with(prefix):
+			return true
+	# Windows friendly names (Hyper-V/WSL switch, VirtualBox, VMware)
+	for part in ["vethernet", "virtualbox", "vmware", "loopback"]:
+		if part in interface_name:
 			return true
 	return false
