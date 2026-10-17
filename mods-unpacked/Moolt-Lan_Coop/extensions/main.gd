@@ -11,6 +11,11 @@ extends "res://main.gd"
 # - The coop UpgradesUI has 4 player containers and fails in _ready with more players. It is
 #   never shown in a session (see _on_EndWaveTimer_timeout), so it is marked non-coop, which
 #   makes its _ready return early.
+# - Enemy scaling follows the session's knobs (LanGame.apply_enemy_scaling, set before vanilla's
+#   _ready spawns anything). The arena grows in the ZoneService extension.
+# - Every machine has its own screen, so the camera follows the local player like in solo play,
+#   and the lock_coop_camera option is ignored. Once the local player dies, the camera follows
+#   the players still alive.
 # - Remote players have device -1 (see LanNet._fill_coop_players), so the pause check skips them.
 # - Temporary until Step 7: the end of a wave goes back to the title screen (and its lobby)
 #   instead of the coop upgrade UI and shop, which only have 4 slots.
@@ -45,6 +50,7 @@ func _init() -> void :
 func _enter_tree() -> void :
 	if not LanGame.in_session() or get_node_or_null("%LifeContainerP5") != null:
 		return
+	LanGame.apply_enemy_scaling(RunData.get_player_count())
 	if RunData.get_player_count() > VANILLA_HUD_SLOTS:
 		$UI / CoopUpgradesUI.is_coop_ui = false
 	for template in HUD_TEMPLATES:
@@ -95,6 +101,11 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void :
 		_players_ui[i].hud_container.hide()
 		_things_to_process_player_containers[i].hide()
 
+	var local_player_index: int = LanGame.get_lan_net().local_player_index
+	if local_player_index >= 0 and local_player_index < players.size():
+		_camera.targets = [players[local_player_index]]
+		_camera._is_snapped = true
+
 	var font: DynamicFont = NAME_FONT.duplicate()
 	font.size = NAME_FONT_SIZE
 	font.outline_size = NAME_OUTLINE_SIZE
@@ -139,6 +150,23 @@ func _on_player_died(p_player: Player, _args: Entity.DieArgs) -> void :
 	var label = _players_ui[p_player.player_index].player_life_bar_container.get_node_or_null(NAME_LABEL_NAME)
 	if label != null:
 		label.add_color_override("font_color", NAME_DEAD_COLOR)
+	if LanGame.in_session() and _lan_is_local_player(p_player.player_index):
+		_lan_spectate()
+
+
+# The camera follows the living players with vanilla's coop camera: it moves smoothly, zooms
+# out to fit them, and snaps to the last one standing.
+func _lan_spectate() -> void :
+	_camera.targets = _players
+	_camera._is_snapped = false
+	_camera._snap_progress = 0.0
+
+
+func on_lock_coop_camera_changed(value: int) -> void :
+	if LanGame.in_session():
+		_camera.dynamic_camera_enabled = true
+		return
+	.on_lock_coop_camera_changed(value)
 
 
 func on_gold_picked_up(gold: Node, player_index: int) -> void :

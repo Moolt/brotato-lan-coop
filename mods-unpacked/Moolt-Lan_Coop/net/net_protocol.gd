@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 4
+const PROTOCOL_VERSION: = 5
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -28,6 +28,20 @@ const MSG_CONNECTION_FAILED: = "LAN_MSG_CONNECTION_FAILED"
 const MSG_SERVER_FAILED: = "LAN_MSG_SERVER_FAILED"
 const MSG_INVALID_IP: = "LAN_MSG_INVALID_IP"
 const MSG_INVALID_PORT: = "LAN_MSG_INVALID_PORT"
+
+# Arena and enemy scaling knobs. The host reads them from its config (net_config.gd) and sends
+# them in lobby_settings.scaling, so every peer builds the same arena. Values are per extra
+# player; see LanGame for the formulas. Vanilla coop: enemies 0.3, HP 0.3, damage 0.08,
+# cap 0.125, no arena growth.
+const DEFAULT_SCALING: = {
+	"arena_area_per_player": 0.25, 
+	"enemy_count_per_player": 0.3, 
+	"enemy_health_per_player": 0.3, 
+	"enemy_health_per_player_beyond_4": 0.2, 
+	"enemy_damage_per_player": 0.08, 
+	"enemy_cap_per_player": 0.25, 
+}
+const MAX_SCALING_VALUE: = 2.0
 
 # Keys a client may change on its own lobby entry.
 const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready"]
@@ -114,6 +128,7 @@ static func default_lobby_settings() -> Dictionary:
 		"difficulty": 0, 
 		"run_id": 0, 
 		"in_wave": false, 
+		"scaling": DEFAULT_SCALING.duplicate(), 
 	}
 
 

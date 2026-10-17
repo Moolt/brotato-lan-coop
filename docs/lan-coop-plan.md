@@ -308,6 +308,14 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - Lower the default HP scaling a little for large lobbies, because the arena is bigger.
   - Check performance with about 300 enemies.
 
+**Step 5 status: done** (one increment; it was small enough).
+- **Knobs:** `NetProtocol.DEFAULT_SCALING`, values per extra player: `arena_area_per_player` 0.25, `enemy_count_per_player` 0.3, `enemy_health_per_player` 0.3, `enemy_health_per_player_beyond_4` 0.2, `enemy_damage_per_player` 0.08, `enemy_cap_per_player` 0.25. The host reads them from the `[scaling]` section of `user://lan_coop.cfg` (clamped to 0–2) and sends them as `lobby_settings.scaling` (`PROTOCOL_VERSION` 5), so clients will build the same arena in Step 6. `LanGame.get_scaling(key)` reads them.
+- **Arena:** `extensions/singletons/zone_service.gd` scales `width/height` by `LanGame.get_arena_factor(n)` = `sqrt(1 + 0.25(n-1))` before vanilla's `set_current_zone`. It applies after vanilla's `map_size` item effect, which sums over all players (one "Old" character shrinks the map by 33%).
+- **Enemy factors:** `LanGame.apply_enemy_scaling(n)` from the `main.gd` extension's `_enter_tree` (before vanilla's `_ready`) sets the three `CoopService.additional_*` values and resets `EntityService`'s cache. HP gets the average over the extra players: 0.3 for players 2–4, 0.2 beyond (3.5× at 12 players instead of 4.3×). `CoopService.clear()` on the main menu restores vanilla's values.
+- **Enemy cap:** the `entity_spawner.gd` extension sets `_current_wave_data.max_enemies` for the call of `on_group_spawn_timing_reached`, so vanilla's `max * (1 + (n-1)/8)` comes out as `max * (1 + 0.25(n-1))` (375 at 12 players), then restores it.
+- **Camera:** every machine has its own screen, so in a session the camera targets only the local player with `_is_snapped = true` (solo behaviour). `lock_coop_camera` is ignored. When the local player dies, the camera follows all living players with vanilla's coop camera (smooth, zooms out to fit, snaps to the last one). On clients this works once Step 6 loads the wave, since it uses `LanNet.local_player_index`.
+- **Tested:** host + client + 10 fake players, Danger 3, `nb_enemies_mult` 6, invulnerable players, 40 s wave (driver). Arena 41×31 tiles (21×16 after an "Old" character, × 1.94), HP factor 3.92 at Danger 3, damage 2.11. 160 enemies plus 100–170 queued (the spawn queue limits the rate, so the 375 cap was never hit) at about 300 FPS uncapped. After the host player dies, the camera zooms out to 1.37 over the other 11. No `ERROR:`. Vanilla solo wave unchanged.
+
 ## Step 6: In-wave sync
 **Host** (extensions + `host_sync.gd`):
 - **Remote input.**
@@ -362,28 +370,29 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - Name overlap: 12 names overlap when players stand close together, for example on the spawn circle at wave start. If plain labels are too busy, fade names while they overlap, or shorten long names.
 - Off-screen teammates: clients' cameras follow only the local player (Step 5), so teammates can be off-screen. Show a small arrow at the screen edge in their colour, pointing towards them.
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
-- Mod config knobs exposed in the manifest `config_schema`: arena factor, enemy count/HP factor, port.
+- Mod config knobs exposed in the manifest `config_schema`: the scaling knobs (now in `lan_coop.cfg` `[scaling]`, Step 5), port.
 - Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
 - ~~Unlock everything in multiplayer.~~ Done early (after Step 3), see Step 1 "Unlocks". Verified: the test save goes from 5 to 50 characters during a session, back to 5 after leaving, and the save file is not written.
 - Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
+- Spawn rate: `EntitySpawner` releases queued enemies at a fixed rate (1, or 2 with 110+ queued, every 3 physics frames, so 20–40/s), whatever the player count. Measure 12 slots at a late wave (15–20) with the normal multiplier: queue length and enemies alive. If the queue limits the count, release `ceil(n / 4)` per tick before raising enemy HP; watch host CPU and snapshot size.
 - Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option). Make the duration a config knob, with 0 = off.
 
 ---
 
 ## Milestones
-Status: 1 and 2 are done. Step 4 (12 players in a wave, names over heads) is done, ahead of milestone 6. Next is Step 5, then Step 6 for milestone 3.
+Status: 1 and 2 are done. Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) are done, ahead of milestone 6. Next is Step 6 for milestone 3.
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** Synced run start, then the host simulates and clients puppet players only, with no enemies.
 4. **Full wave.** Enemies, projectiles, pickups, and wave end.
 5. **Between waves.** Per-machine upgrades/shop and merge, so the loop runs for multiple waves.
-6. **Scale.** ~~12-player caps~~ (Step 4), larger arena, enemy scaling, ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
+6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
-**Still to come:** `singletons/zone_service.gd` (Step 5), `weapons/weapon.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
+**Still to come:** `weapons/weapon.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
 
 ## Verification
 - **Local multi-instance testing.**

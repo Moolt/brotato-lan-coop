@@ -112,6 +112,7 @@ func host(port: int = - 1) -> int:
 	local_player_index = 0
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
+	lobby_settings.scaling = config.scaling.duplicate()
 	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty})
 	_apply_multiplayer_unlocks()
 	last_end_reason = ""
