@@ -30,6 +30,7 @@ var _player_list: VBoxContainer
 var _leave_button: Button
 var _character_grid: GridContainer
 var _weapon_grid: GridContainer
+var _weapon_scroll: ScrollContainer
 var _weapon_label: Label
 var _no_choice_label: Label
 var _character_panel: Control
@@ -110,6 +111,7 @@ func _build_ui() -> void :
 	var character_scroll: = ScrollContainer.new()
 	character_scroll.rect_min_size = Vector2(0, 250)
 	character_scroll.scroll_horizontal_enabled = false
+	character_scroll.follow_focus = true
 	right.add_child(character_scroll)
 	_character_grid = _new_inventory(13)
 	character_scroll.add_child(_character_grid)
@@ -142,8 +144,14 @@ func _build_ui() -> void :
 	_weapon_label.text = "LAN_CHOOSE_WEAPON"
 	weapon_column.add_child(_weapon_label)
 
+	# Fixed height (fits inside the info panel's height) so the page never changes size.
+	_weapon_scroll = ScrollContainer.new()
+	_weapon_scroll.rect_min_size = Vector2(0, 320)
+	_weapon_scroll.scroll_horizontal_enabled = false
+	_weapon_scroll.follow_focus = true
+	weapon_column.add_child(_weapon_scroll)
 	_weapon_grid = _new_inventory(3)
-	weapon_column.add_child(_weapon_grid)
+	_weapon_scroll.add_child(_weapon_grid)
 	_e = _weapon_grid.connect("element_pressed", self, "_on_WeaponGrid_element_pressed")
 	_e = _weapon_grid.connect("element_focused", self, "_on_WeaponGrid_element_focused")
 	_e = _weapon_grid.connect("element_hovered", self, "_on_WeaponGrid_element_focused")
@@ -191,7 +199,8 @@ func _fill_weapon_grid(character: CharacterData) -> void :
 	if not choices.empty():
 		_weapon_grid.set_elements(choices, false, false)
 
-	_weapon_grid.visible = not choices.empty()
+	_weapon_scroll.visible = not choices.empty()
+	_weapon_scroll.scroll_vertical = 0
 	_weapon_label.visible = character == null or not choices.empty()
 	_no_choice_label.visible = character == null or choices.empty()
 	_no_choice_label.text = "LAN_PICK_CHARACTER_FIRST" if character == null else "LAN_NO_STARTING_CHOICE"
@@ -221,7 +230,7 @@ func _refresh() -> void :
 
 	var focus_target: = _focus_on_update
 	_focus_on_update = ""
-	if focus_target == "weapons" and _weapon_grid.visible and _weapon_grid.get_child_count() > 0:
+	if focus_target == "weapons" and _weapon_scroll.visible and _weapon_grid.get_child_count() > 0:
 		_weapon_grid.focus_element_index(0)
 	elif focus_target != "" and can_ready:
 		_ready_button.call_deferred("grab_focus")
