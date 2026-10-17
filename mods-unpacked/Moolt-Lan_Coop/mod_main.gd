@@ -13,6 +13,9 @@ func _init() -> void :
 	# One line per vanilla script to extend (path mirrors the vanilla path):
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/progress_data.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/title_screen/title_screen_menus.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/ingame/ingame_main_menu.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("main.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/movement_behaviors/player_movement_behavior.gd"))
 
 
 func _ready() -> void :

@@ -337,7 +337,9 @@ func _refresh_settings() -> void :
 	var sync: Dictionary = _net.get_run_sync_status()
 	var names: = PoolStringArray(sync.names).join(", ")
 	_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
-	if sync.state == "synced":
+	if not is_host and _net.lobby_settings.get("in_wave", false):
+		_hint_label.text = "LAN_HINT_HOST_IN_WAVE"
+	elif sync.state == "synced":
 		_hint_label.text = tr("LAN_RUN_SYNCED").replace("{0}", str(_net.get_player_count()))
 		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_OK)
 	elif sync.state == "pending":
@@ -550,8 +552,8 @@ func _on_DifficultyOption_item_selected(index: int) -> void :
 	_net.set_lobby_settings({"difficulty": _difficulty_option.get_item_id(index)})
 
 
-# Builds the run and syncs it to every client. Loading the wave follows in Milestone 3;
-# until then the lobby stays open and shows whether every peer holds the same run.
+# Builds the run and syncs it to every client. Once all of them hold it, LanNet loads the wave
+# on the host; until Step 6 the clients stay in the lobby.
 func _on_StartButton_pressed() -> void :
 	var _err = _net.start_run()
 

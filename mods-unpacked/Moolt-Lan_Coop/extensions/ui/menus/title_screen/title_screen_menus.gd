@@ -6,7 +6,8 @@ extends "res://ui/menus/title_screen/title_screen_menus.gd"
 #                  Join game -> join menu (found games, address) -> lobby
 # Leaving the lobby returns to the page it was entered from. On load, the join menu opens
 # if a session just ended with a reason (host left, rejected, ...), or the lobby if a
-# session is still active.
+# session is still active. Coming back from a wave (its end or Quit) ends the host's
+# run_in_progress, which makes the played run stale.
 
 const MultiplayerMenu = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/multiplayer_menu.gd")
 const JoinMenu = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/join_menu.gd")
@@ -37,6 +38,7 @@ func _ready() -> void :
 	_e = _join_menu.connect("lobby_requested", self, "_open_lobby", [_join_menu])
 
 	_add_multiplayer_button()
+	_lan_net.set_run_in_progress(false)
 	_e = _lan_net.connect("session_ended", self, "_on_LanNet_session_ended")
 	call_deferred("_restore_lan_page")
 

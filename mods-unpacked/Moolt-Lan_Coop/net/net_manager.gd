@@ -50,6 +50,8 @@ var _run_id_counter: = 0
 var _received_run_id: = 0
 var _received_run_ok: = false
 var _run_acks: = {}
+# True between Start and the wave scene: the wave loads once every client has acked the run.
+var _start_requested: = false
 # True once a built or received run replaced RunData (reset when the session ends).
 var _run_data_replaced: = false
 
@@ -190,10 +192,19 @@ func set_lobby_settings(changes: Dictionary) -> void :
 
 
 # Host only: while true, new joins are rejected and dropped players keep their slot.
+# lobby_settings.in_wave tells the clients' lobbies. Ending it drops the players who left
+# meanwhile and makes the run stale (it was played), so Start builds a fresh one.
 func set_run_in_progress(value: bool) -> void :
-	if not is_host:
+	if not is_host or run_in_progress == value:
 		return
 	run_in_progress = value
+	lobby_settings.in_wave = value
+	if not value:
+		for entry in players.duplicate():
+			if not entry.connected:
+				players.erase(entry)
+		_compact_player_indices()
+	_broadcast_lobby_state(value)
 
 
 # Host: builds the run from the lobby and sends it to every client.
@@ -209,12 +220,14 @@ func start_run() -> int:
 	_run_id_counter += 1
 	lobby_settings.run_id = _run_id_counter
 	_run_acks = {}
+	_start_requested = true
 	ModLoaderLog.info("Run %d built: %s" % [_run_id_counter, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
 
 	for entry in _get_connected_clients():
 		rpc_id(entry.peer_id, "_rpc_run_state", _run_id_counter, run_state, digest)
 	_broadcast_lobby_state(true)
 	emit_signal("run_sync_changed")
+	_enter_wave_if_synced()
 	return OK
 
 
@@ -395,6 +408,7 @@ remote func _rpc_run_state_ack(run_id, ok) -> void :
 	if not ok:
 		ModLoaderLog.warning("%s has a different run" % entry.name, NetProtocol.MOD_ID)
 	emit_signal("run_sync_changed")
+	_enter_wave_if_synced()
 
 
 remote func _rpc_lobby_state(new_players, new_settings) -> void :
@@ -421,6 +435,7 @@ func _broadcast_lobby_state(keep_run: bool = false) -> void :
 		lobby_settings.run_id = 0
 		run_state = ""
 		_run_acks = {}
+		_start_requested = false
 		emit_signal("run_sync_changed")
 	for entry in _get_connected_clients():
 		rpc_id(entry.peer_id, "_rpc_lobby_state", players, lobby_settings)
@@ -479,6 +494,33 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 		lobby_settings.difficulty = int(changes.difficulty)
 		changed = true
 	return changed
+
+
+# Host, temporary until clients get an in-wave view (Step 6): once every client holds the run,
+# the host alone plays the wave while the clients wait in the lobby.
+func _enter_wave_if_synced() -> void :
+	if not _start_requested or get_run_sync_status().state != "synced":
+		return
+	_start_requested = false
+	set_run_in_progress(true)
+	_fill_coop_players()
+	ModLoaderLog.info("Run %d: loading the wave" % lobby_settings.run_id, NetProtocol.MOD_ID)
+	var _e = get_tree().change_scene(MenuData.game_scene)
+
+
+# CoopService.connected_players: one [device, type] per player, in player_index order.
+# The local player uses the keyboard (7) or the first gamepad (6). Remote players get
+# device -1, which reads no input (see the main.gd and player_movement_behavior.gd extensions).
+func _fill_coop_players() -> void :
+	CoopService.connected_players.clear()
+	for entry in players:
+		if entry.player_index != local_player_index:
+			CoopService.connected_players.push_back([- 1, CoopService.PlayerType.KEYBOARD_AND_MOUSE])
+		elif InputService.using_gamepad:
+			CoopService.connected_players.push_back([CoopService.GAMEPAD_REMAPPED_DEVICE_ID, CoopService.PlayerType.GAMEPAD_XBOX])
+		else:
+			CoopService.connected_players.push_back([CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE])
+	CoopService.emit_signal("connected_players_updated", CoopService.connected_players)
 
 
 func _compact_player_indices() -> void :
@@ -546,6 +588,8 @@ func _end_session(reason: String) -> void :
 	_received_run_id = 0
 	_received_run_ok = false
 	_run_acks = {}
+	_start_requested = false
+	CoopService.clear_coop_players()
 
 	active = false
 	is_host = false

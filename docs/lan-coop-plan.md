@@ -234,6 +234,16 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
     - Vanilla's per-player input helpers already return "nothing" for a negative device: `Utils.is_player_action_*`, `get_player_rjoy_vector`, and the pause check via `get_remapped_player_device`.
     - Only movement needs an override: `extensions/entities/units/movement_behaviors/player_movement_behavior.gd` `get_vector_for_input_prefix` returns `Vector2.ZERO` for `device < 0`. Step 6 swaps that for `LanNet` input.
   - **Wave end, temporary until Step 7.** In a session, `main.gd` `_on_EndWaveTimer_timeout` skips vanilla's coop upgrade UI and shop, which only have 4 slots. It sets `run_in_progress` false and changes back to the title screen, where the lobby reopens (`_restore_lan_page`). Quitting from the pause menu does the same.
+
+**4a status: done.**
+- **Start → wave:** `LanNet.start_run()` sets `_start_requested`. `_enter_wave_if_synced()` runs after the build and after every ack; once `get_run_sync_status()` is "synced" it calls `set_run_in_progress(true)`, `_fill_coop_players()` and `change_scene(MenuData.game_scene)`. A lobby change before then resets the run and cancels the start.
+- **`lobby_settings.in_wave`** (`PROTOCOL_VERSION` 4) mirrors `run_in_progress`; clients show `LAN_HINT_HOST_IN_WAVE`.
+- **Back to the lobby:** the `title_screen_menus.gd` extension calls `set_run_in_progress(false)` in `_ready`, so wave end and pause-menu Quit share one path. That drops players who left during the wave and resets `run_id` (the run was played, Start builds a fresh one). `main_menu.gd` `_ready` already calls `CoopService.clear()`.
+- **Pause check:** the plan's assumption was wrong for `main.gd` `_check_for_pause`: it polls `Input.is_action_just_released("ui_pause_-1")`, an unknown action. The `main.gd` extension overrides it to skip negative devices.
+- **Pause menu:** Restart and End Run are hidden in a session (`ingame_main_menu.gd` extension, `init`).
+- **Tested:** host + one client, Danger 3. The wave loads with devices `[7, -1]`, the host moves with the keyboard, the remote player stands still. Wave end and Quit both reopen the lobby on the host; the client hint switches to "test wave" and back.
+- **Known gap:** `main.gd` calls `ProgressData.reset_and_save_new_run_state()` when all players die. The disk save is blocked, but the in-memory `saved_run_state` is cleared, so "Continue" disappears until the game restarts.
+
 - **4b: 12 players in the wave.** Lifting the caps:
   - `CoopService.get_max_players()` returns 12 in a session.
   - 12 player colours: the palette moves from `ui_kit.gd` into a `CoopService` extension.
@@ -316,6 +326,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - ~~Unlock everything in multiplayer.~~ Done early (after Step 3), see Step 1 "Unlocks". Verified: the test save goes from 5 to 50 characters during a session, back to 5 after leaving, and the save file is not written.
 - Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
+- Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option). Make the duration a config knob, with 0 = off.
 
 ---
 
