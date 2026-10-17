@@ -12,6 +12,7 @@ func _init() -> void :
 	ext_dir = mod_dir_path.plus_file("extensions")
 	# One line per vanilla script to extend (path mirrors the vanilla path):
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/progress_data.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/title_screen/title_screen_menus.gd"))
 
 
 func _ready() -> void :

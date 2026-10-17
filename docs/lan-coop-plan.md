@@ -104,6 +104,13 @@ extensions/...                 # mirrored vanilla paths (below)
   - **IP:** the last IP is remembered.
   - **Gamepad input:** add a small on-screen digit pad for the IP field.
 
+**Status: done.** Files: `extensions/ui/menus/title_screen/title_screen_menus.gd`, `ui/multiplayer_menu.gd`, `ui/lobby.gd`, new keys in `net/net_translations.gd`. Notes on what was built:
+- **Pages are built in code** (`Control` scripts, `.new()`), not `.tscn`. Both use `base_theme.tres`, the `font_60_outline` title, `MyMenuButton` buttons, and the page pattern (`init()`, `ui_cancel`). Step 3 adds its lobby widgets to `ui/lobby.gd` the same way.
+- **Multiplayer menu:** Name / Host IP / Port fields filled from `net_config`, a 12-key digit pad (`0-9 . <`) that edits whichever of IP/port was focused last, Host / Join / Back, and a status label. While connecting, everything except Back is disabled through `MyMenuButton.disable()/activate()` (setting `disabled` directly is undone by its press-delay timer). Back while connecting calls `LanNet.leave()`.
+- **Lobby (Step 2 version):** the host sees "Others join with: <LAN IPv4s> (port N)" (from `IP.get_local_interfaces()`, skipping loopback, link-local and docker/bridge/VM interfaces), the player count, one row per player with `(host)` / `(you)` / `(disconnected)` tags, and Leave (also `ui_cancel`).
+- **No popup:** session-end reasons are shown in the multiplayer menu's status line instead. The menus extension switches lobby → multiplayer menu on `LanNet.session_ended`, and on title screen load (deferred, after `TitleScreen._ready`) opens the multiplayer menu if `last_end_reason` is set, or the lobby if a session is still joined. Shown reasons are cleared.
+- **Verified** with two instances on 127.0.0.1 driven by a test-only autoload in a throwaway copy of the project: button placement, port/IP validation, digit pad, host, join, lobby list on both sides, host leaving → client back in the multiplayer menu with "The host closed the session." No `ERROR:` lines from mod code.
+
 ## Step 3: Lobby
 - **Layout.**
   - **Left:** list of all joined players. Each row shows name, colour, chosen character icon, and ready check.
