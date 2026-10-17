@@ -27,6 +27,7 @@
 - Debug devices 8–11 get WASD / TFGH / IJKL / arrow keys (~L255-310).
 - `MAX_DEVICE_COUNT = 8`. `_emulate_action` adds the suffix only if `CoopService.is_device_assigned(dev)`.
 - Focus loss (`NOTIFICATION_WM_FOCUS_OUT`) emits `game_lost_focus` and may disable input (`settings.on_lost_focus`).
+- `InputService._input` sets the mouse mode: in a coop run with more than one player it always hides the cursor (and never updates `using_gamepad`); otherwise keyboard/gamepad input hides it and mouse input shows it. Menus still take mouse clicks while the cursor is hidden, unless a FocusEmulator swallows them (below).
 
 ## Movement (`entities/units/movement_behaviors/player_movement_behavior.gd`)
 - `var device := 0`. `get_movement()` returns the longer of `get_vector_for_input_prefix("analog_")` and `("button_")`. Mouse-only movement works in solo only.
@@ -46,6 +47,8 @@
 - Each node reads `ui_up_<dev>`, `ui_accept_<dev>`, and so on, using the device from `connected_players[player_index][0]`.
 - Lookup: `Utils.get_focus_emulator(i)` returns `"FocusEmulator%s" % (i+1)`.
 - The main menu uses **native Godot focus**, not FocusEmulator.
+- An active FocusEmulator (device >= 0, a visible focus base) calls `set_input_as_handled()` for every event it doesn't handle and that isn't a coop UI action, so **mouse motion and clicks never reach the GUI** in coop menus.
+- Coop UI code asks `FocusEmulatorSignal.get_player_index(control)` which player focused a control; it is -1 unless an emulator just emitted for that control (0 outside coop runs), and several callers `push_error` on -1 (`popup_manager.gd`, `stat_container.gd`, `secondary_stat_container.gd`, `character_selection.gd`).
 
 ## Streamplay
 `singletons/streamplay.gd` is Nintendo-only GameShare and has no relevance here. It is a useful model, though, for mapping remote players onto local coop slots.

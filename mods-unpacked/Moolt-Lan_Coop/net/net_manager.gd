@@ -78,6 +78,7 @@ func _ready() -> void :
 	_e = tree.connect("connection_failed", self, "_on_connection_failed")
 	_e = tree.connect("server_disconnected", self, "_on_server_disconnected")
 	set_process(false)
+	set_process_input(false)
 
 
 func _process(_delta: float) -> void :
@@ -123,6 +124,7 @@ func host(port: int = - 1) -> int:
 	_apply_multiplayer_unlocks()
 	last_end_reason = ""
 	_set_saves_blocked(true)
+	_set_solo_mouse(true)
 	set_process(true)
 
 	config.port = port
@@ -159,6 +161,7 @@ func join(ip: String, port: int = - 1) -> int:
 	joined = false
 	last_end_reason = ""
 	_set_saves_blocked(true)
+	_set_solo_mouse(true)
 
 	config.last_ip = ip
 	config.port = port
@@ -687,6 +690,32 @@ func _restore_own_unlocks() -> void :
 	_own_unlocks = {}
 
 
+# Vanilla's InputService hides the mouse cursor on every input in a coop run with more than one
+# player (couch coop shares one mouse). In a session every machine has a single player, so
+# InputService's _input is off and _input below applies its solo rule instead: mouse input shows
+# the cursor, keyboard and gamepad input hide it.
+func _set_solo_mouse(value: bool) -> void :
+	InputService.set_process_input(not value)
+	set_process_input(value)
+
+
+func _input(event: InputEvent) -> void :
+	if BugReporter.visible:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		return
+	var is_gamepad_input: bool = event is InputEventJoypadButton or Utils.is_valid_joypad_motion_event(event)
+	var is_keyboard_input: bool = event is InputEventKey
+	var is_mouse_input: bool = event is InputEventMouseMotion or event is InputEventMouseButton
+	if is_gamepad_input or is_keyboard_input:
+		Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+	elif is_mouse_input:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	if is_gamepad_input:
+		InputService.using_gamepad = true
+	elif is_keyboard_input or is_mouse_input:
+		InputService.using_gamepad = false
+
+
 func _set_saves_blocked(value: bool) -> void :
 	ProgressData.set("lan_coop_saves_blocked", value)
 
@@ -703,6 +732,7 @@ func _end_session(reason: String) -> void :
 
 	_restore_own_unlocks()
 	_set_saves_blocked(false)
+	_set_solo_mouse(false)
 	if _run_data_replaced:
 		# A synced run replaced RunData; don't leave it behind for the menus.
 		RunData.reset()

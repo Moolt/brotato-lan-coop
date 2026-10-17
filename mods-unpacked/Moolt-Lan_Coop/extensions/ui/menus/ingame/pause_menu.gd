@@ -7,6 +7,10 @@ extends "res://ui/menus/ingame/pause_menu.gd"
 # pause() again on the pause button: that closes the menu here. This _input runs before
 # vanilla's for the same event and handles cancel; _lan_skip_pause keeps vanilla from reopening
 # the menu when one key is both cancel and pause.
+# The FocusEmulator (couch coop's per-player menu focus) stays off: it marks every input it
+# doesn't handle as handled, mouse motion and clicks included, so the mouse couldn't reach the
+# menu. With one player per machine, native focus works as in solo play; the menu still belongs
+# to the local player (inventory, pause and cancel keys).
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
@@ -39,11 +43,9 @@ func pause(player_index: int) -> void :
 		manage_back()
 		return
 	set_process_input(true)
-	_focus_emulator.set_process_input(true)
 	if not enabled:
 		return
 	_player_index = player_index
-	_focus_emulator.player_index = player_index
 	_lan_set_open(true)
 	emit_signal("paused")
 	show()

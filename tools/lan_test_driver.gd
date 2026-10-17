@@ -378,8 +378,10 @@ func _client_step() -> void :
 		6:
 			# Pause menu on the client: its player stands still, the wave goes on.
 			var main = get_tree().current_scene
-			main._pause_menu.pause(0)
-			start_pos = main._players[main.get_node("LanWaveSync")._local_index].global_position
+			# The local player's index, as main._check_for_pause passes it.
+			var local_index = main.get_node("LanWaveSync")._local_index
+			main._pause_menu.pause(local_index)
+			start_pos = main._players[local_index].global_position
 			Input.action_press("button_move_down_7")
 			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			next_t = 17.0
@@ -388,8 +390,27 @@ func _client_step() -> void :
 			var player = main._players[main.get_node("LanWaveSync")._local_index]
 			print("[TEST] client_paused_moved=", player.global_position.distance_to(start_pos), " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			Input.action_release("button_move_down_7")
-			main._pause_menu.unpause()
-			print("[TEST] client_unpaused open=", main._pause_menu.visible, " net_flag=", get_node("/root/LanNet").pause_menu_open)
+			# Close the menu with the mouse: move onto Resume (shows the cursor), then click it.
+			var resume = main._pause_menu._main_menu._resume_button
+			# Input events use window coordinates; the game renders at 1920x1080 and is stretched.
+			var click_pos = get_tree().root.get_final_transform().xform(resume.get_global_rect().get_center())
+			print("[TEST] resume_rect=", resume.get_global_rect(), " click_pos=", click_pos, " visible=", resume.is_visible_in_tree(), " disabled=", resume.disabled)
+			var motion = InputEventMouseMotion.new()
+			motion.position = click_pos
+			motion.global_position = click_pos
+			Input.parse_input_event(motion)
+			yield(get_tree(), "idle_frame")
+			print("[TEST] client_mouse_visible=", Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE)
+			for pressed in [true, false]:
+				var click = InputEventMouseButton.new()
+				click.button_index = BUTTON_LEFT
+				click.pressed = pressed
+				click.position = click_pos
+				click.global_position = click_pos
+				Input.parse_input_event(click)
+				yield(get_tree(), "idle_frame")
+			yield(get_tree(), "idle_frame")
+			print("[TEST] client_unpaused_by_click open=", main._pause_menu.visible, " net_flag=", get_node("/root/LanNet").pause_menu_open)
 			next_t = 18.5
 		8:
 			if OS.get_environment("CLIENT_QUITS") == "2":
