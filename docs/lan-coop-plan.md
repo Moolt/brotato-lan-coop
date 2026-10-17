@@ -226,6 +226,24 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - Create the over-head `PlayerLifeBarContainer` for each player at runtime by duplicating the P1 node.
 - **Spawn positions** (`entity_spawner.gd` `init`, L93-98): replace the 2×2 offset with a circle of radius `60 + 15*n` around the map centre.
 
+**Increments.** Nothing in a session loads `main.tscn` yet, so lifting the caps can't be tested until the host can enter a wave. Clients only get an in-wave view in Step 6. Until then they stay in the lobby while the host plays a test wave. Each increment is tested in two windows, then committed.
+
+- **4a: host test wave (≤ 4 players).**
+  - **Start → wave.** After a successful sync, Start loads `main.tscn` on the host (`set_run_in_progress(true)`, then `change_scene(MenuData.game_scene)`). Clients get a "host is in a test wave" hint and stay in the lobby.
+  - **Devices.** Before the scene change, the host fills `CoopService.connected_players`: the local player gets keyboard 7, or gamepad 6 if `InputService.using_gamepad`; remote players get device `-1`.
+    - Vanilla's per-player input helpers already return "nothing" for a negative device: `Utils.is_player_action_*`, `get_player_rjoy_vector`, and the pause check via `get_remapped_player_device`.
+    - Only movement needs an override: `extensions/entities/units/movement_behaviors/player_movement_behavior.gd` `get_vector_for_input_prefix` returns `Vector2.ZERO` for `device < 0`. Step 6 swaps that for `LanNet` input.
+  - **Wave end, temporary until Step 7.** In a session, `main.gd` `_on_EndWaveTimer_timeout` skips vanilla's coop upgrade UI and shop, which only have 4 slots. It sets `run_in_progress` false and changes back to the title screen, where the lobby reopens (`_restore_lan_page`). Quitting from the pause menu does the same.
+- **4b: 12 players in the wave.** Lifting the caps:
+  - `CoopService.get_max_players()` returns 12 in a session.
+  - 12 player colours: the palette moves from `ui_kit.gd` into a `CoopService` extension.
+  - All 4-slot arrays resized (list above).
+  - Spawn circle.
+  - `LobbyRules.MAX_RUN_PLAYERS` removed.
+  - **HUD:** the extension's `_enter_tree` duplicates the P4 node sets (`LifeContainerP4`, `PlayerLifeBarContainerP4`, `UIThingsToProcessPlayerContainer4`) as P5–P12, with `owner = main` and `unique_name_in_owner`, before vanilla's `_ready` looks them up by `%` name. Screen HUDs beyond P1 are hidden in a session. `set_hud_position(i)` gets a safe slot for i ≥ 4.
+  - **Test:** the host plus fake lobby entries (test driver) fill 12 slots. The wave runs about 20 s with no `ERROR:`. Check the spawn circle and the over-head life bars.
+- **4c: other players' HUD.** `ui/net_player_list.gd`: a compact list (colour, name, HP bar) of the other players, in place of the hidden P2–P12 HUDs. The local player is always in the P1 slot. On the host that is index 0; Step 6 remaps it for clients.
+
 ## Step 5: Arena size and enemy scaling
 - **Arena.** Extend `singletons/zone_service.gd` `set_current_zone(zone)`. In net mode, before calling `.set_current_zone(zone)`, scale `zone.width/height` by `sqrt(1 + 0.25*(n-1))` (default; configurable). That is about 1.94× linear at 12 players. `main.gd:159-161` passes the same object to the tile map, the map limits and the wave manager, so all of them pick it up.
   - The camera `_max_zoom` follows the bounds automatically.
@@ -319,6 +337,22 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - Run with `-vvv` and watch `ModLoaderLog` output.
   - **Windows that are covered or unfocused stall on vsync** under Wayland/XWayland, which also stops the network poll. Turn vsync off (`display/window/vsync/use_vsync=false`) and tile the windows with `--position`.
   - Without `config/custom_user_dir_name`, instances use the real `~/.local/share/Brotato` save and log. For throwaway tests, copy the project and set a separate user dir name in the copy.
+- **Test setup used so far (Steps 2–3).** It lives in the session scratchpad and has to be rebuilt per session:
+  - **Throwaway copy.** `cp -a Decompiled <scratch>/game`, then remove its `.git`. Replace `mods-unpacked/Moolt-Lan_Coop` with an **absolute** symlink to `brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop`. In the copy's `project.godot`:
+    - `config/custom_user_dir_name="BrotatoLanTest"` (under `[application]`)
+    - `window/vsync/use_vsync=false` (under `[display]`)
+    - an autoload `LanTestDriver="*res://lan_test_driver.gd"` after `OS_Seaven`
+  - **Running.** `Godot/Godot_v3.7-dev1_x11.64 --path <scratch>/game --resolution 1920x1080 -- <role>`. One instance runs in the background with role `host`, a second in the foreground with role `join`, each under `timeout 60` with stdout to a log file.
+    - First run one instance with role `quit` (quit as soon as the title screen loads) to catch parse errors cheaply.
+    - The two instances share `user://lan_coop.cfg` (names, port 24999 in that profile).
+  - **Driver.** `lan_test_driver.gd` reads the role from `OS.get_cmdline_args()`. In `_process` it waits for `current_scene.filename == MenuData.title_screen_scene`, then finds `Menus` and runs a timed `match step` script that drives the pages by calling their handlers directly:
+    - `LanMultiplayerButton.emit_signal("pressed")`, `mp._host_button`, `join._first_row()`
+    - lobby `_on_CharacterGrid_element_pressed(element)`, `_on_ReadyButton_pressed()`, `_on_StartButton_pressed`
+    - it prints `[TEST] ...` lines and saves screenshots: `get_viewport().get_texture().get_data()`, `flip_y()`, `save_png()` into `$SHOT_DIR`
+    - each step sets `next_t` *before* any `yield`, otherwise `_process` re-enters the same step
+    - fake lobby players: append `NetProtocol.new_player_entry(...)` to `LanNet.players`, then `_broadcast_lobby_state()`
+  - **Log check.** `grep -a "SCRIPT\|ERROR"` the logs, then filter out the engine shutdown errors (`_first != nullptr`, resources/MemoryPool still in use, ObjectDB leaks). `--disable-mods` shows vanilla prints these too. A stray background instance from an earlier run can mix into results, so check `ps` first.
+  - **Manual test by the user.** Two windows: `--resolution 1280x720 --position 0,0` and `--position 1280,0`, with no role argument (the driver stays idle), started with `nohup`. Commit only after the user approves.
 - **Per milestone:**
   - M2: names, characters and ready flags show up on every instance. Start is disabled until all players are ready.
   - M3/M4: client movement is visible on the host and the other way round. Enemies, hits, deaths and gold match. Killing the client process mid-wave doesn't crash the host.
