@@ -7,7 +7,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 |---|---|
 | `mod_main.gd` | Installs the extensions (one line each), registers translations, adds `/root/LanNet` deferred. |
 | `net/net_manager.gd` | `LanNet`: ENet peer, handshake, lobby state, run sync, all RPCs, session flags. |
-| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 12, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
+| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 13, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
 | `net/net_config.gd` | `user://lan_coop.cfg`: name, last IP, port, last zone/difficulty, `[scaling]` knobs. |
 | `net/net_discovery.gd` | UDP beacon (host) and listener (join page). |
 | `net/lobby_rules.gd` | Character/weapon/zone/difficulty lookup and validation. |
@@ -24,7 +24,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 2. **Lobby**: `LanNet.players` (entries from `NetProtocol.new_player_entry`, sorted by `player_index`; the host is peer 1 and index 0) and `lobby_settings` (`zone`, `difficulty`, `run_id`, `in_wave`, `scaling`) are broadcast with `_rpc_lobby_state` on every change. Clients change their own entry with `_rpc_update_player`.
 3. **Start** (`start_run`): host builds the run (`RunBuilder.build_run`), serializes it, applies its own copy from the same JSON, sends `_rpc_run_state(run_id, json, digest)`; clients apply and ack. Any lobby change makes the run stale (`run_id` = 0).
 4. **Wave**: once every client acked, the host sets `run_in_progress` (`lobby_settings.in_wave`), fills `CoopService.connected_players` (own device 7 keyboard / 6 gamepad, others -1), sends `_rpc_enter_wave(run_id)` and everyone loads `main.tscn`. The `main.gd` extension adds `LanWaveSync` in `_ready`.
-5. **Wave end (temporary until Step 7)**: the `main.gd` extension's `_on_EndWaveTimer_timeout` goes back to the title screen, whose extension reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients still in `main.tscn` follow when a lobby broadcast says `in_wave` is false.
+5. **Wave end**: unless the wave failed, the host's `main.gd` extension runs `RunData.on_wave_end()` / `LinkedStats.reset()` and `LanNet.send_wave_end_state`: the run after the wave (JSON, applied on the host too) with its digest and each player's pending level-ups and crates (`RunBuilder.pack_pending`: `[[levels], [consumable ids]]` per player) go out as `_rpc_wave_end_state(run_id, wave, json, digest, pending)`. A client applies it once its own wave is over (end-wave timer ran, or it left `main.tscn`), stores `LanNet.wave_end_state = {wave, pending, ok}` and answers `_rpc_wave_end_ack(wave, ok)`. Then (temporary until Step 7 is done) the `main.gd` extension's `_on_EndWaveTimer_timeout` goes back to the title screen (whose vanilla `_ready` resets `RunData`), whose extension reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients still in `main.tscn` follow when a lobby broadcast says `in_wave` is false.
 6. **Leave / errors**: `_end_session(reason)` restores unlocks and saves, resets RunData if a synced run replaced it, and returns to the title screen with a reason popup.
 
 ## In-wave sync (`LanWaveSync`)
@@ -72,7 +72,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 ## Extensions (`extensions/<vanilla path>`)
 | Vanilla script | What the extension does |
 |---|---|
-| `main.gd` | HUD copies P5–P12, local HUD in the P1 slot, over-head names/bars, camera on the local player (spectate on death), adds `LanWaveSync`, enemy scaling, client end-of-wave from the host (verdict via `_set_run_states`), blocks client loot, crate-to-process hook, pause check, no pause on focus loss, temporary wave end → lobby, `on_gold_picked_up` copy for > 4 players |
+| `main.gd` | HUD copies P5–P12, local HUD in the P1 slot, over-head names/bars, camera on the local player (spectate on death), adds `LanWaveSync`, enemy scaling, client end-of-wave from the host (verdict via `_set_run_states`), blocks client loot, crate-to-process hook, pause check, no pause on focus loss, wave-end state to the clients, temporary wave end → lobby, `on_gold_picked_up` copy for > 4 players |
 | `singletons/run_data.gd`, `utils.gd`, `stats_manager.gd`, `debug_service.gd`, `ui/menus/global/popup_manager.gd` | grow 4-slot arrays to 12 (also after vanilla functions that reassign them) |
 | `singletons/coop_service.gd` | 12 players, 12 colours |
 | `singletons/zone_service.gd` | arena grows with the player count |

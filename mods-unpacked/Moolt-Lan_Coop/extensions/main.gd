@@ -21,8 +21,10 @@ extends "res://main.gd"
 #   wave; the host's cleanup event does. clean_up_room runs once there, whether that event or
 #   vanilla's all-players-dead check (deaths come from the host too) comes first.
 # - Losing window focus doesn't pause in a session (the others keep playing).
-# - Temporary until Step 7: the end of a wave goes back to the title screen (and its lobby)
-#   instead of the coop upgrade UI and shop, which only have 4 slots.
+# - At the end of a wave the host sends the run and the pending level-ups and crates to the
+#   clients (LanNet.send_wave_end_state). Temporary until Step 7 is done: then everyone goes back
+#   to the title screen (and its lobby) instead of the coop upgrade UI and shop, which only have
+#   4 slots.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
@@ -405,4 +407,12 @@ func _on_EndWaveTimer_timeout() -> void :
 	SoundManager2D.clear_queue()
 	InputService.set_gamepad_echo_processing(true)
 	_end_wave_timer_timedout = true
+	# As vanilla, except after a failed wave (vanilla shows the retry screen there). The host
+	# then sends the run after the wave; clients apply it once this has run (LanNet).
+	if not (_is_wave_failed and RunData.current_wave > 0):
+		RunData.on_wave_end()
+		LinkedStats.reset()
+		var lan_net = LanGame.get_lan_net()
+		if lan_net.is_host:
+			lan_net.send_wave_end_state(_upgrades_to_process, _consumables_to_process)
 	_change_scene(MenuData.title_screen_scene)

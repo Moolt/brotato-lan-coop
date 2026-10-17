@@ -421,28 +421,64 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 ## Step 7: Between-wave flow (upgrades and shop per machine)
 Goal (milestone 5): after a wave, every machine picks its own level-up upgrades, processes its own crates and shops on its own screen; the host waits for everyone, merges the results and starts the next wave on all machines. Read [lan-coop-mod.md](lan-coop-mod.md) first (session flow, sync protocol, pitfalls).
 
-**Outline (original design, still valid):**
-1. **Host, at wave end.** In the `main.gd` extension's `_on_EndWaveTimer_timeout` (today: back to the lobby, temporary), do **not** show `_coop_upgrades_ui`. Run what vanilla runs before the upgrades (`RunData.on_wave_end()`, `LinkedStats.reset()`), then send every client the authoritative run state plus each player's pending upgrades and crates.
-2. **Every peer, host included, sets up a solo between-wave phase:** stash the full `players_data`, set `RunData.players_data = [my_player_data]` and `set_coop_run(false)`, resolve the pending level-ups and crates with the solo `_upgrades_ui` flow, then go to the solo `shop.tscn`.
-3. **Shop "Go".** Extend `ui/menus/shop/base_shop.gd`: instead of vanilla's next-wave code, send the own `PlayerRunData.serialize()` to the host and show "Waiting for: …" (`ui/net_player_list.gd`, not written yet).
-4. **Host merge.** When all players are done, the host deserializes each player into `players_data[i]`, restores the coop run, runs the once-per-wave parts of vanilla's Go handler, increments the wave, sends the run state, and everyone loads `main.tscn` (same path as Start: run state, digest, `_rpc_enter_wave`).
-5. **Run end.** On run won or lost, every peer shows the solo end screen for its own player. "Back" leaves the session for clients; the host returns to the lobby.
+**Design (original outline, still valid):**
+1. **Host, at wave end:** run what vanilla runs before the upgrades, then send every client the authoritative run state plus each player's pending upgrades and crates (7a).
+2. **Every peer, host included, sets up a solo between-wave phase** (7b), resolves the pending level-ups and crates with the solo `_upgrades_ui` flow (7c), then goes to the solo `shop.tscn` (7d).
+3. **Shop "Go"** sends the own player data to the host and shows who is still shopping (7d).
+4. **Host merge:** when all players are done, the host merges them and starts the next wave on every machine (7e).
+5. **Run end:** solo end screens (7f).
 
-**Facts to build on (checked in 6e):**
-- **Vanilla `main._on_EndWaveTimer_timeout`:** a failed wave shows `_retry_wave` and returns; otherwise `RunData.on_wave_end()`, `LinkedStats.reset()`, then either `RunData.get_end_run_scene_path()` (run lost/won: `coop_end_run.tscn` / `end_run.tscn`) or the upgrades: solo `_upgrades_ui.show_options(_consumables_to_process, _upgrades_to_process)` and yields `consumable_selected` / `upgrade_selected` per element and `options_processed`, removing the things-to-process icons as it goes. Then the challenge UI, then `_change_scene(RunData.get_shop_scene_path())` (`coop_shop.tscn` / `shop.tscn` by `is_coop_run`).
-- **Pending upgrades and crates live in `main`, not in `RunData`:** `_upgrades_to_process[i]` (`UpgradesUI.UpgradeToProcess`: `level`, `player_index`) and `_consumables_to_process[i]` (`UpgradesUI.ConsumableToProcess`: `consumable_data`, `player_index`). They must be sent separately (levels and consumable `my_id`s), and `player_index` must be 0 in a client's solo phase.
-- **Client run data diverged during the wave:** gold/XP/level come from snapshots, but a client's `RunData` also got vanilla side effects (each `levelled_up` adds +1 max HP via `main.on_levelled_up`, half-wave stat conversions, wave-start rolls). So the host's state at wave end must replace the client's before the upgrades. Use `RunBuilder.serialize_run()` / `apply_run()` (JSON through the save loader, `ProgressDataLoaderV3.serialize_run_state` / `deserialize_run_state`) and the digest check, as Start does.
-- **`PlayerRunData.serialize()` / `deserialize(dict)`** exist (`singletons/player_run_data.gd`); the run serializer uses them per player. JSON round trips turn ints into floats; `RunBuilder.apply_run` already fixes the known run-level keys.
-- **Vanilla shop "Go"** (`base_shop.gd` `_on_GoButton_pressed(player_index)`): waits until every local player pressed Go, `ProgressData.save_run_state(shop items, reroll counts, …)` (in memory; disk saves are blocked in a session), marks item locking for the candy-bag challenge, removes hourglass items and counts them as `wave_reset_count`, rolls `extra_elite_next_wave_chance`, then `RunData.current_wave += 1 - wave_reset_count` and `change_scene(MenuData.game_scene)`. The host must do the wave increment once for everyone (hourglass and elite rolls per player).
-- **Per-player shop state outside `players_data`:** RunData keeps 4-slot arrays (grown to 12 by the mod) indexed by player: `locked_shop_items`, reroll counts, free rerolls and more (`run_data.gd` ~L148-164, ~L556). In a solo phase the own data sits at index 0, so these entries must move from slot `local_player_index` to 0 and back. List them by grepping `run_data.gd` for `[[], [], [], []]`-style initialisers and `player_index]`.
-- **Things that must hold during the solo phase:** `RunData.get_player_count()` is 1, `is_coop_run` false, `CoopService.connected_players` describes only the local device, and per-player caches (`Utils` stat caches, `TempStats`, `LinkedStats`) are reset, since index 0 now means the own player.
-- **The wave verdict** is already the host's (`_rpc_wave_cleanup` with `[failed, lost, won]`), so all peers agree on "run end vs shop".
-- **Gaps carried over:** `ProgressData.reset_and_save_new_run_state()` runs on every peer when all players die (in-memory "Continue" disappears); clients that left the wave mid-way sit in the lobby and need the run state when the next wave starts.
+**Increments.** Each is tested in two windows (driver plus manual test), then committed. The facts below were checked in 6e; adjust the split after reading the code. Milestone 5 is reached with 7e.
 
-**Proposed increments** (adjust after reading the code):
-- **7a: wave end → solo upgrades on every machine.** Host sends the state and pending upgrades/crates; every peer swaps to its solo view, runs the solo upgrades UI, then (temporarily) returns to the lobby.
-- **7b: solo shop and Go.** Every peer opens `shop.tscn` on its own data; Go sends `PlayerRunData` (plus the own per-player shop state) to the host, waiting list UI, host merges and starts the next wave everywhere.
-- **7c: run end.** Solo end screens, Back to lobby / leave.
+- **7a: wave-end state broadcast.** No new UI yet; every peer still returns to the lobby afterwards, as today.
+  - **Where:** the `main.gd` extension's `_on_EndWaveTimer_timeout` (today: back to the lobby, temporary). Vanilla's version, for reference: a failed wave shows `_retry_wave` and returns; otherwise `RunData.on_wave_end()`, `LinkedStats.reset()`, then either `RunData.get_end_run_scene_path()` (run lost/won: `coop_end_run.tscn` / `end_run.tscn`) or the upgrades (7c), the challenge UI and the shop (7d).
+  - **Host:** run `RunData.on_wave_end()` and `LinkedStats.reset()` as vanilla does, then send every client the run state and the pending upgrades and crates.
+  - **Why the state must be sent:** client run data diverged during the wave. Gold/XP/level come from snapshots, but a client's `RunData` also got vanilla side effects (each `levelled_up` adds +1 max HP via `main.on_levelled_up`, half-wave stat conversions, wave-start rolls). So the host's state at wave end must replace the client's before the upgrades. Use `RunBuilder.serialize_run()` / `apply_run()` (JSON through the save loader, `ProgressDataLoaderV3.serialize_run_state` / `deserialize_run_state`) and the digest check, as Start does. JSON round trips turn ints into floats; `RunBuilder.apply_run` already fixes the known run-level keys.
+  - **Pending upgrades and crates live in `main`, not in `RunData`:** `_upgrades_to_process[i]` (`UpgradesUI.UpgradeToProcess`: `level`, `player_index`) and `_consumables_to_process[i]` (`UpgradesUI.ConsumableToProcess`: `consumable_data`, `player_index`). They must be sent separately (levels and consumable `my_id`s).
+  - **The wave verdict** is already the host's (`_rpc_wave_cleanup` with `[failed, lost, won]`), so all peers agree on "run end vs shop". On run end, keep returning to the lobby until 7f.
+  - **Test:** after a wave the client's digest matches the host's, and each client received its own pending levels and crates.
+
+**7a status: done.**
+- **Host:** the `main.gd` extension's `_on_EndWaveTimer_timeout` runs `RunData.on_wave_end()` and `LinkedStats.reset()` unless the wave failed (vanilla's retry case), then `LanNet.send_wave_end_state(_upgrades_to_process, _consumables_to_process)`: serializes the run, applies its own copy from the same JSON (as Start), and sends `_rpc_wave_end_state(run_id, wave, json, digest, pending)` to every connected client (also those waiting in the lobby). `PROTOCOL_VERSION` 13.
+- **Pending:** `RunBuilder.pack_pending` gives `[[levels], [consumable ids]]` per player; `is_valid_pending` checks the received one against the run (player count, int levels, known consumable ids).
+- **Client:** keeps the message in `_incoming_wave_end` and applies it from `LanNet._process` once its own wave is over (`main._end_wave_timer_timedout`, or no longer in `main.tscn`, e.g. after following the host's lobby broadcast), since vanilla's end-wave code uses `RunData` until then. It runs `on_wave_end()` / `LinkedStats.reset()` itself too (vanilla side effects only; the state replaces its `RunData`). Then `apply_run`, digest and pending check, `LanNet.wave_end_state = {wave, pending, ok}`, ack `_rpc_wave_end_ack(wave, ok)`; the host logs it and keeps it in `_wave_end_acks`.
+- **Digest** (`RunBuilder.summarize`) now also has the wave and each player's level and XP.
+- **Failed wave** (everyone dead): nothing is sent, as before (7f).
+- **Tested:** host + client + 1 fake (Engineer), 20 s wave ended cleared (driver: the old kill-everyone ending is now `KILL_ALL=1`), with a host level-up and a crate (vanilla handed it to the client's player): client "received and verified", pending `[[[1,2],[]],[[],["consumable_item_box"]],[[],[]]]` on both, the host got the ack. `KILL_ALL=1` (run lost): nothing sent. No `ERROR:`.
+- **Note:** back in the lobby, vanilla's `title_screen.gd` `_ready` resets `RunData` on every peer that loads it (the host's run is gone there; a client that applies after loading the title screen keeps it). Harmless while the wave end still goes to the lobby; from 7c on, nobody passes through the title screen between waves.
+
+- **7b: solo view swap.** A pair of helpers that turns the coop run into the local player's solo run and back, without UI changes yet.
+  - **Enter:** stash the full `players_data`, set `RunData.players_data = [my_player_data]` and `set_coop_run(false)`.
+  - **Must hold during the solo phase:** `RunData.get_player_count()` is 1, `is_coop_run` false, `CoopService.connected_players` describes only the local device, and per-player caches (`Utils` stat caches, `TempStats`, `LinkedStats`) are reset, since index 0 now means the own player.
+  - **Per-player state outside `players_data`:** RunData keeps 4-slot arrays (grown to 12 by the mod) indexed by player. In a solo phase the own data sits at index 0, so these entries must move from slot `local_player_index` to 0 and back. List them by grepping `run_data.gd` for `[[], [], [], []]`-style initialisers and `player_index]`. A first grep finds `remove_speed_effect_cache`, `items_nb_cache`, `different_items_nb_cache`, `duplicate_items_cache`, `max_consumable_stats_gained_this_wave`, `tracked_item_effects`, `_are_player_stats_dirty`, `current_charmed_enemies`, `steps_taken_this_wave` (~L148-164) and `locked_shop_items` (~L193, reset ~L556). The reroll counts, free rerolls and item steals are not in `RunData` but in `base_shop.gd` (4-slot `_reroll_count`, `_paid_reroll_count`, `_initial_free_rerolls`, `_free_rerolls`, `_item_steals`, …) and reach the run state through `ProgressData.save_run_state` (7d).
+  - **Leave:** put the own `PlayerRunData` and the per-player entries back into slot `local_player_index`, restore `players_data`, `is_coop_run` and `connected_players`, reset the caches again.
+  - **Test (driver):** enter and leave right after 7a's state arrives; the digest is unchanged, and during the swap the solo invariants above hold.
+
+- **7c: solo upgrades on every machine.** After 7a's state, every peer enters the solo view and resolves its own level-ups and crates, then (temporarily) returns to the lobby.
+  - Do **not** show `_coop_upgrades_ui` (it has only 4 slots).
+  - Every pending element gets `player_index` 0 in the solo phase.
+  - **Vanilla's solo flow to reuse:** `_upgrades_ui.show_options(_consumables_to_process, _upgrades_to_process)`, then yield `consumable_selected` / `upgrade_selected` per element and `options_processed`, removing the things-to-process icons as it goes (`_things_to_process_player_containers[0]`, whose `consumables` / `upgrades` lists drop each processed element). Then the challenge UI (`_challenge_completed_ui` `finished`, if shown).
+  - **Test:** host and client each get their own upgrade choices and crates at the same time; picks change only the own player's stats.
+
+- **7d: solo shop and Go.** After the upgrades, every peer goes to the solo `shop.tscn` on its own data (vanilla: `_change_scene(RunData.get_shop_scene_path())`, which picks `coop_shop.tscn` / `shop.tscn` by `is_coop_run`, so the solo view yields `shop.tscn`).
+  - Extend `ui/menus/shop/base_shop.gd` (still to come in the extension list): instead of vanilla's next-wave code, Go sends the own `PlayerRunData.serialize()` (exists in `singletons/player_run_data.gd`, along with `deserialize(dict)`; the run serializer uses them per player) plus the own per-player shop state from 7b to the host.
+  - Then show "Waiting for: …" (`ui/net_player_list.gd`, not written yet).
+  - **Vanilla shop "Go"** (`base_shop.gd` `_on_GoButton_pressed(player_index)`), for what Go replaces: waits until every local player pressed Go, `ProgressData.save_run_state(shop items, reroll counts, …)` (in memory; disk saves are blocked in a session), marks item locking for the candy-bag challenge, removes hourglass items and counts them as `wave_reset_count`, rolls `extra_elite_next_wave_chance`, then `RunData.current_wave += 1 - wave_reset_count` and `change_scene(MenuData.game_scene)`. The per-player parts (candy-bag item locking, hourglass, elite rolls) and the wave increment move to the host in 7e.
+  - Until 7e, the host collects everyone's Go and then sends all peers back to the lobby.
+  - **Test:** both machines shop independently; the waiting list updates as players press Go.
+
+- **7e: host merge and next wave (milestone 5).**
+  - When all players are done, the host deserializes each player into `players_data[i]` (JSON round trips turn ints into floats, see 7a), puts their per-player shop state into their slots, and restores the coop run.
+  - It runs the once-per-wave parts of vanilla's Go handler: `save_run_state`, candy-bag item locking, hourglass items and `extra_elite_next_wave_chance` per player, then the wave increment **once** for everyone (`current_wave += 1 - wave_reset_count`).
+  - Then it sends the run state and everyone loads `main.tscn` (same path as Start: run state, digest, `_rpc_enter_wave`). Every peer leaves its solo view first.
+  - **Gap carried over:** clients that left the wave mid-way sit in the lobby and need the run state when the next wave starts.
+  - **Test:** several waves in a row on two machines; items bought on the client exist on the host in the next wave (and the reverse), gold and stats match.
+
+- **7f: run end.** On run won or lost, every peer shows the solo end screen for its own player. "Back" leaves the session for clients; the host returns to the lobby.
+  - Vanilla's end-run path: `RunData.get_end_run_scene_path()` (`coop_end_run.tscn` / `end_run.tscn` by `is_coop_run`), so the solo view yields `end_run.tscn`.
+  - A failed wave: vanilla shows `_retry_wave` and returns (only when `RunData.current_wave > 0`). Decide what a session does there.
+  - **Gap carried over:** `ProgressData.reset_and_save_new_run_state()` runs on every peer when all players die (in-memory "Continue" disappears).
+  - **Test:** win (last wave) and lose (everyone dies), with the end screen on both machines and Back from each.
 
 ## Step 8: Polish
 - ~~Floating names above players.~~ Moved into 4c.

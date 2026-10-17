@@ -56,6 +56,17 @@ var _start_requested: = false
 # True once a built or received run replaced RunData (reset when the session ends).
 var _run_data_replaced: = false
 
+# Wave end (Step 7). The host sends the run as it stands after the wave (a client's RunData
+# diverged during it) with each player's pending level-ups and crates (RunBuilder.pack_pending).
+# A client applies it once its own wave is over (its end-wave timer ran, or it left the wave
+# scene) and acks whether its digest matches. wave_end_state is the applied one:
+# {wave, pending, ok}, empty before the first wave end.
+var wave_end_state: = {}
+# Client: received, waiting for the own wave to be over.
+var _incoming_wave_end: = {}
+# Host: peer_id -> ok for wave_end_state.
+var _wave_end_acks: = {}
+
 # The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
 # In-wave RPCs are forwarded to it.
 var wave_sync: Node = null
@@ -82,6 +93,11 @@ func _ready() -> void :
 
 
 func _process(_delta: float) -> void :
+	if is_client:
+		_apply_wave_end_if_ready()
+		if _incoming_wave_end.empty():
+			set_process(false)
+		return
 	if not is_host:
 		set_process(false)
 		return
@@ -241,6 +257,23 @@ func start_run() -> int:
 	emit_signal("run_sync_changed")
 	_enter_wave_if_synced()
 	return OK
+
+
+# Host, at the end of a wave that wasn't failed (after RunData.on_wave_end): sends the run and
+# the pending level-ups and crates to every client. Like start_run, the host applies its own
+# run from the same JSON, so every peer holds the same deserialized copy.
+func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Array) -> void :
+	if not is_host:
+		return
+	var pending: = RunBuilder.pack_pending(upgrades_to_process, consumables_to_process)
+	run_state = RunBuilder.serialize_run()
+	var _applied = RunBuilder.apply_run(run_state)
+	var digest: = RunBuilder.digest()
+	wave_end_state = {"wave": RunData.current_wave, "pending": pending, "ok": true}
+	_wave_end_acks = {}
+	ModLoaderLog.info("Wave %d over, sending the run: %s, pending %s" % [RunData.current_wave, to_json(RunBuilder.summarize()), to_json(pending)], NetProtocol.MOD_ID)
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_wave_end_state", lobby_settings.get("run_id", 0), RunData.current_wave, run_state, digest, pending)
 
 
 # {state: "none" | "pending" | "synced" | "failed", names: [...]} for the lobby's status line.
@@ -408,6 +441,18 @@ remote func _rpc_run_state(run_id, state, digest) -> void :
 
 
 
+# Host -> client: the run after the wave (see send_wave_end_state).
+remote func _rpc_wave_end_state(run_id, wave, state, digest, pending) -> void :
+	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+		return
+	if typeof(run_id) != TYPE_INT or typeof(wave) != TYPE_INT or typeof(state) != TYPE_STRING or typeof(digest) != TYPE_STRING or typeof(pending) != TYPE_ARRAY:
+		return
+	if run_id != _received_run_id:
+		return
+	_incoming_wave_end = {"wave": wave, "state": state, "digest": digest, "pending": pending}
+	set_process(true)
+
+
 # RPCs: client -> host (run sync)
 
 remote func _rpc_run_state_ack(run_id, ok) -> void :
@@ -421,6 +466,19 @@ remote func _rpc_run_state_ack(run_id, ok) -> void :
 		ModLoaderLog.warning("%s has a different run" % entry.name, NetProtocol.MOD_ID)
 	emit_signal("run_sync_changed")
 	_enter_wave_if_synced()
+
+
+remote func _rpc_wave_end_ack(wave, ok) -> void :
+	if not is_host or typeof(wave) != TYPE_INT or typeof(ok) != TYPE_BOOL:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry == null or wave != wave_end_state.get("wave", - 1):
+		return
+	_wave_end_acks[entry.peer_id] = ok
+	if ok:
+		ModLoaderLog.info("%s holds the run after wave %d" % [entry.name, wave], NetProtocol.MOD_ID)
+	else:
+		ModLoaderLog.warning("%s has a different run after wave %d" % [entry.name, wave], NetProtocol.MOD_ID)
 
 
 remote func _rpc_lobby_state(new_players, new_settings) -> void :
@@ -628,6 +686,28 @@ func _enter_wave_if_synced() -> void :
 	var _e = get_tree().change_scene(MenuData.game_scene)
 
 
+# Client: applies the received wave-end run once the own wave is over (vanilla's end-wave code
+# still uses RunData until then) and acks it.
+func _apply_wave_end_if_ready() -> void :
+	if _incoming_wave_end.empty():
+		return
+	var current_scene: = get_tree().current_scene
+	if current_scene == null:
+		return
+	if current_scene.filename == MenuData.game_scene and not current_scene.get("_end_wave_timer_timedout"):
+		return
+	var incoming: = _incoming_wave_end
+	_incoming_wave_end = {}
+	run_state = incoming.state
+	var ok: bool = RunBuilder.apply_run(incoming.state) and RunBuilder.digest() == incoming.digest and RunBuilder.is_valid_pending(incoming.pending)
+	wave_end_state = {"wave": incoming.wave, "pending": incoming.pending if ok else [], "ok": ok}
+	if ok:
+		ModLoaderLog.info("Run after wave %d received and verified, pending %s" % [incoming.wave, to_json(incoming.pending)], NetProtocol.MOD_ID)
+	else:
+		ModLoaderLog.warning("Run after wave %d differs from the host's: %s" % [incoming.wave, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
+	rpc_id(HOST_PEER_ID, "_rpc_wave_end_ack", incoming.wave, ok)
+
+
 func _is_in_wave_scene() -> bool:
 	var current_scene: = get_tree().current_scene
 	return current_scene != null and current_scene.filename == MenuData.game_scene
@@ -742,6 +822,9 @@ func _end_session(reason: String) -> void :
 	_received_run_ok = false
 	_run_acks = {}
 	_start_requested = false
+	wave_end_state = {}
+	_incoming_wave_end = {}
+	_wave_end_acks = {}
 	CoopService.clear_coop_players()
 
 	active = false

@@ -79,6 +79,40 @@ static func apply_run(run_json: String) -> bool:
 	return true
 
 
+# Host: each player's level-ups and crates still to process, from main's _upgrades_to_process
+# and _consumables_to_process (they live in main, not in RunData): [[levels], [consumable ids]]
+# per player.
+static func pack_pending(upgrades_to_process: Array, consumables_to_process: Array) -> Array:
+	var pending: = []
+	for player_index in RunData.get_player_count():
+		var levels: = []
+		if player_index < upgrades_to_process.size():
+			for upgrade in upgrades_to_process[player_index]:
+				levels.append(upgrade.level)
+		var crates: = []
+		if player_index < consumables_to_process.size():
+			for consumable in consumables_to_process[player_index]:
+				crates.append(consumable.consumable_data.my_id)
+		pending.append([levels, crates])
+	return pending
+
+
+# Client: whether pending (from pack_pending, over the network) fits the current run.
+static func is_valid_pending(pending: Array) -> bool:
+	if pending.size() != RunData.get_player_count():
+		return false
+	for entry in pending:
+		if typeof(entry) != TYPE_ARRAY or entry.size() != 2 or typeof(entry[0]) != TYPE_ARRAY or typeof(entry[1]) != TYPE_ARRAY:
+			return false
+		for level in entry[0]:
+			if typeof(level) != TYPE_INT:
+				return false
+		for consumable_id in entry[1]:
+			if typeof(consumable_id) != TYPE_STRING or ItemService.get_element_safe(ItemService.consumables, consumable_id) == null:
+				return false
+	return true
+
+
 # What every peer must agree on, readable for logs.
 static func summarize() -> Dictionary:
 	var players: = []
@@ -97,9 +131,12 @@ static func summarize() -> Dictionary:
 			"items": items,
 			"gold": player_data.gold,
 			"max_hp": RunData.get_player_max_health(player_index),
+			"level": player_data.current_level,
+			"xp": player_data.current_xp,
 		})
 	return {
 		"zone": RunData.current_zone,
+		"wave": RunData.current_wave,
 		"difficulty": RunData.current_difficulty,
 		"coop": RunData.is_coop_run,
 		"players": players,

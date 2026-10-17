@@ -5,12 +5,15 @@ extends Node
 #   host: hosts, picks and readies, adds $FAKES (default 1) fake lobby players (the first is an
 #         Engineer, for turrets), starts a 20 s wave with invulnerable players and $ENEMY_MULT
 #         times the enemies, moves left, spawns a boss and three trees, sets the boss to
-#         5000 HP and then half, kills a tree and the fake player 2, opens its pause menu, kills
-#         everyone (run lost), logs players/HP/speed/timer, entities and the run verdict, leaves
+#         5000 HP and then half, kills a tree and the fake player 2, opens its pause menu, lets
+#         the wave end cleared (with KILL_ALL=1: kills everyone, run lost), logs players/HP/
+#         speed/timer, entities and the run verdict, back in the lobby logs the wave-end state
+#         and the clients' acks, leaves
 #   join: joins the first discovered game, picks and readies, enters the wave with the host,
 #         moves right, opens its pause menu and checks it stands still, then (with
 #         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, or stays and
-#         logs the host's run verdict, follows the host back to the lobby
+#         logs the host's run verdict, follows the host back to the lobby and logs the
+#         wave-end state it received
 #   solo: builds a 1-player run without a session and plays a vanilla wave
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
@@ -338,19 +341,28 @@ func _host_step() -> void :
 			log_sync("host_w23")
 			var main = get_tree().current_scene
 			main._pause_menu.unpause()
-			# Everyone dies: the run is lost.
-			for p in main._players:
-				if not p.dead:
-					p.die()
+			if OS.get_environment("KILL_ALL") == "1":
+				# Everyone dies: the run is lost.
+				for p in main._players:
+					if not p.dead:
+						p.die()
 			next_t = 24.0
 		11:
-			next_t = 30.0
+			next_t = 40.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
 		12:
 			log_lobby("host_after_wave_end")
+			log_wave_end("host_wave_end")
 			next_t = t + 2.0
 		13:
 			net.leave()
 			get_tree().quit()
+
+
+func log_wave_end(tag: String) -> void :
+	var net = get_node("/root/LanNet")
+	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
+	print("[TEST] ", tag, " wave_end_state=", net.wave_end_state, " acks=", net._wave_end_acks, " incoming=", not net._incoming_wave_end.empty())
+	print("[TEST] ", tag, " digest=", RB.digest(), " summary=", to_json(RB.summarize()))
 
 
 func log_run_states(tag: String) -> void :
@@ -442,9 +454,10 @@ func _client_step() -> void :
 				log_sync("client_w21")
 			next_t = 23.6
 		10:
-			next_t = 29.0
+			next_t = 40.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
 		11:
 			log_lobby("client_end")
+			log_wave_end("client_wave_end")
 			get_tree().quit()
 
 
