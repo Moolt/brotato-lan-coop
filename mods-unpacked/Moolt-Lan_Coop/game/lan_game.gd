@@ -27,6 +27,12 @@ static func get_wave_sync() -> Node:
 	return lan_net.wave_sync if lan_net != null else null
 
 
+# True on a LAN client during a wave.
+static func is_wave_client() -> bool:
+	var wave_sync = get_wave_sync()
+	return wave_sync != null and not wave_sync.is_host
+
+
 # The lobby name of a player, "" outside a session.
 static func get_player_name(player_index: int) -> String:
 	var lan_net = get_lan_net()

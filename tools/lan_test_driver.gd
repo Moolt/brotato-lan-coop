@@ -217,6 +217,7 @@ func log_sync(tag: String) -> void :
 			for w in p.current_weapons:
 				if w._is_shooting:
 					swings += 1
+		print("[TEST] ", tag, " event_counts=", sync.event_counts)
 		print("[TEST] ", tag, " synced_projectiles=", sync._projectiles.size(), " flying_player_proj=", visible_children(main._player_projectiles), " flying_enemy_proj=", visible_children(main._enemy_projectiles), " weapons_attacking=", swings)
 		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
 	shot(tag)
@@ -266,6 +267,14 @@ func _host_step() -> void :
 			log_sync("host_w14")
 			next_t = 16.0
 		7:
+			# An explosion next to the host player.
+			var explode_args = WeaponServiceExplodeArgs.new()
+			explode_args.pos = get_tree().current_scene._players[0].global_position + Vector2(150, 0)
+			explode_args.damage = 30
+			explode_args.accuracy = 1.0
+			explode_args.crit_damage = 1.5
+			explode_args.from_player_index = 0
+			var _explosion = WeaponService.explode(load("res://items/all/landmines/landmine_exploding_effect.tres"), explode_args)
 			# The injected boss has 1 HP in wave 1.
 			for boss in get_tree().current_scene._entity_spawner.bosses:
 				boss.max_stats.health = 5000

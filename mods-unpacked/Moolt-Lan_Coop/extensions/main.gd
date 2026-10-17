@@ -324,11 +324,25 @@ func _lan_is_client() -> bool:
 	return lan_net != null and lan_net.active and lan_net.is_client
 
 
-# Client: loot comes from the host (6d), not from local deaths.
+# Client: loot comes from the host (6d), not from local deaths or garden turrets.
 func spawn_loot(unit: Unit, entity_type: int, args: Entity.DieArgs) -> void :
 	if _lan_is_client():
 		return
 	.spawn_loot(unit, entity_type, args)
+
+
+func on_structure_wanted_to_spawn_fruit(pos: Vector2) -> void :
+	if _lan_is_client():
+		return
+	.on_structure_wanted_to_spawn_fruit(pos)
+
+
+# Client: damage events from the host only show (floating text, blood); vanilla's handler
+# drops landmines for kills, which the host does.
+func _on_enemy_took_damage(enemy: Enemy, value: int, knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, args: TakeDamageArgs, hit_type: int, is_one_shot: bool) -> void :
+	if _lan_is_client():
+		return
+	._on_enemy_took_damage(enemy, value, knockback_direction, is_crit, is_dodge, is_protected, armor_did_something, args, hit_type, is_one_shot)
 
 
 func _on_game_lost_focus() -> void :

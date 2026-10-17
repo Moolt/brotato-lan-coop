@@ -345,7 +345,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Focus:** losing window focus doesn't pause in a session.
 - **Lobby hint** for a client that left the wave: "A wave is in progress. You are back in when it ends."
 - **Tested:** host + client (+1 and +10 fake players), 20 s wave. Client movement shows on the host (1196 → 1871 on both), host movement and both deaths show on the client, the client's camera spectates after its death, both return to the lobby, client HUD shows its own HP and gold colour. No `ERROR:`. Vanilla solo wave unchanged.
-- **Known gaps** (later increments): the host starts the wave without waiting for clients to load (the client's timer resyncs; 6d); a client quitting from its pause menu leaves its player standing on the host (6d); pause only pauses the own machine (6d); client-side `RunData` changes during the wave (e.g. random stat rolls at wave start) diverge, which Step 7's state broadcast overwrites.
+- **Known gaps** (later increments): the host starts the wave without waiting for clients to load (the client's timer resyncs; 6e); a client quitting from its pause menu leaves its player standing on the host (6e); pause only pauses the own machine (6e); client-side `RunData` changes during the wave (e.g. random stat rolls at wave start) diverge, which Step 7's state broadcast overwrites.
 
 - **6b: enemies, trees, structures and pets on clients.** Net ids assigned on each (re)spawn (`entity_spawner.gd` `spawn_entity`; nodes are pooled). Reliable spawn (scene index) and death (`DieArgs` essentials) events; snapshot: id, pos (int16), flip, hp ratio. Clients instance through `EntitySpawner.spawn_entity`, then disable physics, set kinematic, turn off hitboxes, interpolate, and call `die()` on the death event.
 **6b status: done.**
@@ -365,7 +365,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 
 - **6c: combat visuals,** in two parts:
   - **6c1: attacks and projectiles.** Weapon attacks (melee swings, ranged recoil), player, turret and enemy projectiles (spawn and stop events, copies with their areas off).
-  - **6c2: enemy attacks and hit feedback.** Enemy attack animations (shoot, charge), `took_damage` floating text and hit flashes, explosions, burning.
+  - **6c2: enemy attacks and hit feedback.** Enemy attack animations (shoot, charge), `took_damage` floating text and hit flashes, explosions, burning, and bullet-hell patterns (Nightmare only: Danger 6 effect, `constant_projectile` option; without sync, clients on Nightmare get hit by bullets they can't see).
 
 **6c1 status: done.**
 - **Weapon attacks:** the `weapons/weapon.gd` extension's `shoot()` reports each host attack before vanilla runs it (`MeleeWeapon` flips `next_attack_type` afterwards): `[3, player_index, weapon index, rotation, distance, attack type or -1]`. Clients set the rotation, then melee weapons run the real `_shooting_behavior.shoot(distance)` (the swing hits nothing, because client entities are inert), and ranged weapons play the sound and the recoil tween from `RangedWeaponShootingBehavior.shoot` without projectiles. Attacks arriving while a weapon is still busy are skipped.
@@ -373,7 +373,17 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Client copies:** taken from the client's own pools (pool id = the loaded scene's instance id), placed, then `shoot()` runs for the visuals; player projectiles get a stand-in `RangedWeaponStats` with the host's speed and range, which `PlayerProjectile.shoot` and some subclasses read. All their `Area2D`s stop monitoring and being monitorable. They fly on their own and stop on the host's event, or at their range. `PROTOCOL_VERSION` 8.
 - **Tested:** host + client + 3 fakes (one Engineer) with 4 injected spitters: turret shots and enemy projectiles fly on the client (about 14 enemy projectiles in flight on both sides), melee weapons swing. 12 slots with 5× enemies: no `ERROR:`, client 850+ FPS. Vanilla solo unchanged.
 
-- **6d: the rest of the wave.** Gold and consumables (spawn and pickup events; `items/global/item.gd` `pickup()` does nothing on clients), gold/XP/level in the HUD, pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` off in a session), players dropping out mid-wave, run won/lost events.
+**6c2 status: done.**
+- **Bullet hell:** the 12 patterns in `ZoneService.bullets_hell` fire single `BulletHellProjectile`s straight into `_enemy_projectiles`, so 6c1's projectile events already cover them. The spawn event now also carries `sinusoidal_motion`, `sinusoidal_motion_speed` and the bullet-hell `direction` (used to stop at the map edge; a missing one spams `printerr`). The `GroupOfBullet` patterns (`BulletHell_2`/`_3`) aren't in that list, so groups stay unsynced.
+- **Animations:** on the host, enemies' and turrets' `AnimationPlayer.animation_started` (except idle, death, RESET) is sent as `[6, id, animation, playback speed]`; clients play it. The animations' method tracks call `start_shoot()`/`shoot()`: the `enemy.gd` extension makes both no-ops on clients, the `turret.gd` extension only plays the shot sound. Garden turrets emit `wanted_to_spawn_fruit`, which the `main.gd` extension ignores on clients.
+- **Damage:** the host forwards `took_damage` of synced Units and all players: `[7, target kind (0 entity, 1 player), id or player index, value, knockback direction, flags (crit, dodge, protected, armor, one-shot), hit type, effect scale]`. Clients flash the unit, play its hurt/crit/dodge sound and emit `took_damage` with a stand-in `TakeDamageArgs` (`DUMMY_PLAYER_INDEX`, `base_effect_scale`), so vanilla's floating text, blood, hit effects and screen shake run. `main._on_enemy_took_damage` (landmines on kill) is skipped on clients.
+- **Explosions:** the `singletons/weapon_service.gd` extension reports `explode()` after vanilla set it up: `[8, scene path, pos, scale, smoke amount, sound db]`. Clients take one from their pool, apply it with areas off and run `start_explosion()`.
+- **Burning:** the snapshot's entity entry gains a flags byte (8 bytes per entity); clients start or stop `_burning_particles` when the burning flag changes.
+- **`LanWaveSync.event_counts`** counts events per type (sent on the host, received on clients), for tests and tuning. `PROTOCOL_VERSION` 9.
+- **Tested:** host + client + 3 fakes with injected spitters, boss and an explosion: animation, damage and explosion events arrive (same counts as sent), damage numbers, hit flashes and blood show on the client. 12 slots with 5× enemies: about 450 damage events in 20 s, no `ERROR:`, client about 590 FPS. Vanilla solo unchanged.
+
+- **6d: materials, consumables and player stats.** Materials (gold), consumables and crates: spawn, attraction and pickup events (`items/global/item.gd` `pickup()` does nothing on clients); gold, XP and level in the HUD, level-up and pickup feedback; the things-to-process icons (upgrades and crates collected during the wave).
+- **6e: pause, dropouts and run end.** Pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` is already off in a session), the host waiting for clients to load before the wave timer starts, players dropping out or quitting mid-wave (their player dies or stands still on the host; the host leaving ends the session), run won/lost events.
 
 ## Step 7: Between-wave flow (upgrades and shop per machine)
 1. **Host, at wave end.** Extend `main.gd` `_on_EndWaveTimer_timeout`. In net mode, do **not** show `_coop_upgrades_ui`. Run `RunData.on_wave_end()`, then broadcast `wave_end` together with the full run state, including each player's `_upgrades_to_process` and `_consumables_to_process`.
@@ -409,7 +419,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 ---
 
 ## Milestones
-Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads), 5 (arena, enemy scaling, camera) 6b (enemies on clients) and 6c1 (attacks, projectiles) are done. Next is Step 6c2.
+Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, names over heads), 5 (arena, enemy scaling, camera) 6b (enemies on clients) and 6c (attacks, projectiles, hit feedback) are done. Next is Step 6d (materials, consumables, player stats), then 6e (pause, dropouts, run end).
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
@@ -418,7 +428,7 @@ Status: 1, 2 and 3 are done (3 with Step 6a). Steps 4 (12 players in a wave, nam
 6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
-**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
+**Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
 **Still to come:** `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd` (Step 6), `ui/menus/shop/base_shop.gd` (Step 7).
 

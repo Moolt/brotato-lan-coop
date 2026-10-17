@@ -12,11 +12,14 @@ extends Node
 #     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
 #     events, collected per physics frame.
 #   - Weapon attacks (player, weapon index, rotation, distance, melee attack type) and
-#     projectiles (spawn: scene, position, velocity, rotation, speed and range; stop) are events
-#     too. Projectiles inside a group (GroupOfBullet, bullet hell) aren't synced.
+#     projectiles (spawn: scene, position, velocity, rotation, speed and range, wave motion and
+#     bullet-hell direction; stop) are events too. Projectiles inside a GroupOfBullet aren't
+#     synced (no bullet-hell pattern in use spawns groups).
+#   - So are enemy and turret animations other than idle/death (attacks, charges), damage taken
+#     by players and entities (for floating text, flashes, blood) and explosions.
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
 #     wave time left; per player position, movement, speed, HP and death; per entity (trees
-#     excluded, they don't move) position and HP ratio (0-255).
+#     excluded, they don't move) position, HP ratio (0-255) and a burning flag.
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
 #     spawned through the normal spawner (and its pools), then made inert: no physics, kinematic,
@@ -27,6 +30,9 @@ extends Node
 #     because client entities are inert), ranged weapons recoil and play their sound.
 #     Projectiles are copies with their areas off; they fly on their own and stop on the host's
 #     stop event (or at their range).
+#   - Attack animations play, but their shoot()/start_shoot() calls do nothing (enemy.gd and
+#     turret.gd extensions). Damage events flash the unit, play its hurt sound and emit
+#     took_damage, which drives vanilla's floating text, blood and screen shake.
 #   - Other players and entities are puppets, interpolated between snapshots
 #     INTERP_DELAY_MS in the past.
 #   - The wave timer follows the host's. The wave ends when the host says so.
@@ -42,7 +48,8 @@ const HP_SCALE: = 255.0
 const FLAG_DEAD: = 1
 const SNAPSHOT_HEADER_SIZE: = 13
 const SNAPSHOT_PLAYER_SIZE: = 23
-const SNAPSHOT_ENTITY_SIZE: = 7
+const SNAPSHOT_ENTITY_SIZE: = 8
+const ENTITY_FLAG_BURNING: = 1
 const MAX_NET_ID: = 65535
 
 const EVENT_SPAWN: = 0
@@ -51,9 +58,22 @@ const EVENT_BIRTH: = 2
 const EVENT_WEAPON: = 3
 const EVENT_PROJECTILE: = 4
 const EVENT_PROJECTILE_STOP: = 5
+const EVENT_ANIMATION: = 6
+const EVENT_DAMAGE: = 7
+const EVENT_EXPLOSION: = 8
 const RANGED_ATTACK: = - 1
+const TARGET_ENTITY: = 0
+const TARGET_PLAYER: = 1
+const DAMAGE_CRIT: = 1
+const DAMAGE_DODGE: = 2
+const DAMAGE_PROTECTED: = 4
+const DAMAGE_ARMOR: = 8
+const DAMAGE_ONE_SHOT: = 16
+const UNSYNCED_ANIMATIONS: = ["idle", "death", "RESET"]
 
 var is_host: = false
+# Events sent (host) or received (client) per event type, for tests and tuning.
+var event_counts: = {}
 
 var _net: Node = null
 var _main: Node = null
@@ -102,6 +122,7 @@ func _ready() -> void :
 		for player in _main._players:
 			if player.player_index != _local_index:
 				player.lan_net_driven = true
+			var _e = player.connect("took_damage", self, "_on_host_took_damage", [TARGET_PLAYER, player.player_index])
 	else:
 		_spawn_args = EntitySpawner.SpawnEntityArgs.new(Vector2.ZERO, EntityType.ENEMY)
 		_main._wave_manager.set_physics_process(false)
@@ -130,6 +151,7 @@ func _physics_process(_delta: float) -> void :
 		_apply_remote_states()
 		_flush_pending_projectiles()
 		if not _events.empty():
+			_count_events(_events)
 			_net.send_events(_events)
 			_events = []
 		if _frame % SNAPSHOT_INTERVAL == 0:
@@ -163,6 +185,10 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 	_entities[net_id] = entity
 	if not entity.is_connected("died", self, "_on_host_entity_died"):
 		var _e = entity.connect("died", self, "_on_host_entity_died")
+		if entity is Unit:
+			_e = entity.connect("took_damage", self, "_on_host_entity_took_damage")
+		if entity is Enemy or entity is Turret:
+			_e = entity._animation_player.connect("animation_started", self, "_on_host_entity_animation", [entity])
 	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by])
 
 
@@ -232,8 +258,49 @@ func _flush_pending_projectiles() -> void :
 			speed = projectile._weapon_stats.projectile_speed
 			max_range = projectile._max_range
 		var is_enemy: bool = projectile.get_parent() == _main._enemy_projectiles
-		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy])
+		var direction: = Vector2.ZERO
+		if projectile is BulletHellProjectile and typeof(projectile.direction) == TYPE_VECTOR2:
+			direction = projectile.direction
+		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy, projectile.sinusoidal_motion, projectile.sinusoidal_motion_speed, direction])
 	_pending_projectiles.clear()
+
+
+func _on_host_entity_animation(anim_name: String, entity: Node) -> void :
+	if UNSYNCED_ANIMATIONS.has(anim_name) or entity.dead or not entity.has_meta("lan_net_id"):
+		return
+	var net_id: int = entity.get_meta("lan_net_id")
+	if _entities.get(net_id) == entity:
+		_events.append([EVENT_ANIMATION, net_id, anim_name, entity._animation_player.playback_speed])
+
+
+func _on_host_entity_took_damage(unit: Node, value: int, knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, args: TakeDamageArgs, hit_type: int, is_one_shot: bool) -> void :
+	if not unit.has_meta("lan_net_id") or _entities.get(unit.get_meta("lan_net_id")) != unit:
+		return
+	_on_host_took_damage(unit, value, knockback_direction, is_crit, is_dodge, is_protected, armor_did_something, args, hit_type, is_one_shot, TARGET_ENTITY, unit.get_meta("lan_net_id"))
+
+
+func _on_host_took_damage(_unit: Node, value: int, knockback_direction: Vector2, is_crit: bool, is_dodge: bool, is_protected: bool, armor_did_something: bool, args: TakeDamageArgs, hit_type: int, is_one_shot: bool, target_kind: int, target_id: int) -> void :
+	var flags: = 0
+	if is_crit:
+		flags |= DAMAGE_CRIT
+	if is_dodge:
+		flags |= DAMAGE_DODGE
+	if is_protected:
+		flags |= DAMAGE_PROTECTED
+	if armor_did_something:
+		flags |= DAMAGE_ARMOR
+	if is_one_shot:
+		flags |= DAMAGE_ONE_SHOT
+	var effect_scale: = 1.0
+	if args != null:
+		effect_scale = args.get_effect_scale()
+	_events.append([EVENT_DAMAGE, target_kind, target_id, value, knockback_direction, flags, hit_type, effect_scale])
+
+
+# Called by the weapon_service.gd extension after vanilla set the explosion up.
+func on_explosion(instance: Node, effect: Resource) -> void :
+	var path: String = effect.explosion_scene.resource_path
+	_events.append([EVENT_EXPLOSION, path, instance.global_position, instance.scale.x, instance._explosion_smoke.amount, instance.sound_db_mod])
 
 
 func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
@@ -312,6 +379,10 @@ func _build_snapshot() -> PoolByteArray:
 		if entity is Unit and entity.max_stats.health > 0:
 			hp_ratio = clamp(float(entity.current_stats.health) / entity.max_stats.health, 0.0, 1.0)
 		buffer.put_u8(int(round(hp_ratio * HP_SCALE)))
+		var flags: = 0
+		if entity is Unit and entity._is_burning:
+			flags |= ENTITY_FLAG_BURNING
+		buffer.put_u8(flags)
 	return buffer.data_array
 
 
@@ -361,7 +432,9 @@ func on_snapshot(data: PoolByteArray) -> void :
 	for _i in entity_count:
 		var net_id: = buffer.get_u16()
 		entity_positions[net_id] = Vector2(buffer.get_16(), buffer.get_16())
-		_apply_entity_health(_entities.get(net_id), buffer.get_u8())
+		var entity = _entities.get(net_id)
+		_apply_entity_health(entity, buffer.get_u8())
+		_apply_entity_flags(entity, buffer.get_u8())
 
 	_snapshots.append({"time": host_time, "players": positions, "entities": entity_positions})
 	if _snapshots.size() > MAX_BUFFERED_SNAPSHOTS:
@@ -394,7 +467,25 @@ func _apply_entity_health(entity, health: int) -> void :
 		entity.emit_signal("health_updated", entity, health, entity.max_stats.health)
 
 
+func _apply_entity_flags(entity, flags: int) -> void :
+	if entity == null or not is_instance_valid(entity) or entity.dead or not entity is Unit:
+		return
+	var burning: = (flags & ENTITY_FLAG_BURNING) != 0
+	if burning != entity._burning_particles.emitting:
+		if burning:
+			entity._burning_particles.start_emitting()
+		else:
+			entity._burning_particles.stop_emitting()
+
+
+func _count_events(events: Array) -> void :
+	for event in events:
+		if typeof(event) == TYPE_ARRAY and not event.empty():
+			event_counts[event[0]] = event_counts.get(event[0], 0) + 1
+
+
 func on_events(events: Array) -> void :
+	_count_events(events)
 	for event in events:
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
 			continue
@@ -406,10 +497,16 @@ func on_events(events: Array) -> void :
 			_client_birth(event)
 		elif event[0] == EVENT_WEAPON and event.size() == 6:
 			_client_weapon_shot(event)
-		elif event[0] == EVENT_PROJECTILE and event.size() == 9:
+		elif event[0] == EVENT_PROJECTILE and event.size() == 12:
 			_client_projectile(event)
 		elif event[0] == EVENT_PROJECTILE_STOP and event.size() == 3:
 			_client_projectile_stop(event)
+		elif event[0] == EVENT_ANIMATION and event.size() == 4:
+			_client_animation(event)
+		elif event[0] == EVENT_DAMAGE and event.size() == 8:
+			_client_damage(event)
+		elif event[0] == EVENT_EXPLOSION and event.size() == 6:
+			_client_explosion(event)
 
 
 func _client_spawn(event: Array) -> void :
@@ -538,8 +635,11 @@ func _client_ranged_recoil(weapon: Node) -> void :
 
 
 func _client_projectile(event: Array) -> void :
-	# [EVENT_PROJECTILE, net_id, scene path, pos, velocity, rotation, speed, max range, is_enemy]
+	# [EVENT_PROJECTILE, net_id, scene path, pos, velocity, rotation, speed, max range, is_enemy,
+	#  sinusoidal motion, sinusoidal motion speed, bullet-hell direction]
 	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_VECTOR2:
+		return
+	if typeof(event[9]) != TYPE_VECTOR2 or typeof(event[10]) != TYPE_VECTOR2 or typeof(event[11]) != TYPE_VECTOR2:
 		return
 	if typeof(event[5]) != TYPE_REAL or typeof(event[6]) != TYPE_REAL or typeof(event[7]) != TYPE_INT or typeof(event[8]) != TYPE_BOOL:
 		return
@@ -567,6 +667,10 @@ func _client_projectile(event: Array) -> void :
 	projectile.global_position = event[3]
 	projectile.velocity = event[4]
 	projectile.rotation = event[5]
+	projectile.sinusoidal_motion = event[9]
+	projectile.sinusoidal_motion_speed = event[10]
+	if projectile is BulletHellProjectile:
+		projectile.direction = event[11]
 	if projectile is PlayerProjectile:
 		# PlayerProjectile.shoot reads speed and range from the weapon stats.
 		var stats: = RangedWeaponStats.new()
@@ -591,6 +695,84 @@ func _client_projectile_stop(event: Array) -> void :
 		return
 	projectile.global_position = event[2]
 	projectile.stop()
+
+
+func _client_animation(event: Array) -> void :
+	# [EVENT_ANIMATION, net_id, animation, playback speed]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING or typeof(event[3]) != TYPE_REAL:
+		return
+	var entity = _entities.get(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead:
+		return
+	var player: AnimationPlayer = entity._animation_player
+	if player.has_animation(event[2]):
+		player.playback_speed = event[3]
+		player.play(event[2])
+
+
+func _client_damage(event: Array) -> void :
+	# [EVENT_DAMAGE, target kind, net id or player index, value, knockback direction, flags,
+	#  hit type, effect scale]
+	for i in [1, 2, 3, 5, 6]:
+		if typeof(event[i]) != TYPE_INT:
+			return
+	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[7]) != TYPE_REAL:
+		return
+	var unit = null
+	if event[1] == TARGET_PLAYER:
+		if event[2] >= 0 and event[2] < _main._players.size():
+			unit = _main._players[event[2]]
+	else:
+		unit = _entities.get(event[2])
+	if unit == null or not is_instance_valid(unit) or unit.dead:
+		return
+
+	var value: int = event[3]
+	var flags: int = event[5]
+	var is_crit: = (flags & DAMAGE_CRIT) != 0
+	var is_dodge: = (flags & DAMAGE_DODGE) != 0
+	# Unit.take_damage: flash on damage, hurt / crit / dodge sound.
+	if value > 0:
+		unit.flash()
+	var sounds = unit.hurt_sounds
+	if is_dodge:
+		sounds = unit.dodge_sounds
+	elif is_crit:
+		sounds = unit.crit_sounds
+	if typeof(sounds) == TYPE_ARRAY and not sounds.empty():
+		SoundManager2D.play(Utils.get_rand_element(sounds), unit.global_position, 0, 0.2)
+	var args: = TakeDamageArgs.new(RunData.DUMMY_PLAYER_INDEX)
+	args.base_effect_scale = event[7]
+	unit.emit_signal("took_damage", unit, value, event[4], is_crit, is_dodge, (flags & DAMAGE_PROTECTED) != 0, (flags & DAMAGE_ARMOR) != 0, args, event[6], (flags & DAMAGE_ONE_SHOT) != 0)
+
+
+func _client_explosion(event: Array) -> void :
+	# [EVENT_EXPLOSION, scene path, pos, scale, smoke amount, sound db]
+	if typeof(event[1]) != TYPE_STRING or typeof(event[2]) != TYPE_VECTOR2 or typeof(event[3]) != TYPE_REAL:
+		return
+	if typeof(event[4]) != TYPE_INT or typeof(event[5]) != TYPE_REAL:
+		return
+	var scene = _load_scene(event[1])
+	if scene == null:
+		return
+	var pool_id: int = scene.get_instance_id()
+	var instance = _main.get_node_from_pool(pool_id, _main._explosions)
+	if instance == null:
+		instance = scene.instance()
+		if not instance is PlayerExplosion:
+			instance.free()
+			return
+		_main.add_explosion(instance)
+	instance.pool_id = pool_id
+	instance.player_index = - 1
+	instance.global_position = event[2]
+	instance.sound_db_mod = event[5]
+	instance.set_smoke_amount(event[4])
+	instance.scale = Vector2(event[3], event[3])
+	for area in _find_areas(instance, []):
+		area.set_deferred("monitoring", false)
+		area.set_deferred("monitorable", false)
+	instance.start_explosion()
 
 
 func _load_scene(path: String):
