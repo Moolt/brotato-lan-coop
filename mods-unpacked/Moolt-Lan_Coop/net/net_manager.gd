@@ -109,6 +109,7 @@ func host(port: int = - 1) -> int:
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
 	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty})
+	_apply_multiplayer_unlocks()
 	last_end_reason = ""
 	_set_saves_blocked(true)
 	set_process(true)
@@ -333,7 +334,7 @@ remote func _rpc_hello(hello) -> void :
 	var entry: = NetProtocol.new_player_entry(sender, players.size(), NetProtocol.sanitize_name(hello.name))
 	players.append(entry)
 	ModLoaderLog.info("%s joined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
-	rpc_id(sender, "_rpc_welcome", entry.player_index, NetProtocol.get_unlocks_snapshot())
+	rpc_id(sender, "_rpc_welcome", entry.player_index)
 	_broadcast_lobby_state()
 
 
@@ -348,12 +349,12 @@ remote func _rpc_update_player(changes) -> void :
 
 # RPCs: host -> client
 
-remote func _rpc_welcome(player_index, unlocks) -> void :
+remote func _rpc_welcome(player_index) -> void :
 	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
 	joined = true
 	local_player_index = int(player_index)
-	_apply_host_unlocks(unlocks)
+	_apply_multiplayer_unlocks()
 	ModLoaderLog.info("Joined lobby as player %d" % local_player_index, NetProtocol.MOD_ID)
 	emit_signal("joined_lobby")
 
@@ -505,14 +506,14 @@ func _kick_peer(peer_id: int) -> void :
 		_peer.disconnect_peer(peer_id)
 
 
-func _apply_host_unlocks(unlocks) -> void :
-	if typeof(unlocks) != TYPE_DICTIONARY:
-		return
+# Everything is unlocked during a session. The own lists are kept aside and restored on
+# leave; saves are blocked meanwhile, so singleplayer progress is never touched.
+func _apply_multiplayer_unlocks() -> void :
 	if _own_unlocks.empty():
 		_own_unlocks = NetProtocol.get_unlocks_snapshot()
+	var unlocks: = NetProtocol.get_multiplayer_unlocks()
 	for key in NetProtocol.UNLOCK_KEYS:
-		if unlocks.has(key) and typeof(unlocks[key]) == TYPE_ARRAY:
-			ProgressData.set(key, unlocks[key].duplicate())
+		ProgressData.set(key, unlocks[key])
 
 
 func _restore_own_unlocks() -> void :

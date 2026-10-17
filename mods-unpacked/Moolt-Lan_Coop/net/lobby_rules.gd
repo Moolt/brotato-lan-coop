@@ -4,7 +4,8 @@ extends Reference
 const MAX_RUN_PLAYERS: = 4
 
 # What a lobby entry may contain. The lobby UI, the host's validation and the run builder all
-# use these, so they never disagree. Unlock lists are the host's on every peer (see LanNet).
+# use these, so they never disagree. During a session everything is unlocked on every peer
+# (LanNet._apply_multiplayer_unlocks), so the unlock checks only matter outside of one.
 # Starting choices follow vanilla weapon_selection.gd: the character's starting weapons and
 # starting items, filtered by unlocks. Characters without choices need no weapon_id.
 

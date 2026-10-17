@@ -72,12 +72,12 @@ extensions/...                 # mirrored vanilla paths (below)
 - **Transport.** Godot 3 high-level multiplayer: `NetworkedMultiplayerENet`, `create_server(port=24567, max_clients=11)`, `create_client(ip, port)`, `get_tree().network_peer`. Every RPC goes through the `LanNet` node, which has the same path on all peers.
 - **Handshake (client → host).** The client sends `{mod_version, game_version=ProgressData.VERSION, active DLC ids, name}`. The host rejects the client if the versions or DLC set differ, the lobby is full, or a run is already in progress. If accepted, the host assigns a `player_index` (host = 0) and broadcasts the lobby state.
 - **Lobby state.** For each peer: `{peer_id, player_index, name, character_id, weapon_id, ready}`. The host also sets `zone` and `difficulty`.
-- **Unlocks.** The host sends its unlocked character/weapon/item lists. For the session, clients use the host's lists:
-  - temporarily override the `ProgressData.*_unlocked` arrays
-  - block `ProgressData` saves while a session is active
-  - restore the client's own lists on leave
+- **Unlocks.** During a session every peer, host included, has everything unlocked (`NetProtocol.get_multiplayer_unlocks()`, built from the loaded game data). This was originally "clients use the host's lists" and was changed after Step 3. Each peer:
+  - temporarily overrides the `ProgressData.*_unlocked` arrays (`LanNet._apply_multiplayer_unlocks`, on `host()` and on the client's welcome)
+  - blocks `ProgressData` saves while the session is active
+  - restores its own lists on leave
 
-  This keeps item pools the same on every machine.
+  This keeps item pools the same on every machine, because the handshake already checks the game version and DLCs. Singleplayer progress is never touched.
 - **Disconnects.**
   - Client drops in the lobby: remove it from the list.
   - Client drops during a wave: the host kills that player.
@@ -88,7 +88,7 @@ extensions/...                 # mirrored vanilla paths (below)
 - **Public API** (`/root/LanNet`): `host(port)`, `join(ip, port)`, `leave()`, `set_player_name`, `set_local_player_info({character_id, weapon_id, ready})`, `set_lobby_settings({zone, difficulty})` (host), `set_run_in_progress(bool)` (host), `get_player(i)`, `get_local_player()`, `are_all_ready()`. Signals: `session_started(as_host)`, `session_ended(reason)`, `joined_lobby`, `lobby_changed`, `player_disconnected(player_index)`.
 - **Reasons** are translation keys (`LAN_REJECT_*`, `LAN_MSG_*`). `last_end_reason` keeps the last one so the title screen (Step 2) can show the popup and clear it.
 - **Saves** are blocked for host *and* clients while a session is active (`ProgressData.lan_coop_saves_blocked`), so a net run never lands in `saved_run_state`. Unlocks earned during a session are not saved.
-- **Unlock override** covers `zones/characters/upgrades/consumables/weapons/items_unlocked`, not difficulties (the host picks the difficulty).
+- **Unlock override** covers `zones/characters/upgrades/consumables/weapons/items_unlocked`, not difficulties (all difficulties are selectable in the lobby anyway). Consumables follow vanilla's unlock-all save and only include the ones unlocked by default. Vanilla's own `unlock_all_*` functions are not used, because they also change bought-item counts, killed enemies and challenges.
 - **Player indices** are compacted when someone leaves the lobby. During a run (`run_in_progress`) the slot is kept with `connected = false` and `player_disconnected` fires; Steps 6 and 7 hook into that.
 - **Security/robustness:** `server_relay` is off, every RPC checks the sender id and argument types, and peers that don't send a hello within 5 s are kicked. Rejected clients get the reason, then are kicked after 0.5 s.
 - **ENet pitfall:** ENet calls `close_connection()` itself right after `server_disconnected` / `connection_failed`, so cleanup runs deferred and the close is guarded by connection status. Closing twice logs an engine `ERROR:`.
@@ -295,10 +295,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
 - Mod config knobs exposed in the manifest `config_schema`: arena factor, enemy count/HP factor, port.
 - Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
-- Unlock everything in multiplayer. While a session is active, every peer uses the full character, weapon, item, upgrade, consumable and zone lists instead of the host's unlocks. This builds on the Step 1 unlock override in `LanNet._apply_host_unlocks`, which then also has to run on the host. Singleplayer progress must stay untouched:
-  - saves are already blocked during a session (`ProgressData.lan_coop_saves_blocked`)
-  - the own lists are restored on leave
-  - unlocks earned in a match must not leak into the save
+- ~~Unlock everything in multiplayer.~~ Done early (after Step 3), see Step 1 "Unlocks". Verified: the test save goes from 5 to 50 characters during a session, back to 5 after leaving, and the save file is not written.
 - Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
 - Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
 

@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 2
+const PROTOCOL_VERSION: = 3
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -32,7 +32,7 @@ const MSG_INVALID_PORT: = "LAN_MSG_INVALID_PORT"
 # Keys a client may change on its own lobby entry.
 const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready"]
 
-# ProgressData arrays replaced by the host's lists while a session is active.
+# ProgressData arrays replaced by get_multiplayer_unlocks() while a session is active.
 const UNLOCK_KEYS: = [
 	"zones_unlocked", 
 	"characters_unlocked", 
@@ -120,6 +120,32 @@ static func get_unlocks_snapshot() -> Dictionary:
 	var unlocks: = {}
 	for key in UNLOCK_KEYS:
 		unlocks[key] = ProgressData.get(key).duplicate()
+	return unlocks
+
+
+# Everything unlocked, so multiplayer doesn't depend on anyone's save progress. Built from the
+# loaded game data (same on every peer: the handshake checks game version and DLCs), with the
+# same hashes as ProgressData.add_unlocked_by_default. Consumables follow vanilla's unlock-all
+# save, which only enables the default ones.
+static func get_multiplayer_unlocks() -> Dictionary:
+	var unlocks: = {}
+	for key in UNLOCK_KEYS:
+		unlocks[key] = []
+	for zone in ZoneService.zones:
+		unlocks.zones_unlocked.append(zone.my_id)
+	for character in ItemService.characters:
+		unlocks.characters_unlocked.append(character.my_id_hash)
+	for upgrade in ItemService.upgrades:
+		if not unlocks.upgrades_unlocked.has(upgrade.upgrade_id_hash):
+			unlocks.upgrades_unlocked.append(upgrade.upgrade_id_hash)
+	for consumable in ItemService.consumables:
+		if consumable.unlocked_by_default:
+			unlocks.consumables_unlocked.append(consumable.my_id_hash)
+	for weapon in ItemService.weapons:
+		if not unlocks.weapons_unlocked.has(weapon.weapon_id_hash):
+			unlocks.weapons_unlocked.append(weapon.weapon_id_hash)
+	for item in ItemService.items:
+		unlocks.items_unlocked.append(item.my_id_hash)
 	return unlocks
 
 
