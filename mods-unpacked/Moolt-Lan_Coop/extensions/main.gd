@@ -324,6 +324,13 @@ func _lan_is_client() -> bool:
 	return lan_net != null and lan_net.active and lan_net.is_client
 
 
+# Client: loot comes from the host (6d), not from local deaths.
+func spawn_loot(unit: Unit, entity_type: int, args: Entity.DieArgs) -> void :
+	if _lan_is_client():
+		return
+	.spawn_loot(unit, entity_type, args)
+
+
 func _on_game_lost_focus() -> void :
 	if LanGame.in_session():
 		return

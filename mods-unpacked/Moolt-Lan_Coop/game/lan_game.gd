@@ -21,6 +21,12 @@ static func get_lan_net() -> Node:
 	return Engine.get_main_loop().root.get_node_or_null("LanNet")
 
 
+# The wave's LanWaveSync (net/wave_sync.gd), null outside a wave in a session.
+static func get_wave_sync() -> Node:
+	var lan_net = get_lan_net()
+	return lan_net.wave_sync if lan_net != null else null
+
+
 # The lobby name of a player, "" outside a session.
 static func get_player_name(player_index: int) -> String:
 	var lan_net = get_lan_net()

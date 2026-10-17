@@ -8,13 +8,19 @@ extends Node
 #   - Remote players are driven by their clients: every physics frame a client sends
 #     {pos, move, aim, manual_aim}. The host places the player there (players are kinematic
 #     bodies) and feeds move to its animation and moving/not-moving item effects.
+#   - Every entity the spawner creates during the wave (enemies, bosses, trees, structures,
+#     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
+#     events, collected per physics frame.
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
-#     wave time left and, per player, position, movement, speed, HP and death.
+#     wave time left; per player position, movement, speed, HP and death; per entity (trees
+#     excluded, they don't move) position and HP ratio (0-255).
 # Client:
-#   - No enemies yet (6b): the wave manager and the entity spawner don't run.
+#   - The wave manager and the entity spawner don't run. Entities come from the host's events,
+#     spawned through the normal spawner (and its pools), then made inert: no physics, kinematic,
+#     no areas. They die on the host's death event and slide with its knockback.
 #   - The own player moves locally at the speed the host reports, takes no damage and doesn't
 #     regenerate; HP and death come from the host.
-#   - Other players are puppets: physics off, position interpolated between snapshots
+#   - Other players and entities are puppets, interpolated between snapshots
 #     INTERP_DELAY_MS in the past.
 #   - The wave timer follows the host's. The wave ends when the host says so.
 
@@ -25,23 +31,40 @@ const INTERP_DELAY_MS: = 100
 const MAX_BUFFERED_SNAPSHOTS: = 20
 const TIMER_RESYNC_THRESHOLD: = 0.5
 const MOVE_SCALE: = 127.0
+const HP_SCALE: = 255.0
 const FLAG_DEAD: = 1
+const SNAPSHOT_HEADER_SIZE: = 13
+const SNAPSHOT_PLAYER_SIZE: = 23
+const SNAPSHOT_ENTITY_SIZE: = 7
+const MAX_NET_ID: = 65535
+
+const EVENT_SPAWN: = 0
+const EVENT_DIE: = 1
+const EVENT_BIRTH: = 2
+
+var is_host: = false
 
 var _net: Node = null
 var _main: Node = null
-var _is_host: = false
 var _local_index: = - 1
 var _frame: = 0
+
+# Net id -> entity, on both sides. Ids are u16 and wrap; a wave never gets near 65535 alive.
+var _entities: = {}
 
 # Host: latest state per remote player_index: {pos, move, aim, manual_aim}.
 var _remote_states: = {}
 var _snapshot_seq: = 0
+var _next_net_id: = 0
+var _events: = []
 
-# Client: received snapshots, oldest first: {time (host msec), players: [{pos, move}]}.
+# Client: received snapshots, oldest first:
+# {time (host msec), players: [{pos, move}], entities: {net id: pos}}.
 var _snapshots: = []
 var _last_seq: = - 1
 # Local msec minus host msec, tracked from below (the smallest delay seen, slowly forgotten).
 var _clock_offset = null
+var _spawn_args = null
 
 
 func _init() -> void :
@@ -52,17 +75,19 @@ func _init() -> void :
 func _ready() -> void :
 	_net = LanGame.get_lan_net()
 	_main = get_parent()
-	_is_host = _net.is_host
+	is_host = _net.is_host
 	_local_index = _net.local_player_index
 	_net.wave_sync = self
 
-	if _is_host:
+	if is_host:
 		for player in _main._players:
 			if player.player_index != _local_index:
 				player.lan_net_driven = true
 	else:
+		_spawn_args = EntitySpawner.SpawnEntityArgs.new(Vector2.ZERO, EntityType.ENEMY)
 		_main._wave_manager.set_physics_process(false)
 		_main._entity_spawner.set_physics_process(false)
+		_main._entity_spawner._structure_timer.stop()
 		# Bullet hell events shoot from here; enemy projectiles come from the host later (6c).
 		for child in _main._enemy_projectiles.get_children():
 			child.queue_free()
@@ -82,8 +107,11 @@ func _exit_tree() -> void :
 
 func _physics_process(_delta: float) -> void :
 	_frame += 1
-	if _is_host:
+	if is_host:
 		_apply_remote_states()
+		if not _events.empty():
+			_net.send_events(_events)
+			_events = []
 		if _frame % SNAPSHOT_INTERVAL == 0:
 			_net.send_snapshot(_build_snapshot())
 	else:
@@ -102,9 +130,52 @@ func on_player_state(player_index: int, pos: Vector2, move: Vector2, aim: Vector
 
 # Manual aim of a remote player as its client reported it, null for others.
 func get_remote_manual_aim(player_index: int):
-	if not _is_host or not _remote_states.has(player_index):
+	if not is_host or not _remote_states.has(player_index):
 		return null
 	return _remote_states[player_index].manual_aim
+
+
+# Called by the entity_spawner.gd extension for every non-player entity it spawns.
+func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2, player_index: int, data: Resource, charmed_by: int) -> void :
+	_next_net_id = _next_net_id % MAX_NET_ID + 1
+	var net_id: = _next_net_id
+	entity.set_meta("lan_net_id", net_id)
+	_entities[net_id] = entity
+	if not entity.is_connected("died", self, "_on_host_entity_died"):
+		var _e = entity.connect("died", self, "_on_host_entity_died")
+	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by])
+
+
+# Called by the entity_spawner.gd extension when a spawn marker appears.
+func on_birth(type: int, pos: Vector2, charmed_by: int) -> void :
+	_events.append([EVENT_BIRTH, type, pos, charmed_by])
+
+
+func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
+	var net_id = entity.get_meta("lan_net_id") if entity.has_meta("lan_net_id") else null
+	if net_id == null or _entities.get(net_id) != entity:
+		return
+	var _erased = _entities.erase(net_id)
+	# The clients' own clean_up_room kills everything at the end of the wave.
+	if not args.cleaning_up:
+		_events.append([EVENT_DIE, net_id, args.knockback_vector])
+
+
+# Structures and pets get their data (StructureEffect, PetEffect) from the player's effects,
+# which every peer holds in the same order. Other data is sent as a resource path.
+func _get_data_ref(data: Resource, player_index: int):
+	if data == null:
+		return null
+	if player_index >= 0 and player_index < RunData.get_player_count():
+		var effects: Dictionary = RunData.get_player_effects(player_index)
+		for key in [Keys.structures_hash, Keys.stat_pets_hash]:
+			if effects.has(key) and typeof(effects[key]) == TYPE_ARRAY:
+				var index: int = effects[key].find(data)
+				if index >= 0:
+					return [key, index]
+	if not data.resource_path.empty() and data.resource_path.find("::") < 0:
+		return data.resource_path
+	return null
 
 
 func _apply_remote_states() -> void :
@@ -140,6 +211,22 @@ func _build_snapshot() -> PoolByteArray:
 		buffer.put_32(player.current_stats.health)
 		buffer.put_32(player.max_stats.health)
 		buffer.put_u8(FLAG_DEAD if player.dead else 0)
+
+	var moving: = []
+	for net_id in _entities:
+		var entity = _entities[net_id]
+		if is_instance_valid(entity) and not entity.dead and not entity is Neutral:
+			moving.append(net_id)
+	buffer.put_u16(moving.size())
+	for net_id in moving:
+		var entity = _entities[net_id]
+		buffer.put_u16(net_id)
+		buffer.put_16(int(clamp(entity.global_position.x, - 32768, 32767)))
+		buffer.put_16(int(clamp(entity.global_position.y, - 32768, 32767)))
+		var hp_ratio: = 1.0
+		if entity is Unit and entity.max_stats.health > 0:
+			hp_ratio = clamp(float(entity.current_stats.health) / entity.max_stats.health, 0.0, 1.0)
+		buffer.put_u8(int(round(hp_ratio * HP_SCALE)))
 	return buffer.data_array
 
 
@@ -147,17 +234,25 @@ func _build_snapshot() -> PoolByteArray:
 # Client
 
 func on_snapshot(data: PoolByteArray) -> void :
+	if data.size() < SNAPSHOT_HEADER_SIZE:
+		return
 	var buffer: = StreamPeerBuffer.new()
 	buffer.data_array = data
 	var seq: = buffer.get_u32()
 	if seq <= _last_seq:
 		return
-	_last_seq = seq
 	var host_time: = buffer.get_u32()
 	var time_left: = buffer.get_float()
 	var count: = buffer.get_u8()
-	if count != _main._players.size() or data.size() != 13 + count * 23:
+	var entities_offset: = SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_PLAYER_SIZE
+	if count != _main._players.size() or data.size() < entities_offset + 2:
 		return
+	buffer.seek(entities_offset)
+	var entity_count: = buffer.get_u16()
+	if data.size() != entities_offset + 2 + entity_count * SNAPSHOT_ENTITY_SIZE:
+		return
+	buffer.seek(SNAPSHOT_HEADER_SIZE)
+	_last_seq = seq
 
 	var offset: = OS.get_ticks_msec() - host_time
 	if _clock_offset == null or offset < _clock_offset:
@@ -176,7 +271,14 @@ func on_snapshot(data: PoolByteArray) -> void :
 		positions.append({"pos": pos, "move": move})
 		_apply_player_state(_main._players[player_index], speed, health, max_health, (flags & FLAG_DEAD) != 0)
 
-	_snapshots.append({"time": host_time, "players": positions})
+	var entity_positions: = {}
+	var _count = buffer.get_u16()
+	for _i in entity_count:
+		var net_id: = buffer.get_u16()
+		entity_positions[net_id] = Vector2(buffer.get_16(), buffer.get_16())
+		_apply_entity_health(_entities.get(net_id), buffer.get_u8())
+
+	_snapshots.append({"time": host_time, "players": positions, "entities": entity_positions})
 	if _snapshots.size() > MAX_BUFFERED_SNAPSHOTS:
 		_snapshots.pop_front()
 
@@ -194,6 +296,114 @@ func _apply_player_state(player, speed: float, health: int, max_health: int, dea
 		player.emit_signal("health_updated", player, health, max_health)
 	if dead:
 		player.die()
+
+
+# Boss and other over-head life bars follow health_updated. The client's max HP can differ from
+# the host's (elite stats, buffs), so the client copy uses the 0-255 ratio as its HP.
+func _apply_entity_health(entity, health: int) -> void :
+	if entity == null or not is_instance_valid(entity) or entity.dead or not entity is Unit:
+		return
+	if health != entity.current_stats.health or entity.max_stats.health != HP_SCALE:
+		entity.max_stats.health = int(HP_SCALE)
+		entity.current_stats.health = health
+		entity.emit_signal("health_updated", entity, health, entity.max_stats.health)
+
+
+func on_events(events: Array) -> void :
+	for event in events:
+		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
+			continue
+		if event[0] == EVENT_SPAWN and event.size() == 8:
+			_client_spawn(event)
+		elif event[0] == EVENT_DIE and event.size() == 3:
+			_client_die(event)
+		elif event[0] == EVENT_BIRTH and event.size() == 4:
+			_client_birth(event)
+
+
+func _client_spawn(event: Array) -> void :
+	# [EVENT_SPAWN, net_id, type, scene path, pos, player_index, data ref, charmed_by]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_STRING:
+		return
+	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_INT or typeof(event[7]) != TYPE_INT:
+		return
+	if _main._cleaning_up or not ResourceLoader.exists(event[3]):
+		return
+	var scene = load(event[3])
+	if not scene is PackedScene:
+		return
+	var type: int = event[2]
+	var player_index: int = event[5]
+	var data = _resolve_data_ref(event[6], player_index)
+	if data == null and (type == EntityType.STRUCTURE or type == EntityType.PET):
+		return
+
+	_spawn_args._init(event[4], type)
+	_spawn_args.player_index = player_index
+	var entity = _main._entity_spawner.spawn_entity(scene, _spawn_args, data, null, event[7])
+	if entity == null:
+		return
+	_make_inert(entity)
+	_entities[event[1]] = entity
+
+
+func _resolve_data_ref(ref, player_index: int):
+	if typeof(ref) == TYPE_STRING:
+		return load(ref) if ResourceLoader.exists(ref) else null
+	if typeof(ref) != TYPE_ARRAY or ref.size() != 2 or typeof(ref[0]) != TYPE_INT or typeof(ref[1]) != TYPE_INT:
+		return null
+	if player_index < 0 or player_index >= RunData.get_player_count():
+		return null
+	var effects: Dictionary = RunData.get_player_effects(player_index)
+	if not effects.has(ref[0]) or typeof(effects[ref[0]]) != TYPE_ARRAY:
+		return null
+	var list: Array = effects[ref[0]]
+	if ref[1] < 0 or ref[1] >= list.size() or not list[ref[1]] is Resource:
+		return null
+	return list[ref[1]]
+
+
+# The host simulates; the client copy only shows. Kinematic, so setting the position moves it.
+func _make_inert(entity: Node) -> void :
+	entity.set_physics_process(false)
+	entity.mode = RigidBody2D.MODE_KINEMATIC
+	for area in _find_areas(entity, []):
+		area.set_deferred("monitoring", false)
+		area.set_deferred("monitorable", false)
+
+
+func _find_areas(node: Node, result: Array) -> Array:
+	if node is Area2D:
+		result.append(node)
+	for child in node.get_children():
+		var _r = _find_areas(child, result)
+	return result
+
+
+func _client_die(event: Array) -> void :
+	# [EVENT_DIE, net_id, knockback]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2:
+		return
+	var entity = _entities.get(event[1])
+	var _erased = _entities.erase(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead:
+		return
+	var args: = Entity.DieArgs.new()
+	# Not killed by a player here, so no loot, kill effects or stats on the client.
+	args.enemy_killed_by_player = false
+	args.knockback_vector = event[2]
+	if entity is Unit:
+		# Vanilla's physics slides the corpse with the knockback (enemies skip the rest when dead).
+		entity.set_physics_process(true)
+	entity.die(args)
+
+
+func _client_birth(event: Array) -> void :
+	# [EVENT_BIRTH, type, pos, charmed_by]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2 or typeof(event[3]) != TYPE_INT:
+		return
+	if not _main._cleaning_up:
+		_main._entity_spawner.spawn_entity_birth(event[1], null, event[2], null, - 1, null, event[3])
 
 
 func _send_own_state() -> void :
@@ -228,6 +438,22 @@ func _update_puppets() -> void :
 		var b: Dictionary = to.players[player_index]
 		player.global_position = a.pos.linear_interpolate(b.pos, weight)
 		player.update_animation(b.move)
+
+	for net_id in _entities:
+		var entity = _entities[net_id]
+		if not is_instance_valid(entity) or entity.dead:
+			continue
+		var a = from.entities.get(net_id)
+		var b = to.entities.get(net_id)
+		if a == null and b == null:
+			continue
+		if a == null:
+			a = b
+		elif b == null:
+			b = a
+		entity.global_position = a.linear_interpolate(b, weight)
+		if entity is Unit:
+			entity.update_animation(b - a)
 
 
 # Host event: the wave ends (time out or everyone dead).

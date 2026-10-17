@@ -3,6 +3,8 @@ extends "res://global/entity_spawner.gd"
 # Grows the per-player arrays to 12 slots (see LanGame). During a LAN session, players spawn on a
 # circle around the map centre instead of vanilla's 2x2 grid, which only has 4 spots, and the
 # enemy cap follows LanGame.get_enemy_cap_factor instead of vanilla's 1 + (n-1)/8.
+# In-wave sync (net/wave_sync.gd): on the host, every non-player spawn and every spawn marker is
+# reported to LanWaveSync. On clients, spawn markers only show; the entity comes from the host.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
@@ -22,7 +24,28 @@ func spawn_entity(scene: PackedScene, args: SpawnEntityArgs, data: Resource = nu
 		var radius: float = SPAWN_RADIUS_BASE + SPAWN_RADIUS_PER_PLAYER * player_count
 		var angle: float = TAU * args.player_index / player_count
 		args.position = _zone_max_pos / 2 + Vector2(radius, 0).rotated(angle)
-	return .spawn_entity(scene, args, data, source, charmed_by)
+	var entity = .spawn_entity(scene, args, data, source, charmed_by)
+	if args.type != EntityType.PLAYER and entity != null:
+		var wave_sync = LanGame.get_wave_sync()
+		if wave_sync != null and wave_sync.is_host:
+			wave_sync.on_entity_spawned(entity, scene, args.type, args.position, args.player_index, data, charmed_by)
+	return entity
+
+
+func spawn_entity_birth(type: int, scene: PackedScene, pos: Vector2, data: Resource = null, player_index: = - 1, source = null, charmed_by: = - 1) -> void :
+	.spawn_entity_birth(type, scene, pos, data, player_index, source, charmed_by)
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host:
+		wave_sync.on_birth(type, pos, charmed_by)
+
+
+func on_entity_birth_timeout(birth: EntityBirth) -> void :
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync == null or wave_sync.is_host:
+		.on_entity_birth_timeout(birth)
+		return
+	active_births -= 1
+	_main.add_node_to_pool(birth, _entity_birth_pool_id)
 
 
 # Vanilla's cap is max_enemies * (1 + (n-1)/8). max_enemies is set for the call so that this

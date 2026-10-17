@@ -18,6 +18,8 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("main.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/movement_behaviors/player_movement_behavior.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/player/player.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/birth/entity_birth.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("weapons/weapon.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/entity_spawner.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/stats_manager.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/coop_service.gd"))

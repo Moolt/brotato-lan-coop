@@ -452,6 +452,13 @@ remote func _rpc_snapshot(data) -> void :
 		wave_sync.on_snapshot(data)
 
 
+remote func _rpc_events(events) -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(events) != TYPE_ARRAY:
+		return
+	if wave_sync != null:
+		wave_sync.on_events(events)
+
+
 remote func _rpc_wave_cleanup() -> void :
 	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
@@ -478,6 +485,11 @@ remote func _rpc_player_state(pos, move, aim, manual_aim) -> void :
 func send_snapshot(data: PoolByteArray) -> void :
 	for entry in _get_connected_clients():
 		rpc_unreliable_id(entry.peer_id, "_rpc_snapshot", data)
+
+
+func send_events(events: Array) -> void :
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_events", events)
 
 
 func send_wave_cleanup() -> void :

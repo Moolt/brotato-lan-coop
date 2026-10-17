@@ -2,9 +2,11 @@ extends Node
 
 # Test-only driver (not part of the mod, not in the release zip). tools/make_test_copy.sh links it
 # into a throwaway game copy as the LanTestDriver autoload. Role = argument after "--":
-#   host: hosts, picks and readies, adds $FAKES (default 1) fake lobby players, starts a 20 s wave
-#         with invulnerable players, moves left, kills the fake player 2 and then the client's
-#         player 1, logs players/HP/speed/timer, waits for the wave end, leaves
+#   host: hosts, picks and readies, adds $FAKES (default 1) fake lobby players (the first is an
+#         Engineer, for turrets), starts a 20 s wave with invulnerable players and $ENEMY_MULT
+#         times the enemies, moves left, spawns a boss and three trees, sets the boss to
+#         5000 HP and then half, kills a tree, the fake player 2 and the client's player 1, logs
+#         players/HP/speed/timer and entities, waits for the wave end, leaves
 #   join: joins the first discovered game, picks and readies, enters the wave with the host,
 #         moves right, logs the same, follows the host back to the lobby
 #   solo: builds a 1-player run without a session and plays a vanilla wave
@@ -113,6 +115,11 @@ func add_fake_players(net, count: int) -> void :
 		var index = net.players.size()
 		var entry = NetProtocol.new_player_entry(1000 + index, index, "Fake%d" % index)
 		var character = characters[(index * 7) % characters.size()]
+		if i == 0:
+			# Engineer: starts with a turret, so structures get tested.
+			for c in characters:
+				if c.my_id == "character_engineer":
+					character = c
 		entry.character_id = character.my_id
 		var choices = LobbyRules.get_starting_choices(character)
 		if not choices.empty():
@@ -177,7 +184,22 @@ func log_sync(tag: String) -> void :
 	for p in main._players:
 		out.append("%d:%s%s hp=%d/%d spd=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed()])
 	var cam = main._camera
-	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " enemies=", main._entity_spawner.enemies.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
+	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
+	var spawner = main._entity_spawner
+	var boss_hp = []
+	for boss in spawner.bosses:
+		boss_hp.append("%d/%d bar=%s" % [boss.current_stats.health, boss.max_stats.health, boss.life_bar.visible])
+	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " bosses=", spawner.bosses.size(), " boss_hp=", boss_hp, " neutrals=", spawner.neutrals.size(), " structures=", spawner.structures.size(), " pets=", spawner.pets.size(), " births=", spawner.active_births, " gold=", main._active_golds.size())
+	var sync = main.get_node_or_null("LanWaveSync")
+	if sync != null:
+		var ids = sync._entities.keys()
+		ids.sort()
+		var sample = []
+		for net_id in ids.slice(0, min(5, ids.size()) - 1) if not ids.empty() else []:
+			var e = sync._entities[net_id]
+			if is_instance_valid(e):
+				sample.append("%d:%s%s" % [net_id, e.global_position.round(), " dead" if e.dead else ""])
+		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
 	shot(tag)
 
 
@@ -203,21 +225,41 @@ func _host_step() -> void :
 			log_lobby("host_before_start")
 			DebugService.invulnerable = true
 			DebugService.custom_wave_duration = 20
+			if OS.get_environment("ENEMY_MULT") != "":
+				DebugService.nb_enemies_mult = float(OS.get_environment("ENEMY_MULT"))
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
 			log_sync("host_w13")
 			Input.action_press("button_move_left_7")
+			# A boss and three trees, which wave 1 doesn't have.
+			var spawner = get_tree().current_scene._entity_spawner
+			var rect = ZoneService.get_current_zone_rect()
+			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load("res://entities/units/enemies/rhino/rhino.tscn"), rect.end - Vector2(150, 150)])
+			for i in 3:
+				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
 			next_t = 14.0
 		6:
 			Input.action_release("button_move_left_7")
 			log_sync("host_w14")
 			next_t = 16.0
 		7:
+			# The injected boss has 1 HP in wave 1.
+			for boss in get_tree().current_scene._entity_spawner.bosses:
+				boss.max_stats.health = 5000
+				boss.current_stats.health = 5000
+				boss.emit_signal("health_updated", boss, 5000, 5000)
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
-			get_tree().current_scene._players[2].die()
+			var main = get_tree().current_scene
+			main._players[2].die()
+			var spawner = main._entity_spawner
+			if not spawner.neutrals.empty():
+				spawner.neutrals[0].die()
+			for boss in spawner.bosses:
+				boss.current_stats.health = 2500
+				boss.emit_signal("health_updated", boss, boss.current_stats.health, boss.max_stats.health)
 			next_t = 20.0
 		9:
 			log_sync("host_w20")
