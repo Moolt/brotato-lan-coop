@@ -216,6 +216,11 @@ func _build_ui() -> void :
 	# The starting weapons and items, with vanilla's item popup on hover and focus.
 	_starting_items = _new_inventory(STARTING_ITEM_COLUMNS)
 	_starting_items.element_size = STARTING_ITEM_SIZE
+	# Elements are Buttons: with the page theme's font, an empty one is 68 px high and the row
+	# would stretch the 56 px icons.
+	var small_theme: = Theme.new()
+	small_theme.set_font("font", "Button", ROW_FONT)
+	_starting_items.theme = small_theme
 	_character_panel.get_node("MarginContainer/VBoxContainer").add_child(_starting_items)
 	_e = _starting_items.connect("element_hovered", self, "_on_StartingItems_element_shown")
 	_e = _starting_items.connect("element_focused", self, "_on_StartingItems_element_shown")

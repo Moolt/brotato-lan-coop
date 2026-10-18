@@ -845,6 +845,10 @@ func _lobby_step() -> void :
 			print("[TEST] lobby sizes holder=", lobby._character_panel.get_parent().rect_size, " panel=", lobby._character_panel.rect_size, " min=", lobby._character_panel.get_combined_minimum_size(), " items=", lobby._starting_items.get_combined_minimum_size(), " children=", vb.get_children().size())
 			for c in vb.get_children():
 				print("[TEST]   ", c.name, " ", c.rect_size, " min=", c.get_combined_minimum_size())
+			for e in lobby._starting_items.get_children():
+				print("[TEST]   item ", e.rect_size, " min=", e.rect_min_size, " flags=", e.size_flags_horizontal, "/", e.size_flags_vertical)
+			for e in lobby._character_grid.get_children().slice(0, 1):
+				print("[TEST]   character element ", e.rect_size, " min=", e.rect_min_size)
 			print("[TEST] lobby bottoms ready=", lobby._ready_button.get_global_rect().end.y, " start=", lobby._start_button.get_global_rect().end.y, " character=", lobby._character_panel.get_global_rect().end.y, " weapon=", lobby._item_panel.get_global_rect().end.y, "/", lobby._item_panel.get_parent().get_global_rect().end.y)
 			lobby._on_StartingItems_element_unhovered(lobby._starting_items.get_child(0))
 			lobby._hovered_character = null
