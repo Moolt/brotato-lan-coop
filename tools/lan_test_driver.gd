@@ -97,6 +97,8 @@ func _process(delta: float) -> void :
 		return
 	if not started:
 		started = menus() != null
+		if started and get_node_or_null("/root/LanNet") != null:
+			var _e = get_node("/root/LanNet").connect("wave_end_ready", self, "solo_view_test")
 		return
 	t += delta
 	# The wave's verdict, once, as soon as its cleanup starts (the scene changes soon after).
@@ -356,6 +358,27 @@ func _host_step() -> void :
 		13:
 			net.leave()
 			get_tree().quit()
+
+
+# Right after the wave-end state (the host's scene changes next): enter and leave the solo view,
+# check the solo invariants in between and that the run is unchanged afterwards.
+func solo_view_test() -> void :
+	var net = get_node("/root/LanNet")
+	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
+	var tag = role + "_solo_view"
+	var index: int = net.local_player_index
+	var before_json = RB.serialize_run()
+	var before_digest = RB.digest()
+	var own_data = RunData.players_data[index]
+	var own_max_hp = RunData.get_player_max_health(index)
+	var own_tracked = RunData.tracked_item_effects[index]
+	var coop_count = RunData.get_player_count()
+	var entered = net.enter_solo_view()
+	print("[TEST] ", tag, " entered=", entered, " index=", index, " coop_players=", coop_count, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " connected=", CoopService.connected_players, " run_index=", net.get_local_run_index())
+	print("[TEST] ", tag, " own_data_at_0=", RunData.players_data[0] == own_data, " max_hp=", RunData.get_player_max_health(0), "/", own_max_hp, " tracked_at_0=", RunData.tracked_item_effects[0] == own_tracked, " slots=", RunData.locked_shop_items.size(), " gold=", RunData.get_player_gold(0))
+	net.leave_solo_view()
+	var after_json = RB.serialize_run()
+	print("[TEST] ", tag, " left active=", net.solo_view.active, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " connected=", CoopService.connected_players, " same_json=", after_json == before_json, " same_digest=", RB.digest() == before_digest, " max_hp=", RunData.get_player_max_health(index), "/", own_max_hp)
 
 
 func log_wave_end(tag: String) -> void :

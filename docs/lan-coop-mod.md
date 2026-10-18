@@ -14,6 +14,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `net/run_builder.gd` | Builds the run from the lobby (host), serializes it as JSON via the save loader, applies it, digests it. |
 | `net/wave_sync.gd` | `LanWaveSync`, child of `main` in a session: everything in-wave (both roles). |
 | `net/net_translations.gd` | Runtime en + de translations for `LAN_*` / `MENU_MULTIPLAYER` keys. |
+| `game/solo_view.gd` | `SoloView` (`LanNet.solo_view`): between waves, RunData becomes the local player's solo run (index 0, not coop, only the local device) and back; moves RunData's per-player slots, resets per-player caches. |
 | `game/lan_game.gd` | Static helpers: `MAX_PLAYERS` (12), `in_session()`, `get_lan_net()`, `get_wave_sync()`, `is_wave_client()`, `get_player_name()`, `grow()` for 4-slot arrays, scaling formulas. |
 | `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby, `ui_kit.gd` building blocks. |
 | `extensions/…` | Script extensions, mirrored vanilla paths (list below). |
@@ -24,7 +25,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 2. **Lobby**: `LanNet.players` (entries from `NetProtocol.new_player_entry`, sorted by `player_index`; the host is peer 1 and index 0) and `lobby_settings` (`zone`, `difficulty`, `run_id`, `in_wave`, `scaling`) are broadcast with `_rpc_lobby_state` on every change. Clients change their own entry with `_rpc_update_player`.
 3. **Start** (`start_run`): host builds the run (`RunBuilder.build_run`), serializes it, applies its own copy from the same JSON, sends `_rpc_run_state(run_id, json, digest)`; clients apply and ack. Any lobby change makes the run stale (`run_id` = 0).
 4. **Wave**: once every client acked, the host sets `run_in_progress` (`lobby_settings.in_wave`), fills `CoopService.connected_players` (own device 7 keyboard / 6 gamepad, others -1), sends `_rpc_enter_wave(run_id)` and everyone loads `main.tscn`. The `main.gd` extension adds `LanWaveSync` in `_ready`.
-5. **Wave end**: unless the wave failed, the host's `main.gd` extension runs `RunData.on_wave_end()` / `LinkedStats.reset()` and `LanNet.send_wave_end_state`: the run after the wave (JSON, applied on the host too) with its digest and each player's pending level-ups and crates (`RunBuilder.pack_pending`: `[[levels], [consumable ids]]` per player) go out as `_rpc_wave_end_state(run_id, wave, json, digest, pending)`. A client applies it once its own wave is over (end-wave timer ran, or it left `main.tscn`), stores `LanNet.wave_end_state = {wave, pending, ok}` and answers `_rpc_wave_end_ack(wave, ok)`. Then (temporary until Step 7 is done) the `main.gd` extension's `_on_EndWaveTimer_timeout` goes back to the title screen (whose vanilla `_ready` resets `RunData`), whose extension reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients still in `main.tscn` follow when a lobby broadcast says `in_wave` is false.
+5. **Wave end**: unless the wave failed, the host's `main.gd` extension runs `RunData.on_wave_end()` / `LinkedStats.reset()` and `LanNet.send_wave_end_state`: the run after the wave (JSON, applied on the host too) with its digest and each player's pending level-ups and crates (`RunBuilder.pack_pending`: `[[levels], [consumable ids]]` per player) go out as `_rpc_wave_end_state(run_id, wave, json, digest, pending)`. A client applies it once its own wave is over (end-wave timer ran, or it left `main.tscn`), stores `LanNet.wave_end_state = {wave, pending, ok}` and answers `_rpc_wave_end_ack(wave, ok)`. Both roles emit `LanNet.wave_end_ready` once `wave_end_state` is set. Then (temporary until Step 7 is done) the `main.gd` extension's `_on_EndWaveTimer_timeout` goes back to the title screen (whose vanilla `_ready` resets `RunData`), whose extension reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients still in `main.tscn` follow when a lobby broadcast says `in_wave` is false.
 6. **Leave / errors**: `_end_session(reason)` restores unlocks and saves, resets RunData if a synced run replaced it, and returns to the title screen with a reason popup.
 
 ## In-wave sync (`LanWaveSync`)
@@ -87,7 +88,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `items/global/item.gd` | host reports drops and pickups; ids |
 | `singletons/weapon_service.gd` | host reports explosions |
 | `ui/menus/ingame/pause_menu.gd` | session pause without `get_tree().paused`, native focus (no FocusEmulator) |
-| `singletons/focus_emulator_signal.gd` | answers the local player when no emulator reported one |
+| `singletons/focus_emulator_signal.gd` | answers the local player (`LanNet.get_local_run_index()`, 0 in the solo view) when no emulator reported one |
 | `ui/menus/ingame/ingame_main_menu.gd` | hides Restart and End Run in a session |
 | `ui/menus/title_screen/title_screen_menus.gd` | Multiplayer button, mod pages, lobby restore |
 

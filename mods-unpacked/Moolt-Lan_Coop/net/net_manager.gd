@@ -10,6 +10,8 @@ signal joined_lobby()
 signal lobby_changed()
 signal player_disconnected(player_index)
 signal run_sync_changed()
+# wave_end_state was set (host: sent, client: applied).
+signal wave_end_ready()
 
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd")
@@ -17,6 +19,7 @@ const NetDiscovery = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_discove
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 const RunBuilder = preload("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
+const SoloView = preload("res://mods-unpacked/Moolt-Lan_Coop/game/solo_view.gd")
 
 const HOST_PEER_ID: = 1
 
@@ -66,6 +69,8 @@ var wave_end_state: = {}
 var _incoming_wave_end: = {}
 # Host: peer_id -> ok for wave_end_state.
 var _wave_end_acks: = {}
+# Between waves RunData holds only the local player (game/solo_view.gd).
+var solo_view = SoloView.new()
 
 # The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
 # In-wave RPCs are forwarded to it.
@@ -274,6 +279,7 @@ func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Arr
 	ModLoaderLog.info("Wave %d over, sending the run: %s, pending %s" % [RunData.current_wave, to_json(RunBuilder.summarize()), to_json(pending)], NetProtocol.MOD_ID)
 	for entry in _get_connected_clients():
 		rpc_id(entry.peer_id, "_rpc_wave_end_state", lobby_settings.get("run_id", 0), RunData.current_wave, run_state, digest, pending)
+	emit_signal("wave_end_ready")
 
 
 # {state: "none" | "pending" | "synced" | "failed", names: [...]} for the lobby's status line.
@@ -310,6 +316,20 @@ func get_player(player_index: int):
 
 func get_local_player():
 	return get_player(local_player_index)
+
+
+# The local player's index in RunData right now: 0 in the solo view, else local_player_index.
+func get_local_run_index() -> int:
+	return 0 if solo_view.active else local_player_index
+
+
+# Between waves: RunData becomes the local player's solo run (game/solo_view.gd) and back.
+func enter_solo_view() -> bool:
+	return active and solo_view.enter(local_player_index, _get_local_coop_player())
+
+
+func leave_solo_view() -> void :
+	solo_view.leave()
 
 
 func get_player_count() -> int:
@@ -706,6 +726,7 @@ func _apply_wave_end_if_ready() -> void :
 	else:
 		ModLoaderLog.warning("Run after wave %d differs from the host's: %s" % [incoming.wave, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
 	rpc_id(HOST_PEER_ID, "_rpc_wave_end_ack", incoming.wave, ok)
+	emit_signal("wave_end_ready")
 
 
 func _is_in_wave_scene() -> bool:
@@ -722,11 +743,15 @@ func _fill_coop_players() -> void :
 	for entry in players:
 		if entry.player_index != local_player_index:
 			CoopService.connected_players.push_back([- 1, CoopService.PlayerType.KEYBOARD_AND_MOUSE])
-		elif InputService.using_gamepad:
-			CoopService.connected_players.push_back([CoopService.GAMEPAD_REMAPPED_DEVICE_ID, CoopService.PlayerType.GAMEPAD_XBOX])
 		else:
-			CoopService.connected_players.push_back([CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE])
+			CoopService.connected_players.push_back(_get_local_coop_player())
 	CoopService.emit_signal("connected_players_updated", CoopService.connected_players)
+
+
+func _get_local_coop_player() -> Array:
+	if InputService.using_gamepad:
+		return [CoopService.GAMEPAD_REMAPPED_DEVICE_ID, CoopService.PlayerType.GAMEPAD_XBOX]
+	return [CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE]
 
 
 func _compact_player_indices() -> void :
@@ -825,6 +850,7 @@ func _end_session(reason: String) -> void :
 	wave_end_state = {}
 	_incoming_wave_end = {}
 	_wave_end_acks = {}
+	solo_view.discard()
 	CoopService.clear_coop_players()
 
 	active = false

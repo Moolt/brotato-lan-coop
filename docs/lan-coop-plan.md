@@ -454,6 +454,16 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - **Leave:** put the own `PlayerRunData` and the per-player entries back into slot `local_player_index`, restore `players_data`, `is_coop_run` and `connected_players`, reset the caches again.
   - **Test (driver):** enter and leave right after 7a's state arrives; the digest is unchanged, and during the swap the solo invariants above hold.
 
+**7b status: done.**
+- **`game/solo_view.gd`** (`SoloView`, one instance as `LanNet.solo_view`; `LanNet.enter_solo_view()` / `leave_solo_view()`):
+  - **Enter:** stashes `players_data`, `is_coop_run` and `connected_players`, sets `players_data = [own]`, `set_coop_run(false)` and `connected_players` to the local device only (`LanNet._get_local_coop_player`, the same entry `_fill_coop_players` uses, so it works whether or not the coop list is filled at that moment).
+  - **Moved arrays** (slot `local_player_index` → 0, the other solo slots get fresh defaults so vanilla code that clears unused slots can't touch the stashed ones): `_players_die_args`, `remove_speed_effect_cache`, `max_consumable_stats_gained_this_wave`, `tracked_item_effects`, `current_charmed_enemies`, `steps_taken_this_wave`, `locked_shop_items`.
+  - **Reset on enter and leave** (caches keyed by player index): `RunData.reset_run_caches()` (`items_nb_cache`, `different_items_nb_cache`, `duplicate_items_cache`), every `_are_player_stats_dirty` slot, `Utils.reset_stat_caches()` and `reset_last_elt_selected()`, `TempStats.reset()` (in-wave stats only; main already resets them in `clean_up_room`), `LinkedStats.reset()` (recomputed from the effects).
+  - **Leave:** slot 0 of each moved array (even if vanilla replaced the array meanwhile) and `players_data[0]` go back into slot `local_player_index`; `players_data`, `is_coop_run` and `connected_players` are restored, caches reset again. `discard()` (session end) forgets the stash.
+- **`LanNet.get_local_run_index()`:** 0 in the solo view, else `local_player_index`. The `focus_emulator_signal.gd` extension answers with it.
+- **`LanNet` signal `wave_end_ready`:** emitted once `wave_end_state` is set (host: after sending, still in `main.tscn`; client: after applying). 7c's client waits for it.
+- **Tested** (driver `solo_view_test` on `wave_end_ready`, host + client + 1 fake, client is index 1): in the solo view count 1, not coop, `connected_players` `[[7, 0]]`, own `PlayerRunData` and `tracked_item_effects` at 0, own max HP from the stat caches (client 11/11, host 17/17); after leaving the serialized run and the digest are identical on both. No `ERROR:`.
+
 - **7c: solo upgrades on every machine.** After 7a's state, every peer enters the solo view and resolves its own level-ups and crates, then (temporarily) returns to the lobby.
   - Do **not** show `_coop_upgrades_ui` (it has only 4 slots).
   - Every pending element gets `player_index` 0 in the solo phase.
