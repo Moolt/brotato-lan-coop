@@ -14,6 +14,8 @@ extends Node
 #         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, or stays and
 #         logs the host's run verdict, follows the host back to the lobby and logs the
 #         wave-end state it received
+#   (host and join) WAVES=n: n waves with upgrades and shop in between, then both check the
+#         next wave (digest, every player's gear) before the end steps
 #   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
 #         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
@@ -304,6 +306,9 @@ func _host_step() -> void :
 			# host (vanilla hands each to a player with the fewest, so everyone gets one).
 			RunData.add_xp(30, 0)
 			RunData.add_xp(30, 1)
+			# A locked shop item for player 5 (the save loader only has 4 slots for them).
+			if RunData.get_player_count() > 5:
+				RunData.lock_player_shop_item(ItemService.get_element_safe(ItemService.items, "item_coupon"), RunData.current_wave, 5)
 			for i in 3:
 				# get_node_from_pool creates the pool, which vanilla's pickup returns the crate to.
 				var crate = main7.get_node_from_pool(main7._consumable_pool_id, main7._consumables_container)
@@ -359,7 +364,13 @@ func _host_step() -> void :
 						p.die()
 			next_t = 24.0
 		11:
-			next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
+			if waves_target() > 1:
+				if not wait_for_wave(waves_target() + 1):
+					step -= 1
+					return
+				log_run_check("host_next_wave")
+			else:
+				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
 		12:
 			log_lobby("host_after_wave_end")
 			log_wave_end("host_wave_end")
@@ -503,6 +514,37 @@ func shop_actions(delta: float) -> void :
 		shop_step = 3
 
 
+# WAVES=n: play n waves (with upgrades and shop after each) before the end steps.
+func waves_target() -> int:
+	return int(OS.get_environment("WAVES")) if OS.get_environment("WAVES") != "" else 1
+
+
+# True 3 s into wave n; otherwise checks again in half a second.
+func wait_for_wave(n: int) -> bool:
+	var main = get_tree().current_scene
+	if main != null and main.filename == MenuData.game_scene and RunData.current_wave == n and main._wave_timer.time_left > 0 and main._wave_timer.time_left < main._wave_timer.wait_time - 3.0:
+		return true
+	next_t = t + 0.5
+	return false
+
+
+# Every player's gear in RunData and in the scene, and the digest (both machines must match).
+func log_run_check(tag: String) -> void :
+	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
+	var main = get_tree().current_scene
+	var out = []
+	for i in RunData.get_player_count():
+		var pd = RunData.players_data[i]
+		var weapons = []
+		for w in pd.weapons:
+			weapons.append(w.my_id)
+		out.append("%d: gold=%d items=%d weapons=%s nodes=%d locked=%d dead=%s" % [i, pd.gold, pd.items.size(), weapons, main._players[i].current_weapons.size(), RunData.locked_shop_items[i].size(), main._players[i].dead])
+	print("[TEST] ", tag, " wave=", RunData.current_wave, " coop=", RunData.is_coop_run, " count=", RunData.get_player_count(), " digest=", RB.digest())
+	for line in out:
+		print("[TEST] ", tag, "   ", line)
+	shot(tag)
+
+
 func next_round() -> bool:
 	var rounds = int(OS.get_environment("ROUNDS")) if OS.get_environment("ROUNDS") != "" else 1
 	if round_nr >= rounds:
@@ -609,7 +651,13 @@ func _client_step() -> void :
 				log_sync("client_w21")
 			next_t = 23.6
 		10:
-			next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
+			if waves_target() > 1:
+				if not wait_for_wave(waves_target() + 1):
+					step -= 1
+					return
+				log_run_check("client_next_wave")
+			else:
+				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
 		11:
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")

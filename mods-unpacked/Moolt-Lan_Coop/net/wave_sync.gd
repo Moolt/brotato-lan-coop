@@ -173,6 +173,7 @@ func _ready() -> void :
 			if player.player_index != _local_index:
 				player.lan_net_driven = true
 			_e = player.connect("took_damage", self, "_on_host_took_damage", [TARGET_PLAYER, player.player_index])
+		call_deferred("_kill_disconnected_players")
 	else:
 		_spawn_args = EntitySpawner.SpawnEntityArgs.new(Vector2.ZERO, EntityType.ENEMY)
 		_main._wave_manager.set_physics_process(false)
@@ -303,6 +304,13 @@ func on_player_left(player_index: int, peer_id: int) -> void :
 	var player = _main._players[player_index]
 	if is_instance_valid(player) and not player.dead:
 		player.die()
+
+
+# Host, at the start of a later wave: players who disconnected in an earlier one stay dead.
+func _kill_disconnected_players() -> void :
+	for entry in _net.players:
+		if not entry.connected:
+			on_player_left(entry.player_index, entry.peer_id)
 
 
 func _on_player_disconnected(player_index: int) -> void :

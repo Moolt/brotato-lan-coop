@@ -511,6 +511,18 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - **Gap carried over:** clients that left the wave mid-way sit in the lobby and need the run state when the next wave starts.
   - **Test:** several waves in a row on two machines; items bought on the client exist on the host in the next wave (and the reverse), gold and stats match.
 
+**7e status: done (milestone 5).**
+- **`LanNet._on_all_shops_done`:** leaves the host's solo view (its own result is what that leaves in its slot), merges every other player's result (`RunBuilder.merge_solo_run`: `players_data[0]`, `locked_shop_items[0]`, `tracked_item_effects[0]` converted like `resume_from_state` does), runs `RunBuilder.apply_go()` and sends the run with `_send_run`, which `start_run` now uses too (serialize, apply own copy, new run id, `_rpc_run_state`, acks, `_enter_wave_if_synced` → `_rpc_enter_wave`). Players without a result (quit or disconnected) keep their state from the wave's end.
+- **`RunBuilder.apply_go()`:** vanilla's once-for-all parts of Go: hourglass items (removed, counted as `wave_reset_count`) and the `extra_elite_next_wave_chance` roll per player, `current_wave += 1 - wave_reset_count`, then the locked-item curse (DLC) per player, copied from `base_shop.gd` `_on_tree_exited`. The `base_shop.gd` extension skips `_on_tree_exited` in a session, since every machine would roll its own curses on the merged run. `ProgressData.save_run_state` is left out (disk saves are blocked in a session; the in-memory copy only feeds "Continue").
+- **Client:** `_rpc_run_state` leaves the solo view first when the next wave's run comes while it waits in the shop.
+- **Quit and disconnect:** clients that quit to the lobby (pause menu, during the wave or between waves) get the next run and are back in from the next wave (the gap from 6a). Disconnected players keep their slot; the host's `LanWaveSync` kills them again at the start of each wave (`_kill_disconnected_players`). A disconnect during a run no longer resets `lobby_settings.run_id` (`_broadcast_lobby_state(run_in_progress)`), so a next-wave sync waiting for acks goes on (`_enter_wave_if_synced` after the disconnect).
+- **12 players:** `extensions/singletons/progress_data_loader_v3.gd` lets vanilla (de)serialize the first 4 slots of `locked_shop_items` and `shop_items` and does the rest the same way.
+- **Tested** (driver `WAVES=n`: n waves with upgrades and shop, then both check the next wave 3 s in):
+  - `FAKES=5 WAVES=2` (7 players, the driver locks an item for player 5 in wave 1): in wave 3 host and client have the same digest and the same gear for all 7 players; weapon nodes in the scene match RunData; the client's buys (claw, lightning shiv) are on its player on the host; locked items carry over (the host locked the slingshot in shop 1 and bought it in shop 2); player 5's locked item survives.
+  - `CLIENT_QUITS=2 WAVES=2` (the client's process ends mid-wave 1): the host shops alone, waves 2 and 3 start, player 1 is dead in each.
+  - Default (one wave, the host leaves in wave 2) and `KILL_ALL=1` (run lost → lobby) unchanged. No `ERROR:`.
+- **Known gaps:** if a client's digest differs for the next wave's run, the host waits for its ack forever (the client sits in the shop overlay); at Start the lobby shows it, between waves nothing does. `ROUNDS=n` (the regression test for the stale wave-end state) needs a run that ends in the lobby; with 7e only a lost run does (`KILL_ALL=1`), which sends no wave-end state, so it runs again with 7f's run end.
+
 - **7f: run end.** On run won or lost, every peer shows the solo end screen for its own player. "Back" leaves the session for clients; the host returns to the lobby.
   - Vanilla's end-run path: `RunData.get_end_run_scene_path()` (`coop_end_run.tscn` / `end_run.tscn` by `is_coop_run`), so the solo view yields `end_run.tscn`.
   - A failed wave: vanilla shows `_retry_wave` and returns (only when `RunData.current_wave > 0`). Decide what a session does there.
@@ -541,18 +553,18 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
 ---
 
 ## Milestones
-Status: milestones 1–4 are done (3 and 4 with Step 6). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Next is Step 7 (between-wave flow, milestone 5).
+Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Next is 7f (run end).
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
 4. **Full wave.** ~~Enemies, projectiles, pickups, and wave end~~ (Step 6).
-5. **Between waves.** Per-machine upgrades/shop and merge, so the loop runs for multiple waves.
+5. **Between waves.** ~~Per-machine upgrades/shop and merge, so the loop runs for multiple waves~~ (7a–7e).
 6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
 
 ## Critical files to extend
 **Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd`, `singletons/focus_emulator_signal.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
-**Also extended:** `ui/menus/shop/base_shop.gd` (7d).
+**Also extended:** `ui/menus/shop/base_shop.gd` (7d), `singletons/progress_data_loader_v3.gd` (7e).
 
 ## Verification
 - **Local multi-instance testing.**

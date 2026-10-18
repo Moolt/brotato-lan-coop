@@ -57,6 +57,13 @@ func _clear_go_button_pressed(player_index: int) -> void :
 		Utils.focus_player_control(_get_go_button(player_index), player_index)
 
 
+# Vanilla curses locked items when the shop closes. In a session the host does that for every
+# player while merging (RunBuilder.apply_go); here RunData is already the merged run.
+func _on_tree_exited() -> void :
+	if not LanGame.in_session():
+		._on_tree_exited()
+
+
 func on_paused() -> void :
 	.on_paused()
 	if _lan_overlay != null:

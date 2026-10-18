@@ -92,6 +92,75 @@ static func parse_solo_run(run_json: String) -> Dictionary:
 	return state
 
 
+# Host, once everyone pressed Go: a player's solo run from the shop (parse_solo_run) goes into
+# its slot of the coop run. Returns false if the text isn't a solo run.
+static func merge_solo_run(player_index: int, run_json: String) -> bool:
+	var state: = parse_solo_run(run_json)
+	if state.empty() or player_index < 0 or player_index >= RunData.get_player_count():
+		return false
+	RunData.players_data[player_index] = state.players_data[0]
+	RunData.locked_shop_items[player_index] = state.locked_shop_items[0]
+	# resume_from_state's conversion: JSON made the effect keys strings.
+	var tracked: Array = Utils.convert_to_hash_array(state.tracked_item_effects.duplicate())
+	if not tracked.empty():
+		RunData.tracked_item_effects[player_index] = tracked[0]
+	return true
+
+
+# Host, after merging: what vanilla's shop runs once for all players when the last one presses
+# Go (base_shop.gd _on_GoButton_pressed; the candy-bag locking ran on each machine) and when
+# the shop closes (_on_tree_exited: cursing locked items). Ends with the next wave number.
+static func apply_go() -> void :
+	var wave_reset_count: = 0
+	for player_index in RunData.get_player_count():
+		var effects = RunData.get_player_effects(player_index)
+		var hourglass_count = effects[Keys.item_hourglass_hash] if effects.has(Keys.item_hourglass_hash) else 0
+		if hourglass_count > 0:
+			wave_reset_count += hourglass_count
+			var source_item = RunData.get_player_item(Keys.item_hourglass_hash, player_index)
+			RunData.remove_item(source_item, player_index)
+
+		var extra_elite_spawn_chance = effects[Keys.extra_elite_next_wave_chance_hash] if effects.has(Keys.extra_elite_next_wave_chance_hash) else 0
+		if Utils.get_chance_success(float(extra_elite_spawn_chance) / 100):
+			var rand_elite_id = ItemService.get_random_elite_id_hash_from_zone(ZoneService.current_zone.my_id)
+			effects[Keys.extra_enemies_next_wave_hash].append(["res://zones/common/elite/group_elite.tres", 1, rand_elite_id])
+
+	RunData.current_wave += 1 - wave_reset_count
+
+	for player_index in RunData.get_player_count():
+		_curse_locked_items(player_index)
+
+
+# base_shop.gd _on_tree_exited, for one player.
+static func _curse_locked_items(player_index: int) -> void :
+	var curse_locked_items: int = RunData.get_player_effect(Keys.curse_locked_items_hash, player_index)
+	var has_cursed_an_item = false
+	var nb_locked_items_that_didnt_get_cursed: int = 0
+	var locked_items: Array = RunData.locked_shop_items[player_index]
+	var randomized_positions = []
+
+	for i in locked_items.size():
+		randomized_positions.push_back(i)
+
+	randomized_positions.shuffle()
+
+	for i in randomized_positions:
+		if not locked_items[i][0].is_cursed and Utils.get_chance_success((RunData.players_data[player_index].curse_locked_shop_items_pity + curse_locked_items) / 100.0):
+			for dlc_id in RunData.enabled_dlcs:
+				var dlc_data = ProgressData.get_dlc_data(dlc_id)
+				if dlc_data and dlc_data.has_method("curse_item"):
+					has_cursed_an_item = true
+					RunData.players_data[player_index].curse_locked_shop_items_pity = 0
+					RunData.set_tracked_value(player_index, Keys.item_fish_hook_hash, RunData.players_data[player_index].curse_locked_shop_items_pity)
+					locked_items[i][0] = dlc_data.curse_item(locked_items[i][0], player_index)
+		elif not locked_items[i][0].is_cursed:
+			nb_locked_items_that_didnt_get_cursed += 1
+
+	if curse_locked_items > 0 and locked_items.size() > 0 and not has_cursed_an_item and nb_locked_items_that_didnt_get_cursed > 0:
+		RunData.players_data[player_index].curse_locked_shop_items_pity += int(nb_locked_items_that_didnt_get_cursed * (curse_locked_items / 4.0))
+		RunData.set_tracked_value(player_index, Keys.item_fish_hook_hash, RunData.players_data[player_index].curse_locked_shop_items_pity)
+
+
 # Host: each player's level-ups and crates still to process, from main's _upgrades_to_process
 # and _consumables_to_process (they live in main, not in RunData): [[levels], [consumable ids]]
 # per player.

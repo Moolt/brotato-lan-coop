@@ -262,8 +262,16 @@ func start_run() -> int:
 	if not is_host or not are_all_ready():
 		return ERR_UNAVAILABLE
 
-	_run_data_replaced = true
 	RunBuilder.build_run(players, lobby_settings)
+	_send_run("built")
+	return OK
+
+
+# Host: RunData goes to every client (Start, and the next wave after the shops). The host
+# applies its own copy from the same JSON; once every connected client acked a matching digest,
+# everyone loads the wave (_enter_wave_if_synced). Each send is a new run id.
+func _send_run(what: String) -> void :
+	_run_data_replaced = true
 	run_state = RunBuilder.serialize_run()
 	var _applied = RunBuilder.apply_run(run_state)
 	var digest: = RunBuilder.digest()
@@ -271,14 +279,13 @@ func start_run() -> int:
 	lobby_settings.run_id = _run_id_counter
 	_run_acks = {}
 	_start_requested = true
-	ModLoaderLog.info("Run %d built: %s" % [_run_id_counter, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
+	ModLoaderLog.info("Run %d %s: %s" % [_run_id_counter, what, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
 
 	for entry in _get_connected_clients():
 		rpc_id(entry.peer_id, "_rpc_run_state", _run_id_counter, run_state, digest)
 	_broadcast_lobby_state(true)
 	emit_signal("run_sync_changed")
 	_enter_wave_if_synced()
-	return OK
 
 
 # Host, at the end of a wave that wasn't failed (after RunData.on_wave_end): sends the run and
@@ -423,8 +430,10 @@ func _on_network_peer_disconnected(peer_id: int) -> void :
 	else:
 		players.erase(entry)
 		_compact_player_indices()
-	_broadcast_lobby_state()
+	# During a run the run stays current (the next wave's run may be waiting for acks).
+	_broadcast_lobby_state(run_in_progress)
 	_update_shop_waiting()
+	_enter_wave_if_synced()
 
 
 func _on_connected_to_server() -> void :
@@ -502,6 +511,10 @@ remote func _rpc_run_state(run_id, state, digest) -> void :
 		return
 	if typeof(run_id) != TYPE_INT or typeof(state) != TYPE_STRING or typeof(digest) != TYPE_STRING:
 		return
+	# The next wave's run comes while this machine waits in the solo shop; the solo view must
+	# end before RunData is replaced.
+	if solo_view.active:
+		leave_solo_view()
 	run_state = state
 	_received_run_id = run_id
 	_run_data_replaced = true
@@ -852,13 +865,16 @@ func _update_shop_waiting() -> void :
 # logs what came in and goes back to the lobby; the clients follow its lobby broadcast.
 func _on_all_shops_done() -> void :
 	between_waves = false
-	for player_index in _shop_runs:
-		var parsed: Dictionary = RunBuilder.parse_solo_run(_shop_runs[player_index])
-		var player_data = parsed.players_data[0]
-		ModLoaderLog.info("Shop result of player %d: gold %d, %d items, %d weapons, %d locked" % [player_index, player_data.gold, player_data.items.size(), player_data.weapons.size(), parsed.locked_shop_items[0].size()], NetProtocol.MOD_ID)
-	ModLoaderLog.info("Everyone is done shopping after wave %d" % wave_end_state.get("wave", - 1), NetProtocol.MOD_ID)
+	var wave: int = wave_end_state.get("wave", - 1)
+	ModLoaderLog.info("Everyone is done shopping after wave %d" % wave, NetProtocol.MOD_ID)
+	# The host's own shop result is what the solo view leaves in its slot.
 	leave_solo_view()
-	var _e = get_tree().change_scene(MenuData.title_screen_scene)
+	for player_index in _shop_runs:
+		if player_index != local_player_index and not RunBuilder.merge_solo_run(player_index, _shop_runs[player_index]):
+			ModLoaderLog.warning("Could not merge the shop result of player %d" % player_index, NetProtocol.MOD_ID)
+	# Players without a result (quit or disconnected) keep their state from the wave's end.
+	RunBuilder.apply_go()
+	_send_run("for wave %d" % RunData.current_wave)
 
 
 # A wave starts: the previous wave's end and the between-waves phase are over, so main's
