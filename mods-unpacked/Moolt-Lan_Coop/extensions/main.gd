@@ -7,7 +7,11 @@ extends "res://main.gd"
 #   P5-P12 before vanilla's _ready looks them up by unique name. Only the local player's screen
 #   HUD is shown, in the P1 slot (top left).
 # - Other players get their name over their head, in their colour, above the vanilla over-head
-#   health bar, which stays visible for them even at full HP. Dead players' names turn grey.
+#   health bar, which stays visible for them even at full HP. Dead players' names turn grey,
+#   with a skull below them where the bar was. Arrows at the screen edge point at the players
+#   the camera doesn't show (game/offscreen_arrows.gd).
+# - The local player aims with the own mouse as in solo play (utils.gd extension), with vanilla's
+#   solo crosshair cursor, or its crosshair sprite with a gamepad.
 # - The coop UpgradesUI has 4 player containers and fails in _ready with more players. It is
 #   never shown in a session (see _on_EndWaveTimer_timeout), so it is marked non-coop, which
 #   makes its _ready return early.
@@ -29,8 +33,10 @@ extends "res://main.gd"
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
+const OffscreenArrows = preload("res://mods-unpacked/Moolt-Lan_Coop/game/offscreen_arrows.gd")
 
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+const DEAD_ICON = preload("res://items/all/goat_skull/goat_skull_icon.png")
 
 const VANILLA_HUD_SLOTS: = 4
 
@@ -46,6 +52,10 @@ const NAME_DEAD_COLOR: = Color(0.55, 0.55, 0.55)
 # Box of the name label, relative to the over-head bar container. The bar itself spans
 # (-32, -72) to (32, -56) in main.tscn; the name sits right above it.
 const NAME_RECT: = Rect2(-150, -106, 300, 32)
+const DEAD_ICON_NAME: = "LanDeadIcon"
+# Box of the skull of a dead player, in place of the bar, right below the name.
+const DEAD_ICON_RECT: = Rect2(-24, -76, 48, 48)
+const OFFSCREEN_ARROWS_NAME: = "LanOffscreenArrows"
 # Unique node name of each P4 node set and the suffix that holds the player number.
 const HUD_TEMPLATES: = [
 	["LifeContainerP4", "P4", "P"],
@@ -136,6 +146,19 @@ func _on_EntitySpawner_players_spawned(players: Array) -> void :
 	for i in _players_ui.size():
 		if not _lan_is_local_player(i):
 			_lan_add_name_label(_players_ui[i].player_life_bar_container, i, font)
+	_lan_add_offscreen_arrows(local_player_index)
+
+
+# Below the HUD and the pause menu, above the damage vignette.
+func _lan_add_offscreen_arrows(local_player_index: int) -> void :
+	var ui: Node = $UI
+	if ui.has_node(OFFSCREEN_ARROWS_NAME):
+		return
+	var arrows: = OffscreenArrows.new()
+	arrows.name = OFFSCREEN_ARROWS_NAME
+	arrows.init(self, local_player_index)
+	ui.add_child(arrows)
+	ui.move_child(arrows, $UI / DamageVignette.get_index() + 1)
 
 
 # Clients: the own HUD takes the top-left corner and the first things-to-process slot, where
@@ -174,6 +197,20 @@ func _lan_add_name_label(container: Node, player_index: int, font: DynamicFont) 
 	container.add_child(label)
 
 
+func _lan_add_dead_icon(container: Node) -> void :
+	if container.has_node(DEAD_ICON_NAME):
+		return
+	var icon: = TextureRect.new()
+	icon.name = DEAD_ICON_NAME
+	icon.texture = DEAD_ICON
+	icon.expand = true
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.rect_position = DEAD_ICON_RECT.position
+	icon.rect_size = DEAD_ICON_RECT.size
+	container.add_child(icon)
+
+
 func _lan_is_local_player(player_index: int) -> bool:
 	return player_index == LanGame.get_lan_net().local_player_index
 
@@ -194,6 +231,7 @@ func _on_player_died(p_player: Player, _args: Entity.DieArgs) -> void :
 	var label = _players_ui[p_player.player_index].player_life_bar_container.get_node_or_null(NAME_LABEL_NAME)
 	if label != null:
 		label.add_color_override("font_color", NAME_DEAD_COLOR)
+		_lan_add_dead_icon(label.get_parent())
 	if LanGame.in_session() and _lan_is_local_player(p_player.player_index):
 		_lan_spectate()
 
@@ -204,6 +242,34 @@ func _lan_spectate() -> void :
 	_camera.targets = _players
 	_camera._is_snapped = false
 	_camera._snap_progress = 0.0
+
+
+# Vanilla shows the crosshair only in solo runs (one mouse for everyone in coop). In a session the
+# local player aims like in solo play: the crosshair cursor for the mouse, the crosshair sprite
+# for a gamepad. Otherwise the cursor follows LanNet's solo mouse rule.
+func _handle_manual_aim_visuals() -> void :
+	var lan_net = LanGame.get_lan_net()
+	if lan_net == null or not lan_net.active or not RunData.is_coop_run:
+		._handle_manual_aim_visuals()
+		return
+
+	_crosshair.hide()
+	var crosshair_cursor: = false
+	var player_index: int = lan_net.local_player_index
+	if not _cleaning_up and not lan_net.pause_menu_open and player_index >= 0 and player_index < _players.size() and not _players[player_index].dead:
+		if Utils.is_manual_aim(player_index):
+			if Utils.is_player_using_gamepad(player_index):
+				_crosshair.show()
+				var player_pos = _players[player_index].global_position
+				player_pos.y -= 32
+				_crosshair.global_position = player_pos + CROSSHAIR_DIST_FROM_PLAYER_MANUAL_AIM * _players[player_index].gamepad_attack_vector
+			else:
+				crosshair_cursor = true
+				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		elif ProgressData.settings.manual_aim_on_mouse_press and ProgressData.settings.manual_aim:
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+	_set_crosshair_cursor(crosshair_cursor)
 
 
 func on_lock_coop_camera_changed(value: int) -> void :

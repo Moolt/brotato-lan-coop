@@ -18,6 +18,9 @@ extends Node
 #         next wave (digest, every player's gear) before the end steps
 #   (host and join) FAIL_ACK=1: the next wave's run counts as different from the host's, once
 #   (join) TIMER_LAG=s: the client's wave timer s seconds behind the host's near the wave's end
+#   (host and join) AIM_TEST=1: manual aim on; the client points its mouse at the top left of
+#         its window; log_sync logs every player's first weapon rotation (compare the client's
+#         own with the host's copy) and the reported aim
 #   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
 #         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
@@ -256,7 +259,37 @@ func log_sync(tag: String) -> void :
 		print("[TEST] ", tag, " births=", birth_positions, " grown_golds=", gold_scales.size(), " max_gold_scale=", gold_scales.max() if not gold_scales.empty() else 1.0)
 		print("[TEST] ", tag, " synced_projectiles=", sync._projectiles.size(), " flying_player_proj=", visible_children(main._player_projectiles), " flying_enemy_proj=", visible_children(main._enemy_projectiles), " weapons_attacking=", swings)
 		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
+		log_visuals(tag, main, main.get_node("LanWaveSync"))
 	shot(tag)
+
+
+# Off-screen arrows, skulls of dead players, manual aim.
+func log_visuals(tag: String, main, wave_sync) -> void :
+	var screen = main.get_viewport().get_visible_rect()
+	var offscreen = []
+	var skulls = []
+	var rotations = []
+	for p in main._players:
+		if not screen.has_point(p.get_global_transform_with_canvas().origin):
+			offscreen.append(p.player_index)
+		if main._players_ui[p.player_index].player_life_bar_container.has_node("LanDeadIcon"):
+			skulls.append(p.player_index)
+		rotations.append("%d:%s" % [p.player_index, stepify(rad2deg(p.current_weapons[0].rotation), 1) if not p.current_weapons.empty() else "-"])
+	var aims = []
+	for index in wave_sync._remote_states:
+		aims.append("%d:%s" % [index, wave_sync._remote_states[index].aim.round()])
+	print("[TEST] ", tag, " arrows=", main.get_node_or_null("UI/LanOffscreenArrows") != null, " offscreen=", offscreen, " skulls=", skulls, " manual_aim=", Utils.is_manual_aim(wave_sync._local_index), " crosshair_cursor=", main._crosshair_cursor_active, " weapon_rot=", rotations, " remote_aims=", aims)
+
+
+func aim_test_setup() -> void :
+	if OS.get_environment("AIM_TEST") != "1":
+		return
+	ProgressData.settings.manual_aim = true
+	if role == "join":
+		var motion = InputEventMouseMotion.new()
+		motion.position = Vector2(60, 60)
+		motion.global_position = motion.position
+		Input.parse_input_event(motion)
 
 
 func _host_step() -> void :
@@ -293,6 +326,7 @@ func _host_step() -> void :
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
+			aim_test_setup()
 			log_sync("host_w13")
 			Input.action_press("button_move_left_7")
 			# A boss and three trees, which wave 1 doesn't have.
@@ -661,6 +695,7 @@ func _client_step() -> void :
 			pick_and_ready(m.get_node("LanLobby"), 1)
 			next_t = 14.0
 		4:
+			aim_test_setup()
 			log_sync("client_w14")
 			Input.action_press("button_move_right_7")
 			next_t = 15.5

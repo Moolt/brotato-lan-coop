@@ -7,7 +7,9 @@ extends Node
 # Host:
 #   - Remote players are driven by their clients: every physics frame a client sends
 #     {pos, move, aim, manual_aim}. The host places the player there (players are kinematic
-#     bodies) and feeds move to its animation and moving/not-moving item effects.
+#     bodies) and feeds move to its animation and moving/not-moving item effects. aim is the
+#     point the player aims at, relative to the player: the mouse, or far out along the gamepad
+#     aim. In manual aim the host's weapons turn towards it (weapon.gd extension).
 #   - Every entity the spawner creates during the wave (enemies, bosses, trees, structures,
 #     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
 #     events, collected per physics frame. Spawn markers have ids too: vanilla moves an enemy's
@@ -58,6 +60,9 @@ const MAX_BUFFERED_SNAPSHOTS: = 20
 const TIMER_RESYNC_THRESHOLD: = 0.5
 const MOVE_SCALE: = 127.0
 const HP_SCALE: = 255.0
+# Distance of the reported aim point along a gamepad's aim direction: far enough that every
+# weapon around the player points the same way, as in vanilla.
+const GAMEPAD_AIM_DISTANCE: = 10000.0
 const FLAG_DEAD: = 1
 const SNAPSHOT_HEADER_SIZE: = 14
 const SNAPSHOT_FLAG_WAITING: = 1
@@ -244,6 +249,13 @@ func get_remote_manual_aim(player_index: int):
 	if not is_host or not _remote_states.has(player_index):
 		return null
 	return _remote_states[player_index].manual_aim
+
+
+# Where a remote player aims as its client reported it (global position), null for others.
+func get_remote_aim_point(player_index: int):
+	if not is_host or not _remote_states.has(player_index):
+		return null
+	return _main._players[player_index].global_position + _remote_states[player_index].aim
 
 
 # Called by the entity_spawner.gd extension for every non-player entity it spawns.
@@ -1148,7 +1160,11 @@ func _send_own_state() -> void :
 	if not is_instance_valid(player) or player.dead:
 		return
 	# is_manual_aim returns null rather than false when manual aim is off.
-	_net.send_player_state(player.global_position, player._current_movement, player.gamepad_attack_vector, Utils.is_manual_aim(_local_index) == true)
+	var manual_aim: bool = Utils.is_manual_aim(_local_index) == true
+	var aim: Vector2 = player.gamepad_attack_vector * GAMEPAD_AIM_DISTANCE
+	if manual_aim and not Utils.is_player_using_gamepad(_local_index):
+		aim = player.get_global_mouse_position() - player.global_position
+	_net.send_player_state(player.global_position, player._current_movement, aim, manual_aim)
 
 
 # Puppets show where the host had them INTERP_DELAY_MS ago, between the two snapshots around

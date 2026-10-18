@@ -7,7 +7,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 |---|---|
 | `mod_main.gd` | Installs the extensions (one line each), registers translations, adds `/root/LanNet` deferred. |
 | `net/net_manager.gd` | `LanNet`: ENet peer, handshake, lobby state, run sync (Start and each next wave), wave-end state, shop waiting and merge, all RPCs, session flags. |
-| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 14, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
+| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 15, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
 | `net/net_config.gd` | `user://lan_coop.cfg`: name, last IP, port, last zone/difficulty, `[scaling]` knobs. |
 | `net/net_discovery.gd` | UDP beacon (host) and listener (join page). |
 | `net/lobby_rules.gd` | Character/weapon/zone/difficulty lookup and validation. |
@@ -15,6 +15,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `net/wave_sync.gd` | `LanWaveSync`, child of `main` in a session: everything in-wave (both roles). |
 | `net/net_translations.gd` | Runtime en + de translations for `LAN_*` / `MENU_MULTIPLAYER` keys. |
 | `game/solo_view.gd` | `SoloView` (`LanNet.solo_view`): between waves, RunData becomes the local player's solo run (index 0, not coop, only the local device) and back; moves RunData's per-player slots, resets per-player caches. |
+| `game/offscreen_arrows.gd` | Arrows at the screen edge pointing at off-screen teammates, in their colour (main's `UI` layer). |
 | `game/lan_game.gd` | Static helpers: `MAX_PLAYERS` (12), `in_session()`, `get_lan_net()`, `get_wave_sync()`, `is_wave_client()`, `get_player_name()`, `grow()` for 4-slot arrays, scaling formulas. |
 | `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby, `ui_kit.gd` building blocks; `shop_waiting_overlay.gd` (over the shop after Go). |
 | `extensions/…` | Script extensions, mirrored vanilla paths (list below). |
@@ -64,7 +65,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 **RPCs** (all on `LanNet`, which forwards to `LanNet.wave_sync`; every remote func checks sender and argument types):
 | RPC | Direction | Mode | Content |
 |---|---|---|---|
-| `_rpc_player_state(pos, move, aim, manual_aim)` | client → host | unreliable, every physics frame | own player |
+| `_rpc_player_state(pos, move, aim, manual_aim)` | client → host | unreliable, every physics frame | own player; `aim` is the aim point relative to the player (mouse, or gamepad aim × 10000) |
 | `_rpc_snapshot(bytes)` | host → clients | unreliable, every 3 physics frames (20 Hz) | layout below |
 | `_rpc_events(array)` | host → clients | reliable, once per physics frame if any | event list below |
 | `_rpc_wave_loaded()` | client → host | reliable | wave scene is up |
@@ -98,13 +99,14 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 
 **Client side:** wave manager and entity spawner physics off, structure timer stopped, local loot and drops blocked (`spawn_loot`, `spawn_gold`, `spawn_consumables`, garden fruit), weapons never fire (`should_shoot`), enemy/turret `shoot()`/`start_shoot()` no-ops (animations still play), own player has no hurtbox, no pickup/attract areas, no regen, speed and HP from the host. "Inert" copies: `set_physics_process(false)`, `MODE_KINEMATIC`, every `Area2D` in the subtree `monitoring`/`monitorable` false (deferred). Client entity HP is the 0–255 ratio (`max_stats.health = 255`).
 
-**Host side:** remote players are `lan_net_driven` (position set from the client, `get_movement()` = reported move, zero velocity); their manual aim comes from `get_remote_manual_aim`. The wave timer waits for `_rpc_wave_loaded` from every client (15 s at most). Disconnect or `_rpc_left_wave` kills that player; disconnected players are killed again at the start of each later wave.
+**Host side:** remote players are `lan_net_driven` (position set from the client, `get_movement()` = reported move, zero velocity); their manual aim comes from `get_remote_manual_aim`, and their weapons turn towards `get_remote_aim_point` (the `weapon.gd` extension's `get_global_mouse_position`; remote players count as keyboard players on the host). The wave timer waits for `_rpc_wave_loaded` from every client (15 s at most). Disconnect or `_rpc_left_wave` kills that player; disconnected players are killed again at the start of each later wave.
 
 ## Extensions (`extensions/<vanilla path>`)
 | Vanilla script | What the extension does |
 |---|---|
-| `main.gd` | HUD copies P5–P12, local HUD in the P1 slot, over-head names/bars, camera on the local player (spectate on death), adds `LanWaveSync`, enemy scaling, client end-of-wave from the host (verdict via `_set_run_states`), blocks client loot, crate-to-process hook, pause check, no pause on focus loss, wave-end state to the clients, solo upgrades between waves (gold/XP HUD of RunData index 0 goes to the local player's HUD in the solo view), temporary wave end → lobby, `on_gold_picked_up` copy for > 4 players |
-| `singletons/run_data.gd`, `utils.gd`, `stats_manager.gd`, `debug_service.gd`, `ui/menus/global/popup_manager.gd` | grow 4-slot arrays to 12 (also after vanilla functions that reassign them) |
+| `main.gd` | HUD copies P5–P12, local HUD in the P1 slot, over-head names/bars, skull under dead players' names, off-screen arrows, solo crosshair for the local player's manual aim, camera on the local player (spectate on death), adds `LanWaveSync`, enemy scaling, client end-of-wave from the host (verdict via `_set_run_states`), blocks client loot, crate-to-process hook, pause check, no pause on focus loss, wave-end state to the clients, solo upgrades between waves (gold/XP HUD of RunData index 0 goes to the local player's HUD in the solo view), temporary wave end → lobby, `on_gold_picked_up` copy for > 4 players |
+| `singletons/utils.gd` | grows 4-slot arrays; `is_manual_aim`: remote players' reported flag (host), solo rules for the local player (own mouse) |
+| `singletons/run_data.gd`, `stats_manager.gd`, `debug_service.gd`, `ui/menus/global/popup_manager.gd` | grow 4-slot arrays to 12 (also after vanilla functions that reassign them) |
 | `singletons/coop_service.gd` | 12 players, 12 colours |
 | `singletons/zone_service.gd` | arena grows with the player count |
 | `singletons/progress_data.gd` | saves blocked during a session; the own `saved_run_state` / `last_saved_run_state` ("Continue") put aside at session start and restored at its end, since the shop and a lost run change them in memory |
@@ -115,7 +117,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `entities/units/movement_behaviors/player_movement_behavior.gd` | remote players (device -1) read no input; local player stands still while the pause menu is open |
 | `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd` | attacks from animations do nothing on clients |
 | `entities/birth/entity_birth.gd` | client markers ignore players standing on them |
-| `weapons/weapon.gd` | clients never fire; host reports attacks |
+| `weapons/weapon.gd` | clients never fire; host reports attacks; remote players' manual aim towards their reported aim point (host) |
 | `projectiles/projectile.gd` | host reports shoot/stop/pool; ids |
 | `items/global/item.gd` | host reports drops and pickups; ids |
 | `singletons/weapon_service.gd` | host reports explosions |
@@ -132,7 +134,8 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 - **Pools:** `main.add_node_to_pool` asserts that the pool exists; create it with `get_node_from_pool` first. Pooled nodes are removed from the tree and re-added, `_ready` runs only once.
 - **Coop UI vs one player per machine:** an active FocusEmulator swallows all mouse input; `InputService` hides the cursor on every input in a coop run with more than one player; coop UI asks `FocusEmulatorSignal` for the focusing player and `push_error`s on -1. Sessions use native focus and the solo mouse rule instead.
 - **`Utils.is_manual_aim` returns null** when no manual-aim setting is on; compare with `== true`.
-- **GDScript 1:** `continue` inside `match` falls through to the next pattern; use `if`/`elif` in loops. Compare arrays by value with `==`.
+- **GDScript 1:** `continue` inside `match` falls through to the next pattern; use `if`/`elif` in loops. Compare arrays by value with `==`. `sync` (like `master`, `puppet`, `remote`) is a keyword; don't name a variable after it.
+- **Native methods can be overridden for script callers:** vanilla scripts calling e.g. `get_global_mouse_position()` reach an extension's method of that name (the engine itself doesn't); `.get_global_mouse_position()` calls the native one.
 - **`WaveTimer.stop()` only pauses:** its `_physics_process` restarts the tick sound while 0.1–6 s are left, so a timer stopped early (a client's, which lags the host's) ticks on; `clean_up_room` turns its physics off in a session.
 - **Per-wave state across runs:** a new run in the same session starts at wave 1 again, so state keyed only by the wave number (like `LanNet.wave_end_state`) must be cleared when a wave is entered, or the next run takes the old one for its own.
 - **Coop-only UI setup:** vanilla UIs set themselves up in `_ready` only for the run type they were made for (`UpgradesUI._ready` returns when `RunData.is_coop_run != is_coop_ui`). In a session the solo `UpgradesUI` in `main.tscn` is therefore unset; it runs `_ready` again once the solo view is active.
