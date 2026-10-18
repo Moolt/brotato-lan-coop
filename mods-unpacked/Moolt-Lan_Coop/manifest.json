@@ -1,7 +1,7 @@
 {
   "name": "Lan_Coop",
   "namespace": "Moolt",
-  "version_number": "1.1.0",
+  "version_number": "1.2.0",
   "description": "Lan Multiplayer for Brotato",
   "website_url": "https://github.com/Moolt/brotato-lan-coop",
   "dependencies": [
