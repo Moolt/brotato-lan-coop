@@ -80,6 +80,8 @@ var solo_view = SoloView.new()
 # run (connected and not quit), tells everyone who is still shopping, and goes on once all are
 # done.
 var between_waves: = false
+# The run ended (lost or won) and this machine showed its end screen; until the next wave.
+var run_over: = false
 # Names of the players still shopping (all peers).
 var shop_waiting_names: = []
 # This machine pressed Go (and didn't take it back).
@@ -365,8 +367,11 @@ func on_title_screen() -> void :
 	between_waves = false
 	shop_done = false
 	shop_waiting_names = []
+	# The title screen resets RunData (the end screen's Exit already did), so there is no coop
+	# run to put back.
 	if solo_view.active:
-		leave_solo_view()
+		solo_view.discard()
+		ModLoaderLog.info("Solo view ended on the title screen", NetProtocol.MOD_ID)
 
 
 # The local player's index in RunData right now: 0 in the solo view, else local_player_index.
@@ -375,13 +380,15 @@ func get_local_run_index() -> int:
 
 
 # Between waves: RunData becomes the local player's solo run (game/solo_view.gd) and back.
-func enter_solo_view() -> bool:
+# shopping: between waves (upgrades and shop follow); false for the end screen.
+func enter_solo_view(shopping: bool = true) -> bool:
 	if not active or not solo_view.enter(local_player_index, _get_local_coop_player()):
 		return false
 	ModLoaderLog.info("Solo view entered (player %d)" % local_player_index, NetProtocol.MOD_ID)
-	between_waves = true
-	shop_done = false
-	_update_shop_waiting()
+	if shopping:
+		between_waves = true
+		shop_done = false
+		_update_shop_waiting()
 	return true
 
 
@@ -888,6 +895,7 @@ func _reset_between_waves() -> void :
 	shop_done = false
 	shop_waiting_names = []
 	_shop_runs = {}
+	run_over = false
 
 
 func _is_in_shop_scene() -> bool:

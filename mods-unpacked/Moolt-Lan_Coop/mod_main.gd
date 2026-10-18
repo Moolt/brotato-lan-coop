@@ -36,6 +36,7 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/zone_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/shop/base_shop.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/progress_data_loader_v3.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/run/base_end_run.gd"))
 
 
 func _ready() -> void :

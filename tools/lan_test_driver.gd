@@ -114,6 +114,7 @@ func _process(delta: float) -> void :
 		log_run_states(role + "_cleanup")
 	pick_upgrades(delta)
 	shop_actions(delta)
+	end_screen_actions(delta)
 	if t < next_t:
 		return
 	if role == "quit" or get_node_or_null("/root/LanNet") == null:
@@ -262,6 +263,11 @@ func _host_step() -> void :
 		0:
 			next_t = 3.0
 		1:
+			if OS.get_environment("FAKE_SAVED_RUN") == "1":
+				# A stand-in for the player's own "Continue" run; in memory only (the driver quits
+				# without saving).
+				ProgressData.saved_run_state = {"has_run_state": true, "current_wave": 7}
+			log_saved_run("host_before_session")
 			m._main_menu.left_container.get_node("LanMultiplayerButton").emit_signal("pressed")
 			m.get_node("LanMultiplayerMenu")._name_edit.text = "HostPlayer"
 			m.get_node("LanMultiplayerMenu")._on_NameEdit_text_changed("HostPlayer")
@@ -277,6 +283,8 @@ func _host_step() -> void :
 			log_lobby("host_before_start")
 			DebugService.invulnerable = true
 			DebugService.custom_wave_duration = 20
+			if OS.get_environment("START_WAVE") != "":
+				DebugService.starting_wave = int(OS.get_environment("START_WAVE"))
 			if OS.get_environment("ENEMY_MULT") != "":
 				DebugService.nb_enemies_mult = float(OS.get_environment("ENEMY_MULT"))
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
@@ -370,7 +378,7 @@ func _host_step() -> void :
 					return
 				log_run_check("host_next_wave")
 			else:
-				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
+				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 40.0
 		12:
 			log_lobby("host_after_wave_end")
 			log_wave_end("host_wave_end")
@@ -383,6 +391,7 @@ func _host_step() -> void :
 				next_t = 10.0
 				return
 			net.leave()
+			log_saved_run("host_after_session")
 			get_tree().quit()
 
 
@@ -452,6 +461,40 @@ func pick_upgrades(delta: float) -> void :
 			container._on_DiscardButton_pressed()
 		print("[TEST] ", role, "_pick item=", item.my_id if item != null else "-", " ", "taken" if role == "host" else "recycled", " before ", before, " after items=", own.items.size(), " gold=", own.gold, " hud_gold=", main._players_ui[local_index].gold.gold_label.text, " crate_icons=", main._things_to_process_player_containers[local_index].consumables._elements.size())
 	shot(role + "_upgrades")
+
+
+var end_step: = 0
+var end_wait: = 0.0
+
+
+# On the end screen: logs what it shows, then presses Exit (the client first, the host 3 s
+# later) and logs the lobby the client lands in.
+func end_screen_actions(delta: float) -> void :
+	var scene = get_tree().current_scene
+	if scene == null or not scene is BaseEndRun:
+		if end_step == 2 and menus() != null:
+			end_step = 3
+			yield(get_tree().create_timer(0.5), "timeout")
+			log_lobby(role + "_after_end_screen")
+		elif end_step == 3 and scene != null and scene.filename == MenuData.game_scene:
+			end_step = 0
+		return
+	end_wait += delta
+	var tag = role + "_end_screen"
+	if end_step == 0 and end_wait >= 1.5:
+		var own = RunData.players_data[0]
+		print("[TEST] ", tag, " scene=", scene.filename, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " won=", RunData.run_won, " wave=", RunData.current_wave, " title='", scene._title.text, "' character=", own.current_character.my_id, " gold=", own.gold, " weapons=", own.weapons.size(), " buttons restart=", scene._restart_button.visible, " new_run=", scene._new_run_button.visible, " exit=", scene._exit_button.visible, " exit_focus=", scene._exit_button.has_focus())
+		shot(tag)
+		end_step = 1
+	elif end_step == 1 and end_wait >= (2.5 if role != "host" else 5.5):
+		print("[TEST] ", tag, " exit")
+		scene._on_ExitButton_pressed()
+		end_step = 2
+		end_wait = 0.0
+
+
+func log_saved_run(tag: String) -> void :
+	print("[TEST] ", tag, " saved_run_state has_run_state=", ProgressData.saved_run_state.get("has_run_state", false), " wave=", ProgressData.saved_run_state.get("current_wave", "-"), " hash=", ProgressData.saved_run_state.hash())
 
 
 var shop_step: = 0
@@ -657,7 +700,7 @@ func _client_step() -> void :
 					return
 				log_run_check("client_next_wave")
 			else:
-				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
+				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 39.0
 		11:
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")

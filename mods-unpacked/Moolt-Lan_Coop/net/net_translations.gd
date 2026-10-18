@@ -57,6 +57,8 @@ const STRINGS: = {
 		"LAN_SHOP_WAITING": "Waiting for the others", 
 		"LAN_SHOP_STILL_SHOPPING": "Still shopping: {0}", 
 		"LAN_SHOP_BACK": "Back to the shop", 
+		"LAN_HINT_HOST_RESULTS": "The run is over. Waiting for the host to leave the results.", 
+		"LAN_BACK_TO_LOBBY": "Back to the lobby", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -112,6 +114,8 @@ const STRINGS: = {
 		"LAN_SHOP_WAITING": "Warte auf die anderen", 
 		"LAN_SHOP_STILL_SHOPPING": "Noch im Shop: {0}", 
 		"LAN_SHOP_BACK": "Zurück zum Shop", 
+		"LAN_HINT_HOST_RESULTS": "Der Lauf ist vorbei. Warte, bis der Host die Ergebnisse verlässt.", 
+		"LAN_BACK_TO_LOBBY": "Zurück zur Lobby", 
 	}, 
 }
 

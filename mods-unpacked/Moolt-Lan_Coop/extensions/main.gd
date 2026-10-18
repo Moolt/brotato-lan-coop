@@ -24,8 +24,8 @@ extends "res://main.gd"
 # - At the end of a wave the host sends the run and the pending level-ups and crates to the
 #   clients (LanNet.send_wave_end_state). Every machine then picks its own upgrades in the
 #   vanilla solo UpgradesUI, with RunData as the local player's solo run (game/solo_view.gd),
-#   and goes on to the solo shop. After a lost or won run everyone goes back to the title
-#   screen (and its lobby) until 7f.
+#   and goes on to the solo shop. At the run's end (lost or won; everyone dead ends the run, no
+#   retry screen) every machine shows the solo end screen for its own player.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
@@ -413,29 +413,41 @@ func _on_EndWaveTimer_timeout() -> void :
 	SoundManager2D.clear_queue()
 	InputService.set_gamepad_echo_processing(true)
 	_end_wave_timer_timedout = true
-	# As vanilla, except after a failed wave (vanilla shows the retry screen there). The host
-	# then sends the run after the wave; clients apply it once this has run (LanNet).
-	if _is_wave_failed and RunData.current_wave > 0:
-		_change_scene(MenuData.title_screen_scene)
-		return
-	RunData.on_wave_end()
-	LinkedStats.reset()
+	# As vanilla (on_wave_end isn't run after a failed wave), then the host sends the run after
+	# the wave, also at the run's end (the end screens show it); clients apply it once this has
+	# run (LanNet). A failed wave (everyone dead) always ends the run here: there is no retry
+	# screen in a session.
+	if not _is_wave_failed:
+		RunData.on_wave_end()
+		LinkedStats.reset()
+	# clean_up_room's apply_run_won set these; applying the host's run (RunData.reset) clears them.
+	var run_won: bool = RunData.run_won
+	var difficulty_unlocked: int = RunData.difficulty_unlocked
 	var lan_net = LanGame.get_lan_net()
 	if lan_net.is_host:
 		lan_net.send_wave_end_state(_upgrades_to_process, _consumables_to_process)
 	elif lan_net.wave_end_state.get("wave", - 1) != RunData.current_wave:
 		yield(self, "lan_wave_end_ready")
 
-	if not _is_run_lost and not _is_run_won:
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null:
+		wave_sync.stop()
+
+	if _is_run_lost or _is_run_won or _is_wave_failed:
+		# Every machine shows the solo end screen for its own player (base_end_run.gd extension).
+		lan_net.run_over = true
+		if lan_net.enter_solo_view(false):
+			RunData.run_won = run_won
+			RunData.difficulty_unlocked = difficulty_unlocked
+			_change_scene(RunData.get_end_run_scene_path())
+			return
+	else:
 		_wave_cleared_label.hide()
 		_wave_timer_label.hide()
 		_camera.move_speed_factor = 0.0
 		_camera.zoom_in_speed_factor = 0.0
 		_camera.zoom_out_speed_factor = 0.0
 		MusicManager.tween( - 8)
-		var wave_sync = LanGame.get_wave_sync()
-		if wave_sync != null:
-			wave_sync.stop()
 		if lan_net.enter_solo_view():
 			_lan_set_up_solo_upgrades_ui()
 			var pending: Array = _lan_get_own_pending(lan_net)

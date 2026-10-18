@@ -337,7 +337,7 @@ func _refresh_settings() -> void :
 	var names: = PoolStringArray(sync.names).join(", ")
 	_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
 	if not is_host and _net.lobby_settings.get("in_wave", false):
-		_hint_label.text = "LAN_HINT_HOST_IN_WAVE"
+		_hint_label.text = "LAN_HINT_HOST_RESULTS" if _net.run_over else "LAN_HINT_HOST_IN_WAVE"
 	elif sync.state == "synced":
 		_hint_label.text = tr("LAN_RUN_SYNCED").replace("{0}", str(_net.get_player_count()))
 		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_OK)

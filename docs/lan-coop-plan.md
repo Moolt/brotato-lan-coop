@@ -529,6 +529,20 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - **Gap carried over:** `ProgressData.reset_and_save_new_run_state()` runs on every peer when all players die (in-memory "Continue" disappears).
   - **Test:** win (last wave) and lose (everyone dies), with the end screen on both machines and Back from each.
 
+**7f status: done (Step 7 complete).**
+- **Decision:** everyone dead always ends the run in a session (lost; won past the last wave in endless). The retry screen isn't shown (a host-decided retry is in Step 8). Clients go back to the lobby, not out of the session, so the host can start the next run.
+- **`main.gd` extension:** at the run's end the host still sends the wave-end state (also after a failed wave; `on_wave_end` runs only when the wave wasn't failed, as in vanilla), so the end screens show the host's numbers. Every peer stops `LanWaveSync`, sets `LanNet.run_over`, enters the solo view without the shop phase (`enter_solo_view(false)` doesn't start `between_waves` or the host's waiting list), restores `RunData.run_won` and `difficulty_unlocked` (cleared by applying the host's run) and opens `end_run.tscn`.
+- **`extensions/ui/menus/run/base_end_run.gd`:** in a session Restart and New Run are hidden, Exit says "Back to the lobby" (`LAN_BACK_TO_LOBBY`) and gets the focus. `LanNet.on_title_screen()` discards the solo view (the title screen resets `RunData`).
+- **Lobby hint:** a client back before the host sees "The run is over. Waiting for the host to leave the results." (`LAN_HINT_HOST_RESULTS`, `run_over`, reset when a wave starts).
+- **Own saved run (the carried-over gap, and more):** saves are blocked in a session, but the shop (`save_run_state` in `_ready`, pause, Go) and a lost run (`reset_and_save_new_run_state`) change `ProgressData.saved_run_state` in memory. The next save after the session would have written the LAN run (or an empty one) over the player's own "Continue" run. The `progress_data.gd` extension now puts `saved_run_state` and `last_saved_run_state` aside when saves get blocked (session start) and restores them when they're unblocked (session end).
+- **Shop:** the Endless button (shown at wave 19) is hidden in a session: `is_endless_run` is run-wide, but each machine would set it alone and the merge only takes per-player data.
+- **Tested** (driver: both log the end screen and press Exit, the client first; `START_WAVE=n` starts the run at wave n; `FAKE_SAVED_RUN=1` puts a stand-in "Continue" run in memory before the session):
+  - `KILL_ALL=1`: "Run Lost" on both, each with its own character, gold and weapons, only "Back to the lobby", focused; the client's lobby shows the run-over hint, the host's Exit returns both to the normal lobby.
+  - `START_WAVE=20`: wave 20 cleared, "Run Won" on both (it showed "Run Lost" before `run_won` was restored).
+  - `FAKE_SAVED_RUN=1`: the stand-in run (wave 7) is the same after leaving the session (same hash).
+  - `ROUNDS=2 KILL_ALL=1` (the regression test for the stale wave-end state, now that a lost run sends one): both runs end on the end screens, round 2's client receives the state before entering the solo view.
+  - Default (one wave, then wave 2): unchanged. No `ERROR:`.
+
 ## Step 8: Polish
 - ~~Floating names above players.~~ Moved into 4c.
 - Name overlap: 12 names overlap when players stand close together, for example on the spawn circle at wave start. If plain labels are too busy, fade names while they overlap, or shorten long names.
@@ -549,11 +563,19 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
 - Dead players: a skull image below the greyed-out name over their head (4c labels in the `main.gd` extension).
 - Rejoin a run in progress after a lost connection (not after the player died). Today a disconnect kills the player (6e) and the slot only stays reserved until the wave ends (`run_in_progress`, `connected = false`). Instead: keep the disconnected player alive but idle (or protected) for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run state and drop it straight into the running wave (or the between-wave phase). A player who died stays out until the next wave as before.
 - Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option). Make the duration a config knob, with 0 = off.
+- Material sharing option: vanilla coop splits every material a player picks up round-robin over all players (1 material and 1 XP per unit, `main.gd` `on_gold_picked_up`, also the mod's copy for > 4 players); only the picker's own pickup effects apply. Add a lobby setting (host, synced like the scaling knobs) to keep materials and XP with the player who picked them up instead. Crates have their own vanilla option (`share_coop_loot`).
+- Retry in a session: vanilla's retry screen (`retry_wave` option) restarts the wave from `start_wave_state`. A session skips it (7f); the host could offer the retry and send the start-of-wave run to everyone.
+- Endless runs: a lobby setting for the host instead of the shop's Endless button at wave 19 (hidden in a session, 7f).
+- Progress from LAN runs: `RunData.apply_run_won` (in `clean_up_room`) completes the character challenges and difficulty records for every player's character on every machine, and challenges completed in a session may be dropped when the own unlock lists are restored on leaving. Decide what a LAN run should count for, and credit only the own character on each machine.
+- End screen focus: vanilla's `end_run.gd` gives the focus to the (hidden in a session) New Run button after an inventory element is pressed; with a gamepad the focus is then lost until the mouse or a direction moves it.
+- Game modes (ideas, beyond co-op):
+  - Teams: players split into teams (lobby choice), each team sharing materials among itself, compared by a score at the end (kills, waves survived, damage).
+  - Last man standing: the run goes on while players die off; the last player alive wins. Needs a decision on what the dead do (spectate), how waves scale as players drop out, and whether players can hurt each other.
 
 ---
 
 ## Milestones
-Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Next is 7f (run end).
+Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Step 7 (between-wave flow, run end) is complete; next is Step 8.
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).

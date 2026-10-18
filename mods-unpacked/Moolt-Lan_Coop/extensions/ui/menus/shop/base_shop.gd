@@ -21,6 +21,17 @@ func _ready() -> void :
 	add_child_below_node($Content, _lan_overlay)
 	var _e = _lan_overlay.connect("back_pressed", self, "_lan_on_back_pressed")
 	_e = LanGame.get_lan_net().connect("shop_waiting_changed", self, "_lan_on_shop_waiting_changed")
+	# shop.gd's _ready (after this one) shows the Endless button before wave 20. Endless is
+	# run-wide but each machine would set it alone, so it stays off in a session.
+	call_deferred("_lan_hide_endless_button")
+
+
+func _lan_hide_endless_button() -> void :
+	var endless_button = get_node_or_null("%EndlessButton")
+	if endless_button != null and endless_button.visible:
+		endless_button.hide()
+		# shop.gd pointed the Go button's focus up at it.
+		_get_go_button(0).focus_neighbour_top = NodePath()
 
 
 func _on_GoButton_pressed(player_index: int) -> void :
