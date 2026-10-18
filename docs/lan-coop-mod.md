@@ -1,6 +1,6 @@
-# The Moolt-Lan_Coop mod as built (Steps 1–7)
+# The Moolt-Lan_Coop mod as built
 
-A reference for working on the mod: what exists, how a session flows, the sync protocol, and the pitfalls already paid for. The plan with per-step history is [lan-coop-plan.md](lan-coop-plan.md); vanilla internals are in [brotato/](brotato/).
+A reference for working on the mod: what exists, how a session flows, the sync protocol, and the pitfalls already paid for. Goals, decisions and open work are in [lan-coop-plan.md](lan-coop-plan.md), how to test in [testing.md](testing.md), vanilla internals in [brotato/](brotato/). The step-by-step history is in the git log.
 
 ## Files (`mods-unpacked/Moolt-Lan_Coop/`)
 | File | Role |
@@ -19,7 +19,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `game/lan_game.gd` | Static helpers: `MAX_PLAYERS` (12), `in_session()`, `get_lan_net()`, `get_wave_sync()`, `is_wave_client()`, `get_player_name()`, `grow()` for 4-slot arrays, scaling formulas. |
 | `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby (player list; character and weapon grids, each with a simplified preview of the hovered entry or the pick; the character's starting items with vanilla's item popup), `ui_kit.gd` building blocks; `shop_waiting_overlay.gd` (over the shop after Go). |
 | `extensions/…` | Script extensions, mirrored vanilla paths (list below). |
-| `tools/lan_test_driver.gd` (repo root, not in the mod) | Test autoload for the throwaway game copy; see the plan's Verification section. |
+| `tools/lan_test_driver.gd` (repo root, not in the mod) | Test autoload for the throwaway game copy; see [testing.md](testing.md). |
 
 ## Session flow
 1. **Host / join** (`LanNet.host()` / `join()`): sets `active`, `is_host`/`is_client`, blocks saves (`ProgressData.lan_coop_saves_blocked`), unlocks everything (own unlock lists restored on leave), switches to the solo mouse rule. Client sends `_rpc_hello`; host validates (protocol, game version, DLCs, full, in progress) and answers `_rpc_welcome(player_index)` or `_rpc_rejected(reason)`.
@@ -33,6 +33,44 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 9. **Run end** (everyone dead, which always ends the run in a session (no retry screen), or the last wave won): the host still sends the wave-end state; every peer stops `LanWaveSync`, sets `LanNet.run_over`, enters the solo view without the shop phase (`enter_solo_view(false)`), puts back `RunData.run_won` and `difficulty_unlocked` (set by `apply_run_won` in `clean_up_room`, cleared by applying the host's run) and opens the solo `end_run.tscn`. The `base_end_run.gd` extension hides Restart and New Run and turns Exit into "Back to the lobby". A client back in the lobby while the host is still on its end screen sees "The run is over…" (`run_over`).
 10. **Back to the lobby** (from the end screen, or the host quits): the title screen's vanilla `_ready` resets `RunData`; its extension calls `LanNet.on_title_screen()` (a client that hadn't pressed Go sends `_rpc_left_wave`; any solo view is discarded), reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients in `main.tscn` or the shop follow when a lobby broadcast says `in_wave` is false. A disconnect during a run keeps the run id (`_broadcast_lobby_state(run_in_progress)`), so a next-wave sync in progress isn't dropped.
 11. **Leave / errors**: `_end_session(reason)` restores unlocks and saves, resets RunData if a synced run replaced it, and returns to the title screen with a reason popup.
+
+## Connection, menus and lobby (Steps 1–3, 8b)
+**Connection** (`LanNet`): ENet, port 24567 by default (`net_config`), at most 11 clients. `server_relay` is off, every RPC checks the sender id and argument types, peers without a hello within 5 s are kicked, rejected clients get the reason and are kicked 0.5 s later. Reasons are translation keys (`LAN_REJECT_*`, `LAN_MSG_*`); `last_end_reason` keeps the last one for the page that opens next. Player indices are compacted when someone leaves the lobby; during a run the slot stays with `connected = false` and `player_disconnected` fires.
+
+**Unlocks:** during a session every peer has everything unlocked (`NetProtocol.get_multiplayer_unlocks()`, from the loaded game data), so item pools match on every machine (the handshake already checks game version and DLCs). Covers `zones/characters/upgrades/consumables/weapons/items_unlocked`, not difficulties (all are selectable in the lobby anyway); consumables follow vanilla's unlock-all save. Vanilla's `unlock_all_*` aren't used (they also change bought-item counts, kills and challenges). Restored on leave; saves are blocked meanwhile, so singleplayer progress is never touched.
+
+**Pages** (built in code with `ui/ui_kit.gd`, added by the `title_screen_menus.gd` extension): Main menu → Multiplayer (name, Host game, Join game) → host: Lobby; join: Join page (discovered games as rows "name n/12", incompatible ones disabled; "IP or IP:port" field, `NetProtocol.parse_address`) → Lobby. Leaving the lobby returns to the page it was entered from; session-end reasons show in that page's status line. On title load the extension reopens the Join page (if `last_end_reason` is set) or the lobby (if still joined).
+
+**Discovery** (`net/net_discovery.gd`, `/root/LanNet/Discovery`): while hosting and not in a run, a JSON beacon every second to UDP 24568, sent to `255.255.255.255` plus the /24 broadcast of each private LAN address (Linux sends the limited broadcast only on the default interface). The Join page listens only while visible; games expire 3.5 s after their last beacon. `NetProtocol.get_lan_addresses` skips loopback, link-local and docker/bridge/VM interfaces; `get_primary_lan_address` (shown to the host as `IP: ip:port`) prefers private addresses, wired before wireless, and skips Windows virtual adapters.
+
+**Lobby** (`ui/lobby.gd`; rules in `net/lobby_rules.gd`, shared by the UI, the host's validation in `_apply_player_changes` and `are_all_ready()`):
+- **Layout:** player list on the left (620 px; colour, character icon, name and tags, weapon icon, Ready/Choosing; scrolls, sized for 12 rows). Right: character grid (9 columns, 760 px) and starting-weapon grid (4 columns), each with its preview below; Ready under the weapon preview (preview + Ready = 440 px, the character preview's height). The grids scroll and take the height the left side leaves (min 150 px), so previews and Ready end level with Start. The weapon area keeps its height when the no-choice text replaces the grid.
+- **Grids** are vanilla `inventory.tscn` with random tiles (resolved locally, the real id is sent) and lock tiles. Picks get a border in the player's colour (`LanSelectedMarker` panel). Starting weapons use the same filter as `weapon_selection.gd`.
+- **Previews:** vanilla's small `item_panel_ui.tscn` for both (icon box hidden, the name's scroll box 64 px, description scrolls with `expand_indefinitely = false` set before `_ready`, its scroll box fills the panel). The character preview adds the starting weapons and items as a vanilla `Inventory` with vanilla's `ItemPopup` (the page's last child; `display_item_data`, which doesn't read run data); refilled only when the shown character changes. What a preview shows: with the cursor visible the last hovered element (a hover ends when the mouse leaves the grid *and* its preview); with it hidden the focused one (kept while focus moves into its starting items, checked deferred); else the player's pick.
+- **Focus:** character → weapons → Ready once the host confirmed each pick; "left" from the weapon grid's first column and from Ready goes to the picked character ("up" from Ready when there is no weapon choice).
+- **Host controls:** Zone and Difficulty `OptionButton`s (every `ZoneService.zones` and `ItemService.difficulties` entry, Danger 0–5 always) via `set_lobby_settings`, remembered as `last_zone` / `last_difficulty`. Clients see a "Zone, Danger N" summary. Start is enabled when `are_all_ready()`. Changing character or weapon un-readies; the host drops invalid or locked picks and ignores entry changes during a run.
+- **Hint line:** waiting / host can start / waiting for the host / host in a wave / run over (`run_over`).
+
+## Scaling and 12 players (Steps 4–5)
+- **Arrays:** vanilla's 4-slot per-player arrays grow to 12 **always** (`LanGame.grow`), not only in a session; vanilla never reads slots beyond the player count. They grow in the extensions' `_init` and after the vanilla functions that reassign 4-slot literals (`RunData.reset`, `_reset_per_wave_properties`, `reset_run_caches`, `resume_from_state`; `Utils.reset_stat_caches`, `reset_last_elt_selected`; `Utils._manual_aim_cache` on demand in `is_manual_aim`, since `_process` resets it). `TempStats` / `LinkedStats` are grown once from `LanNet._ready`. `DebugService.log_run_info` gets grown arguments. The coop `UpgradesUI` is turned off (`is_coop_ui = false` in main's `_enter_tree`).
+- **HUD:** main's `_enter_tree` copies the P4 node sets (`LifeContainerP4`, `PlayerLifeBarContainerP4`, `UIThingsToProcessPlayerContainer4`) as P5–P12 before vanilla's `_ready` looks them up by `%` name. The local player's HUD takes P1's slot; other screen HUDs are hidden. Others get a `LanNameLabel` (copy of `font_smallest_text`, size 22, 2 px outline, `Rect2(-150, -106, 300, 32)`) and an always-visible bar over their head; dead ones a greyed name and the goat skull (`LanDeadIcon`).
+- **Off-screen arrows** (`game/offscreen_arrows.gd`): a `Control` in main's `UI` layer above the damage vignette (below HUD and pause menu); a triangle in the player's colour, 36 px inside the screen edge, for every living non-local player outside the viewport. Hidden from cleanup on.
+- **Colours:** 4 vanilla + 8 extra `[hue, value]` pairs (`Color.from_hsv(h, 0.3, v)`; `get_player_color` adds 0.5 saturation): blue, pink, purple, red, spring green, magenta, azure, brown.
+- **Spawn:** players on a circle of radius `60 + 15n` around the map centre.
+- **Knobs** (`NetProtocol.DEFAULT_SCALING`, per extra player; the host reads them from `[scaling]` in `user://lan_coop.cfg`, clamped to 0–2, and sends them in `lobby_settings.scaling`; `LanGame.get_scaling(key)`):
+
+  | Knob | Default | Effect |
+  |---|---|---|
+  | `arena_area_per_player` | 0.25 | width/height × `sqrt(1 + 0.25(n-1))` (1.94× at 12), applied after vanilla's `map_size` effect |
+  | `enemy_count_per_player` | 0.3 | `CoopService.additional_enemies_per_coop_player` |
+  | `enemy_health_per_player` | 0.3 | HP for players 2–4 … |
+  | `enemy_health_per_player_beyond_4` | 0.2 | … and beyond (averaged: 3.5× at 12 instead of 4.3×) |
+  | `enemy_damage_per_player` | 0.08 | damage |
+  | `enemy_cap_per_player` | 0.25 | `max_enemies × (1 + 0.25(n-1))` (375 at 12) instead of vanilla's `(n-1)/8` |
+
+  `LanGame.apply_enemy_scaling(n)` runs in main's `_enter_tree`; `CoopService.clear()` on the main menu restores vanilla's values. Danger effects are read from player 0 only, `double_boss` is summed.
+- **Spawn rate** is vanilla's: queued enemies are released 1 (2 with 110+ queued) every 3 physics frames, whatever the player count.
+- **Camera:** each machine follows only its own player (solo behaviour, `lock_coop_camera` ignored); after its death, vanilla's coop camera over the living players.
 
 ## Between waves (Step 7)
 **Idea:** the vanilla coop upgrade UI, shop and end screen have 4 player slots and assume one screen. Instead every machine shows the vanilla **solo** screens for its own player: `RunData` temporarily becomes that player's solo run (the solo view), and the host merges the results.
@@ -149,4 +187,9 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 - **Save loader has 4 slots** for `locked_shop_items` and `shop_items` (`ProgressDataLoaderV3`); the extension handles the rest. Extending a `class_name` script works for `ClassName.new()` too.
 - **`saved_run_state` changes in memory during a session** (shop, lost run) although disk saves are blocked; the `progress_data.gd` extension puts the own one aside.
 - **Disconnects during a run** must not reset the run id (`_broadcast_lobby_state(run_in_progress)`), or a pending next-wave sync stalls; lobby entry changes are ignored during a run for the same reason.
-- **Test driver:** pass the local player's index to `pause()` (as `main._check_for_pause` does); a remote index has device -1 and hides coop-only behaviour. Simulated mouse events need window coordinates (`get_tree().root.get_final_transform()`). Don't `pkill -f` with a pattern that is also in the shell command line.
+- **Run JSON:** runs travel as JSON text through the save loader (`ProgressDataLoaderV3.new()` without args touches no disk). The deserializers expect JSON types (string keys, floats); raw RPC dictionaries make `PlayerRunData._deserialize_effects` raise script errors. JSON turns ints into floats; `RunBuilder.apply_run` fixes the known keys.
+- **ENet** calls `close_connection()` itself right after `server_disconnected` / `connection_failed`; closing again logs an engine `ERROR:`. Cleanup runs deferred and the close is guarded by the connection status. Broadcast only to peers in `get_network_connected_peers()`.
+- **Menus:** `MyMenuButton` re-enables itself after its 0.05 s press delay; use its `disable()` / `activate()`, not `disabled`. Every page's `_input` must `set_input_as_handled()` after `ui_cancel`, or the page that becomes visible handles the same event. `ui_cancel` closes an open `OptionButton` popup on press, so leaving a page needs press *and* release with no popup open.
+- **Unique names:** copying a `%Name` node, rename it before setting `owner`; setting `owner` claims the unique name.
+- **Inventory elements are `Button`s:** an empty one's minimum height is the theme font's plus the stylebox's (68 px with the page theme). Give the grid a theme with a smaller `Button` font to keep 56 × 56 tiles.
+- **Test driver:** see [testing.md](testing.md#writing-steps).

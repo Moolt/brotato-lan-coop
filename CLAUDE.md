@@ -1,7 +1,7 @@
 # Brotato (decompiled) + Moolt-Lan_Coop mod
 
 Decompiled Brotato **1.1.15.4** (`ProgressData.VERSION`). Engine **Godot 3.7** (custom build, GDScript 1, `config_version=4`). Use a Godot 3.x editor; never Godot 4 syntax.
-Goal: a LAN multiplayer mod (up to 12 players, one per PC) in `mods-unpacked/Moolt-Lan_Coop/`. Implementation plan and milestones: [docs/lan-coop-plan.md](docs/lan-coop-plan.md). Keep it updated as milestones complete or the design changes.
+Goal: a LAN multiplayer mod (up to 12 players, one per PC) in `mods-unpacked/Moolt-Lan_Coop/`. Goals, design decisions and the open-work checklists: [docs/lan-coop-plan.md](docs/lan-coop-plan.md). Tick items there as they are done and add new gaps or todos as they come up.
 The mod as built (files, session flow, sync protocol, extensions, pitfalls): [docs/lan-coop-mod.md](docs/lan-coop-mod.md). Keep it in step with the code. Status: Steps 1–7 done (full runs on separate machines: waves, upgrades and shop per machine, end screens). Step 8 (polish: visuals, controls, menus, perf, tests) is in progress: its in-wave part is done (8a: off-screen arrows, skulls, mouse aim) except name overlap, and the lobby layout (8b). Step 9 collects feature additions.
 
 ## Repo layout
@@ -24,6 +24,7 @@ Two repos side by side. `brotato-lan-coop/` (public, this file lives there) hold
 | Menus, main menu buttons, pages, shop/upgrade UIs, translations | [docs/brotato/ui-menus.md](docs/brotato/ui-menus.md) |
 | Every hardcoded 4-player array / P1–P4 node | [docs/brotato/hardcoded-4-players.md](docs/brotato/hardcoded-4-players.md) |
 | ModLoader 6.3.0 API, extension rules, pitfalls | [docs/brotato/modding.md](docs/brotato/modding.md) |
-| The mod itself: LanNet, LanWaveSync events/snapshot, between-wave flow (solo view, shop, merge), extension list, pitfalls | [docs/lan-coop-mod.md](docs/lan-coop-mod.md) |
+| The mod itself: LanNet, lobby, scaling, LanWaveSync events/snapshot, between-wave flow (solo view, shop, merge), extension list, pitfalls | [docs/lan-coop-mod.md](docs/lan-coop-mod.md) |
+| Testing: throwaway game copy, test driver roles and options, regression set, log check | [docs/testing.md](docs/testing.md) |
 
 Line numbers in the docs are approximate. Grep for the function name to find the exact line.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds a throwaway copy of the decompiled game for testing the mod (see docs/lan-coop-plan.md,
-# "Verification"). Usage: tools/make_test_copy.sh <target dir>, e.g. <scratchpad>/game.
+# Builds a throwaway copy of the decompiled game for testing the mod (see docs/testing.md).
+# Usage: tools/make_test_copy.sh <target dir>, e.g. <scratchpad>/game.
 # The copy uses its own user dir (BrotatoLanTest), has vsync off, and links the mod and
 # tools/lan_test_driver.gd (as the LanTestDriver autoload) back into this repo, so edits apply.
 set -euo pipefail
