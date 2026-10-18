@@ -2,7 +2,7 @@
 
 Decompiled Brotato **1.1.15.4** (`ProgressData.VERSION`). Engine **Godot 3.7** (custom build, GDScript 1, `config_version=4`). Use a Godot 3.x editor; never Godot 4 syntax.
 Goal: a LAN multiplayer mod (up to 12 players, one per PC) in `mods-unpacked/Moolt-Lan_Coop/`. Implementation plan and milestones: [docs/lan-coop-plan.md](docs/lan-coop-plan.md). Keep it updated as milestones complete or the design changes.
-The mod as built (files, session flow, sync protocol, extensions, pitfalls): [docs/lan-coop-mod.md](docs/lan-coop-mod.md). Keep it in step with the code. Status: Steps 1–7 done (full runs on separate machines: waves, upgrades and shop per machine, end screens); next is Step 8 (polish).
+The mod as built (files, session flow, sync protocol, extensions, pitfalls): [docs/lan-coop-mod.md](docs/lan-coop-mod.md). Keep it in step with the code. Status: Steps 1–7 done (full runs on separate machines: waves, upgrades and shop per machine, end screens). Next is Step 8 (polish: visuals, controls, menus, perf, tests); Step 9 collects feature additions.
 
 ## Repo layout
 Two repos side by side. `brotato-lan-coop/` (public, this file lives there) holds the mod, `CLAUDE.md` and `docs/`. `Decompiled/` (local only, never published) is the vanilla game; the mod folder, `CLAUDE.md` and `docs/` are symlinked into it, so `res://mods-unpacked/Moolt-Lan_Coop/` resolves in the Godot editor. Commit mod changes in `brotato-lan-coop/`. `git status` in `Decompiled/` should stay clean; any change there is an accidental vanilla edit (often an editor re-save of an open scene).
@@ -24,6 +24,6 @@ Two repos side by side. `brotato-lan-coop/` (public, this file lives there) hold
 | Menus, main menu buttons, pages, shop/upgrade UIs, translations | [docs/brotato/ui-menus.md](docs/brotato/ui-menus.md) |
 | Every hardcoded 4-player array / P1–P4 node | [docs/brotato/hardcoded-4-players.md](docs/brotato/hardcoded-4-players.md) |
 | ModLoader 6.3.0 API, extension rules, pitfalls | [docs/brotato/modding.md](docs/brotato/modding.md) |
-| The mod itself: LanNet, LanWaveSync events/snapshot, extension list | [docs/lan-coop-mod.md](docs/lan-coop-mod.md) |
+| The mod itself: LanNet, LanWaveSync events/snapshot, between-wave flow (solo view, shop, merge), extension list, pitfalls | [docs/lan-coop-mod.md](docs/lan-coop-mod.md) |
 
 Line numbers in the docs are approximate. Grep for the function name to find the exact line.

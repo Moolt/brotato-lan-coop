@@ -236,7 +236,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
   - **Devices.** Before the scene change, the host fills `CoopService.connected_players`: the local player gets keyboard 7, or gamepad 6 if `InputService.using_gamepad`; remote players get device `-1`.
     - Vanilla's per-player input helpers already return "nothing" for a negative device: `Utils.is_player_action_*`, `get_player_rjoy_vector`, and the pause check via `get_remapped_player_device`.
     - Only movement needs an override: `extensions/entities/units/movement_behaviors/player_movement_behavior.gd` `get_vector_for_input_prefix` returns `Vector2.ZERO` for `device < 0`. Step 6 swaps that for `LanNet` input.
-  - **Wave end, temporary until Step 7.** In a session, `main.gd` `_on_EndWaveTimer_timeout` skips vanilla's coop upgrade UI and shop, which only have 4 slots. It sets `run_in_progress` false and changes back to the title screen, where the lobby reopens (`_restore_lan_page`). Quitting from the pause menu does the same.
+  - **Wave end, temporary until Step 7** (replaced by Step 7). In a session, `main.gd` `_on_EndWaveTimer_timeout` skips vanilla's coop upgrade UI and shop, which only have 4 slots. It sets `run_in_progress` false and changes back to the title screen, where the lobby reopens (`_restore_lan_page`). Quitting from the pause menu does the same.
 
 **4a status: done.**
 - **Start → wave:** `LanNet.start_run()` sets `_start_requested`. `_enter_wave_if_synced()` runs after the build and after every ack; once `get_run_sync_status()` is "synced" it calls `set_run_in_progress(true)`, `_fill_coop_players()` and `change_scene(MenuData.game_scene)`. A lobby change before then resets the run and cancels the start.
@@ -245,7 +245,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Pause check:** the plan's assumption was wrong for `main.gd` `_check_for_pause`: it polls `Input.is_action_just_released("ui_pause_-1")`, an unknown action. The `main.gd` extension overrides it to skip negative devices.
 - **Pause menu:** Restart and End Run are hidden in a session (`ingame_main_menu.gd` extension, `init`).
 - **Tested:** host + one client, Danger 3. The wave loads with devices `[7, -1]`, the host moves with the keyboard, the remote player stands still. Wave end and Quit both reopen the lobby on the host; the client hint switches to "test wave" and back.
-- **Known gap:** `main.gd` calls `ProgressData.reset_and_save_new_run_state()` when all players die. The disk save is blocked, but the in-memory `saved_run_state` is cleared, so "Continue" disappears until the game restarts.
+- **Known gap** (resolved in 7f: the own saved run is put aside for the session): `main.gd` calls `ProgressData.reset_and_save_new_run_state()` when all players die. The disk save is blocked, but the in-memory `saved_run_state` is cleared, so "Continue" disappears until the game restarts.
 
 - **4b: 12 players in the wave.** Lifting the caps:
   - `CoopService.get_max_players()` returns 12 in a session.
@@ -345,7 +345,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Focus:** losing window focus doesn't pause in a session.
 - **Lobby hint** for a client that left the wave: "A wave is in progress. You are back in when it ends."
 - **Tested:** host + client (+1 and +10 fake players), 20 s wave. Client movement shows on the host (1196 → 1871 on both), host movement and both deaths show on the client, the client's camera spectates after its death, both return to the lobby, client HUD shows its own HP and gold colour. No `ERROR:`. Vanilla solo wave unchanged.
-- **Known gaps** (later increments): the host starts the wave without waiting for clients to load (the client's timer resyncs; 6e); a client quitting from its pause menu leaves its player standing on the host (6e); pause only pauses the own machine (6e); client-side `RunData` changes during the wave (e.g. random stat rolls at wave start) diverge, which Step 7's state broadcast overwrites.
+- **Known gaps** (later increments; all resolved in 6e and Step 7): the host starts the wave without waiting for clients to load (the client's timer resyncs; 6e); a client quitting from its pause menu leaves its player standing on the host (6e); pause only pauses the own machine (6e); client-side `RunData` changes during the wave (e.g. random stat rolls at wave start) diverge, which Step 7's state broadcast overwrites.
 
 - **6b: enemies, trees, structures and pets on clients.** Net ids assigned on each (re)spawn (`entity_spawner.gd` `spawn_entity`; nodes are pooled). Reliable spawn (scene index) and death (`DieArgs` essentials) events; snapshot: id, pos (int16), flip, hp ratio. Clients instance through `EntitySpawner.spawn_entity`, then disable physics, set kinematic, turn off hitboxes, interpolate, and call `die()` on the death event.
 **6b status: done.**
@@ -393,7 +393,7 @@ Scope: only code that runs in-wave on every machine, plus `RunData`. The coop sh
 - **Snapshot** per player adds gold (s32), XP (float) and level (u16): 33 bytes per player. Clients write them into `RunData.players_data` and emit `gold_changed`, `xp_added` and, per level gained, `levelled_up`, so vanilla's HUD, level-up sound, floating text and upgrade icon follow.
 - **Client side:** `main.spawn_gold` and `spawn_consumables` do nothing (with `spawn_loot` and garden fruit, nothing drops locally).
 - **Tested:** host + client + 3 fakes with an injected level-up and a crate dropped onto the host player: gold, XP and level match (host player level 1, XP 18 on both), the drop/attract/pickup/crate events arrive in the counts sent, materials on the ground match (50 at the cap). 12 slots with 5× enemies: no `ERROR:`, client about 600 FPS. Vanilla solo unchanged.
-- **Gaps:** once 50 materials lie on the ground, vanilla adds new value to a random existing one and grows it; that size change wasn't synced (fixed in 6f). Level-ups on clients run vanilla's `on_levelled_up`, which also adds +1 max HP to the client's copy of `RunData` and queues an upgrade in `_upgrades_to_process`; Step 7 replaces the client's run data from the host anyway.
+- **Gaps:** once 50 materials lie on the ground, vanilla adds new value to a random existing one and grows it; that size change wasn't synced (fixed in 6f). Level-ups on clients run vanilla's `on_levelled_up`, which also adds +1 max HP to the client's copy of `RunData` and queues an upgrade in `_upgrades_to_process`; Step 7 replaces the client's run data from the host anyway (resolved in 7a).
 - **Test driver pitfall:** a test that instances a pooled node itself must call `main.get_node_from_pool(pool_id, container)` once first. Vanilla's `add_node_to_pool` asserts that the pool exists, and the failed assert is a `SCRIPT ERROR` attributed to the mod's `main.gd`.
 
 - **6e: pause, dropouts and run end.** Pause (`ui/menus/ingame/pause_menu.gd` `pause()` shows the menu without `get_tree().paused`; `pause_on_focus_lost` is already off in a session), the host waiting for clients to load before the wave timer starts, players dropping out or quitting mid-wave (their player dies or stands still on the host; the host leaving ends the session), run won/lost events.
@@ -521,7 +521,7 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - `FAKES=5 WAVES=2` (7 players, the driver locks an item for player 5 in wave 1): in wave 3 host and client have the same digest and the same gear for all 7 players; weapon nodes in the scene match RunData; the client's buys (claw, lightning shiv) are on its player on the host; locked items carry over (the host locked the slingshot in shop 1 and bought it in shop 2); player 5's locked item survives.
   - `CLIENT_QUITS=2 WAVES=2` (the client's process ends mid-wave 1): the host shops alone, waves 2 and 3 start, player 1 is dead in each.
   - Default (one wave, the host leaves in wave 2) and `KILL_ALL=1` (run lost → lobby) unchanged. No `ERROR:`.
-- **Known gaps:** if a client's digest differs for the next wave's run, the host waits for its ack forever (the client sits in the shop overlay); at Start the lobby shows it, between waves nothing does. `ROUNDS=n` (the regression test for the stale wave-end state) needs a run that ends in the lobby; with 7e only a lost run does (`KILL_ALL=1`), which sends no wave-end state, so it runs again with 7f's run end.
+- **Known gaps** (both resolved, see the gap review after 7f): if a client's digest differs for the next wave's run, the host waits for its ack forever (the client sits in the shop overlay); at Start the lobby shows it, between waves nothing does. `ROUNDS=n` (the regression test for the stale wave-end state) needs a run that ends in the lobby; with 7e only a lost run does (`KILL_ALL=1`), which sends no wave-end state, so it runs again with 7f's run end.
 
 - **7f: run end.** On run won or lost, every peer shows the solo end screen for its own player. "Back" leaves the session for clients; the host returns to the lobby.
   - Vanilla's end-run path: `RunData.get_end_run_scene_path()` (`coop_end_run.tscn` / `end_run.tscn` by `is_coop_run`), so the solo view yields `end_run.tscn`.
@@ -544,45 +544,73 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - Default (one wave, then wave 2): unchanged. No `ERROR:`.
 - **Fix after the manual test (ticking in the upgrade screen):** vanilla's `WaveTimer.stop()` only pauses the timer and stops the tick timer, and its `_physics_process` restarts the tick while 0.1–6 s are left. A client's wave timer runs a little behind the host's (resynced only beyond 0.5 s), so the host's cleanup could pause it with time left, and the countdown ticked through the upgrades until the shop. In a session `clean_up_room` now also turns off the wave timer's physics process. Driver `TIMER_LAG=0.3` (the client's timer 0.3 s behind) reproduced it (`ticking=True` in the upgrades) and passes with the fix.
 
+**Gap review before Step 8** (every "gap", "not covered" and "temporary" note in Steps 1–7 checked against the code):
+- **Fixed now:**
+  - A next-wave digest mismatch froze everyone (the host waited for an ok ack, the client refused `_rpc_enter_wave`). During a run both sides now log a warning and go on with the host's run (`_enter_wave_if_synced` once every connected client acked, `_rpc_enter_wave` when `in_wave`); at Start a mismatch still keeps everyone in the lobby.
+  - A client that quit to the lobby could change its entry (character, weapon, ready) during the run; the host broadcast it, which reset the run id (and would have stalled a next-wave sync waiting for acks). The host now ignores entry changes while a run is in progress.
+  - Driver: the client's pause-and-click step set its next time after its yields, so with `CLIENT_QUITS=1` the quit ran a frame later and the resumed step touched the freed scene (a `SCRIPT ERROR` in the driver, not the mod).
+  - Tested: `FAIL_ACK=1 WAVES=2` (the driver turns the next wave's ack into a mismatch on the host and clears the client's run-ok flag): warning, wave 2 starts on both, wave 3 matches. `CLIENT_QUITS=1 WAVES=2` (the client quits wave 1 and changes its character in the lobby): ignored, the client is back in wave 2 as the Brawler, wave 3 matches. No `ERROR:`.
+- **Resolved earlier:** Step 4's temporary wave end and the lost "Continue" (Step 7, 7f); 6a's gaps (6e, Step 7); 6b's moved spawn markers and 6d's grown materials (6f); 6d's client-side level-up effects (7a); 7c/7d's temporary returns to the lobby (7e); the stale wave-end state test (7f).
+- **Still open:** moved into Step 8 (perf, tests, the quit client's lobby hint) and Step 9.
+
 ## Step 8: Polish
-- ~~Floating names above players.~~ Moved into 4c.
+Goal: a smoother experience with what exists: visuals, controls, menus, small bugs, performance and test coverage. New mechanics, settings and modes are in Step 9. Read [lan-coop-mod.md](lan-coop-mod.md) first (session flow, sync protocol, pitfalls); the driver and test setup are in Verification below.
+
+**Done early:** ~~floating names above players~~ (4c); ~~unlock everything in multiplayer~~ (after Step 3, see Step 1 "Unlocks"; the test save goes from 5 to 50 characters during a session, back to 5 after leaving, and the save file is not written).
+
+**In the wave (visuals and controls):**
 - Name overlap: 12 names overlap when players stand close together, for example on the spawn circle at wave start. If plain labels are too busy, fade names while they overlap, or shorten long names.
 - Off-screen teammates: clients' cameras follow only the local player (Step 5), so teammates can be off-screen. Show a small arrow at the screen edge in their colour, pointing towards them.
 - Remote players' colours applied to the outline (`CoopService.change_stylebox_for_player`).
-- Mod config knobs exposed in the manifest `config_schema`: the scaling knobs (now in `lan_coop.cfg` `[scaling]`, Step 5), port.
-- Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
-- ~~Unlock everything in multiplayer.~~ Done early (after Step 3), see Step 1 "Unlocks". Verified: the test save goes from 5 to 50 characters during a session, back to 5 after leaving, and the save file is not written.
-- Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
-- Avoid `push_error` from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
-- Spawn rate: `EntitySpawner` releases queued enemies at a fixed rate (1, or 2 with 110+ queued, every 3 physics frames, so 20–40/s), whatever the player count. Measure 12 slots at a late wave (15–20) with the normal multiplier: queue length and enemies alive. If the queue limits the count, release `ceil(n / 4)` per tick before raising enemy HP; watch host CPU and snapshot size.
+- Dead players: a skull image below the greyed-out name over their head (4c labels in the `main.gd` extension).
 - Mouse aim for keyboard players: vanilla coop disables it (`Utils.is_manual_aim`), but in a session every player has their own mouse. Allow it for the local player, and send the aim direction to the host (6a already sends `aim`/`manual_aim`).
+
+**Menus and lobby:**
 - Lobby layout (`ui/lobby.gd`):
   - Show the selected character's and the selected weapon's previews at the same time.
   - While an entry is hovered, its preview shows (as now); once nothing is hovered, the preview goes back to the current selection.
   - Lay out the character and weapon lists and their previews so both fit and display correctly.
   - Simplify vanilla's preview panels if possible: no character preview animation (it takes a lot of space), a smaller font for the character name, no repeated icon of the selected entry in the preview.
-- Dead players: a skull image below the greyed-out name over their head (4c labels in the `main.gd` extension).
-- Rejoin a run in progress after a lost connection (not after the player died). Today a disconnect kills the player (6e) and the slot only stays reserved until the wave ends (`run_in_progress`, `connected = false`). Instead: keep the disconnected player alive but idle (or protected) for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run state and drop it straight into the running wave (or the between-wave phase). A player who died stays out until the next wave as before.
-- Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option). Make the duration a config knob, with 0 = off.
+- Lobby hint for a client that quit to the lobby: it shows "A wave is in progress" until the host is back from its end screen, since it gets no end-of-run notice there (`LanNet.run_over` is only set in `main`). The host's wave-end state at the run's end, or the lobby broadcast, could carry it.
+- Default player name: if the player never set one, pick a random funny name from a predefined list that fits the game (potatoes, aliens, weapons, e.g. "Spud Lightyear", "Tater Tot", "Mashed Menace"). This replaces the current "Player123" in `net_config.gd`.
+- Controller text entry: an on-screen keyboard for the name and the join address. Until then, controller players keep the default name and join from the discovered games list.
+- End screen focus: vanilla's `end_run.gd` gives the focus to the (hidden in a session) New Run button after an inventory element is pressed; with a gamepad the focus is then lost until the mouse or a direction moves it.
+
+**Performance (milestone 6's perf pass):**
+- Snapshot size: above about 190 entities a snapshot exceeds one UDP packet and ENet fragments it (6b). Split it if that drops snapshots.
+- Spawn rate: `EntitySpawner` releases queued enemies at a fixed rate (1, or 2 with 110+ queued, every 3 physics frames, so 20–40/s), whatever the player count. Measure 12 slots at a late wave (15–20) with the normal multiplier: queue length and enemies alive. If the queue limits the count, release `ceil(n / 4)` per tick before raising enemy HP; watch host CPU and snapshot size.
+
+**Tests not done yet:**
+- Pets (same data-ref path as structures, 6b).
+- The 15 s load timeout (6e; clients on one PC load within 0.1 s).
+- Real separate machines, and more than two real players (the driver fills slots with fake lobby players that are never sent anything).
+- Keyboard-only and gamepad-only on host and client through lobby, wave, upgrades, shop and end screen.
+
+**Ongoing rule:** no `push_error` or script errors from mod code. Any `ERROR:` in the log that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch.
+
+## Step 9: Feature additions
+New mechanics, settings and modes beyond vanilla co-op on separate machines. Each needs a design decision first.
+- Mod config in the manifest `config_schema` (ModLoader's mod settings): the scaling knobs (now in `lan_coop.cfg` `[scaling]`, Step 5), the port, and the settings below that the host chooses.
 - Material sharing option: vanilla coop splits every material a player picks up round-robin over all players (1 material and 1 XP per unit, `main.gd` `on_gold_picked_up`, also the mod's copy for > 4 players); only the picker's own pickup effects apply. Add a lobby setting (host, synced like the scaling knobs) to keep materials and XP with the player who picked them up instead. Crates have their own vanilla option (`share_coop_loot`).
+- Upgrade countdown: with many players, waiting for everyone to pick their level-up upgrades and shop between waves gets tedious. Consider a countdown that starts once some players are done, or after a fixed time. When it runs out, the host marks the remaining players ready by picking their upgrades for them (e.g. the first or a random option) and pressing Go with their wave-end state. Make the duration a config knob, with 0 = off. (The host's waiting list is `LanNet._update_shop_waiting`, 7d.)
+- Rejoin a run in progress after a lost connection (not after the player died). Today a disconnect kills the player (6e) and it stays dead in later waves (7e). Instead: keep the disconnected player alive but idle (or protected) for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run state and drop it straight into the running wave (or the between-wave phase). A player who died stays out until the next wave as before. (Quitting to the lobby and rejoining with the next wave already works, 7e.)
 - Retry in a session: vanilla's retry screen (`retry_wave` option) restarts the wave from `start_wave_state`. A session skips it (7f); the host could offer the retry and send the start-of-wave run to everyone.
 - Endless runs: a lobby setting for the host instead of the shop's Endless button at wave 19 (hidden in a session, 7f).
 - Progress from LAN runs: `RunData.apply_run_won` (in `clean_up_room`) completes the character challenges and difficulty records for every player's character on every machine, and challenges completed in a session may be dropped when the own unlock lists are restored on leaving. Decide what a LAN run should count for, and credit only the own character on each machine.
-- End screen focus: vanilla's `end_run.gd` gives the focus to the (hidden in a session) New Run button after an inventory element is pressed; with a gamepad the focus is then lost until the mouse or a direction moves it.
-- Game modes (ideas, beyond co-op):
+- Game modes (beyond co-op):
   - Teams: players split into teams (lobby choice), each team sharing materials among itself, compared by a score at the end (kills, waves survived, damage).
   - Last man standing: the run goes on while players die off; the last player alive wins. Needs a decision on what the dead do (spectate), how waves scale as players drop out, and whether players can hurt each other.
 
 ---
 
 ## Milestones
-Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Step 7 (between-wave flow, run end) is complete; next is Step 8.
+Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4 (12 players in a wave, names over heads) and 5 (arena, enemy scaling, camera) also cover part of milestone 6. Step 7 (between-wave flow, run end) is complete; next is Step 8 (polish, including milestone 6's perf pass), then Step 9 (feature additions).
 1. **Docs.** Step 0, plus the `mod_main` fix.
 2. **Connect.** Menu button → host/join → lobby with names, characters, ready. Verify on 2 local instances.
 3. **Sync.** ~~Synced run start, then the host simulates and clients puppet players only, with no enemies~~ (6a).
 4. **Full wave.** ~~Enemies, projectiles, pickups, and wave end~~ (Step 6).
 5. **Between waves.** ~~Per-machine upgrades/shop and merge, so the loop runs for multiple waves~~ (7a–7e).
-6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), disconnect handling, perf pass.
+6. **Scale.** ~~12-player caps~~ (Step 4), ~~larger arena, enemy scaling~~ (Step 5), ~~names and health bars over heads~~ (4c), ~~disconnect handling~~ (6e, 7d, 7e; rejoining after a lost connection is in Step 9), perf pass (Step 8).
 
 ## Critical files to extend
 **Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd`, `singletons/focus_emulator_signal.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
@@ -596,7 +624,7 @@ Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4
   - Run with `-vvv` and watch `ModLoaderLog` output.
   - **Windows that are covered or unfocused stall on vsync** under Wayland/XWayland, which also stops the network poll. Turn vsync off (`display/window/vsync/use_vsync=false`) and tile the windows with `--position`.
   - Without `config/custom_user_dir_name`, instances use the real `~/.local/share/Brotato` save and log. For throwaway tests, copy the project and set a separate user dir name in the copy.
-- **Test setup used so far (Steps 2–4).** `tools/make_test_copy.sh <scratch>/game` builds it in one go (about 300 MB, a few seconds). The driver lives in the repo as `tools/lan_test_driver.gd` and is symlinked into the copy, so edits to it are tracked. It is not in the release zip.
+- **Test setup used so far (Steps 2–7).** `tools/make_test_copy.sh <scratch>/game` builds it in one go (about 300 MB, a few seconds). The driver lives in the repo as `tools/lan_test_driver.gd` and is symlinked into the copy, so edits to it are tracked. It is not in the release zip.
   - **Throwaway copy** (what the script does). `cp -a Decompiled <scratch>/game`, then remove its `.git`. Replace `mods-unpacked/Moolt-Lan_Coop` with an **absolute** symlink to `brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop`, and symlink `tools/lan_test_driver.gd` as `lan_test_driver.gd`. In the copy's `project.godot`:
     - `config/custom_user_dir_name="BrotatoLanTest"` (under `[application]`)
     - `window/vsync/use_vsync=false` (under `[display]`)
@@ -613,6 +641,14 @@ Status: milestones 1–5 are done (3 and 4 with Step 6, 5 with Step 7e). Steps 4
     - in the wave (Step 4): `get_tree().current_scene` is `main`; read `_players`, `_players_ui`, `_wave_timer`, `get_node("%LifeContainerP12")`; move the host with `Input.action_press("button_move_right_7")`; kill a player with `_players[i].die()`; open/close the pause menu with `_pause_menu.pause(0)` / `unpause()`; Quit with `_pause_menu.get_node("Menus/MenuConfirm")._on_ConfirmButton_pressed()`
     - role `solo`: `RunBuilder.build_run` with one entry, then `set_coop_run(false)` and `change_scene(MenuData.game_scene)`, to check that vanilla solo play still works without a session
     - the game starts in a splash scene (`res://pause.tscn`); wait for the title screen before counting time
+    - between waves (Step 7), outside the step script, every frame: `pick_upgrades` (in the solo upgrades UI: first upgrade, or take the crate item on the host and recycle it on the client; logs the picked upgrade's stat for every player from the solo view's stash and the coop run), `shop_actions` (buy one item, lock another, Go; the client goes Back and Go again; the host is last), `end_screen_actions` (log the end screen, Exit: the client first). `solo_view_test` (on `LanNet.wave_end_ready`) enters and leaves the solo view once and checks the run is unchanged. `log_run_check` prints every player's gear, the scene's weapon nodes and the digest; compare host and client.
+    - **Environment options** (combine as needed; the header lists them too): `FAKES=n` fake players (the first an Engineer); `ENEMY_MULT=x`; `KILL_ALL=1` everyone dies in wave 1 (run lost); `WAVES=n` n waves with upgrades and shop, then both check wave n+1; `ROUNDS=n` n runs in one session (needs a run that ends, e.g. with `KILL_ALL=1`); `START_WAVE=n` the run starts at wave n (20: run won); `CLIENT_QUITS=1` the client quits the wave from its pause menu and changes its character in the lobby (ignored), `=2` its process exits mid-wave; `SHOP_QUIT=1` the client quits from the shop; `FAIL_ACK=1` the next wave's run counts as a digest mismatch on both sides; `TIMER_LAG=s` the client's wave timer s seconds behind; `FAKE_SAVED_RUN=1` a stand-in "Continue" run in memory before the session (never saved).
+    - Regression set used for Step 7: default, `KILL_ALL=1`, `FAKES=5 WAVES=2`, `CLIENT_QUITS=1 WAVES=2`, `CLIENT_QUITS=2 WAVES=2`, `SHOP_QUIT=1`, `START_WAVE=20 FAKE_SAVED_RUN=1`, `ROUNDS=2 KILL_ALL=1`, `FAIL_ACK=1 WAVES=2`, `TIMER_LAG=0.3`; each about 1–2 min. A bug is first reproduced with a new option without the fix (e.g. `git stash` the mod change), then checked with it.
+  - **Runner script.** Keep a small script in the scratchpad (e.g. `run2.sh`) that checks `game/project.godot` exists, exports `SHOT_DIR`, starts `host` and 1 s later `join` with `nohup`, and `wait`s. Call it by absolute path.
+  - **Test infra pitfalls:**
+    - The session scratchpad can be emptied between sessions. Godot started with `--path` to a missing copy opens the editor on the last project, `Decompiled/`, which may re-save vanilla files; rebuild the copy first (`tools/make_test_copy.sh`) and check `git status` in `Decompiled/` afterwards.
+    - Stopping test instances: list the PIDs in one command (`ps -eo pid,args | grep "[G]odot_v3.7-dev1_x11.64 --path game"`) and kill them in a separate one. In the same command line as the game's own invocation the pattern matches the shell itself, which then kills itself.
+    - `rm` of a glob after a `cd` in the same command is refused by Claude Code's safety check (the whole command doesn't run); screenshots overwrite by name, so there is no need to clear them.
   - **Log check.** `grep -a "SCRIPT\|ERROR"` the logs, then filter out the engine shutdown errors (`_first != nullptr`, resources/MemoryPool still in use, ObjectDB leaks). `--disable-mods` shows vanilla prints these too. `WARNING: Node './Attach' was modified from inside an instance` on wave load is vanilla as well. A stray background instance from an earlier run can mix into results, so check `ps` first.
   - **Manual test by the user.** Two windows: `--resolution 1280x720 --position 0,0` and `--position 1280,0`, with no role argument (the driver stays idle), started with `nohup`. Commit only after the user approves.
 - **Per milestone:**
