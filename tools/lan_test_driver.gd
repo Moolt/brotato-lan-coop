@@ -14,6 +14,8 @@ extends Node
 #         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, or stays and
 #         logs the host's run verdict, follows the host back to the lobby and logs the
 #         wave-end state it received
+#   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
+#         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
@@ -26,6 +28,8 @@ var next_t: = 0.0
 var start_pos = null
 var started: = false
 var run_states_logged: = false
+# ROUNDS=n: after the run ends in the lobby, the host starts the next run in the same session.
+var round_nr: = 1
 
 
 func _ready() -> void :
@@ -361,6 +365,12 @@ func _host_step() -> void :
 			log_wave_end("host_wave_end")
 			next_t = t + 2.0
 		13:
+			if next_round():
+				# Start again (step 4) half a second later.
+				step = 3
+				t = 9.5
+				next_t = 10.0
+				return
 			net.leave()
 			get_tree().quit()
 
@@ -493,6 +503,16 @@ func shop_actions(delta: float) -> void :
 		shop_step = 3
 
 
+func next_round() -> bool:
+	var rounds = int(OS.get_environment("ROUNDS")) if OS.get_environment("ROUNDS") != "" else 1
+	if round_nr >= rounds:
+		return false
+	round_nr += 1
+	run_states_logged = false
+	print("[TEST] ", role, " round ", round_nr)
+	return true
+
+
 func log_wave_end(tag: String) -> void :
 	var net = get_node("/root/LanNet")
 	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
@@ -593,6 +613,12 @@ func _client_step() -> void :
 		11:
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")
+			if next_round():
+				# Back to the in-wave steps (4) once the host's next run is up.
+				step = 3
+				t = 10.0
+				next_t = 14.0
+				return
 			get_tree().quit()
 
 

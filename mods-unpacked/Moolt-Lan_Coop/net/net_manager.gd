@@ -594,6 +594,7 @@ remote func _rpc_enter_wave(run_id) -> void :
 		return
 	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or not _received_run_ok or _is_in_wave_scene():
 		return
+	_reset_between_waves()
 	_fill_coop_players()
 	ModLoaderLog.info("Run %d: loading the wave" % run_id, NetProtocol.MOD_ID)
 	var _e = get_tree().change_scene(MenuData.game_scene)
@@ -775,6 +776,7 @@ func _enter_wave_if_synced() -> void :
 		return
 	_start_requested = false
 	set_run_in_progress(true)
+	_reset_between_waves()
 	_left_run_peers = {}
 	_fill_coop_players()
 	for entry in _get_connected_clients():
@@ -795,6 +797,11 @@ func _apply_wave_end_if_ready() -> void :
 		return
 	var incoming: = _incoming_wave_end
 	_incoming_wave_end = {}
+	# Applying would replace the solo run with the coop run. A state for this wave can't come
+	# after the solo view started (main waits for it), so this one is stale.
+	if solo_view.active:
+		ModLoaderLog.warning("Dropped a wave-end state (wave %d) that came during the solo view" % incoming.wave, NetProtocol.MOD_ID)
+		return
 	run_state = incoming.state
 	var ok: bool = RunBuilder.apply_run(incoming.state) and RunBuilder.digest() == incoming.digest and RunBuilder.is_valid_pending(incoming.pending)
 	wave_end_state = {"wave": incoming.wave, "pending": incoming.pending if ok else [], "ok": ok}
@@ -852,6 +859,19 @@ func _on_all_shops_done() -> void :
 	ModLoaderLog.info("Everyone is done shopping after wave %d" % wave_end_state.get("wave", - 1), NetProtocol.MOD_ID)
 	leave_solo_view()
 	var _e = get_tree().change_scene(MenuData.title_screen_scene)
+
+
+# A wave starts: the previous wave's end and the between-waves phase are over, so main's
+# end-wave code waits for this wave's state rather than taking a stale one for the same wave
+# number (a new run after going back to the lobby starts at wave 1 again).
+func _reset_between_waves() -> void :
+	wave_end_state = {}
+	_incoming_wave_end = {}
+	_wave_end_acks = {}
+	between_waves = false
+	shop_done = false
+	shop_waiting_names = []
+	_shop_runs = {}
 
 
 func _is_in_shop_scene() -> bool:
@@ -977,14 +997,8 @@ func _end_session(reason: String) -> void :
 	_received_run_ok = false
 	_run_acks = {}
 	_start_requested = false
-	wave_end_state = {}
-	_incoming_wave_end = {}
-	_wave_end_acks = {}
+	_reset_between_waves()
 	solo_view.discard()
-	between_waves = false
-	shop_done = false
-	shop_waiting_names = []
-	_shop_runs = {}
 	_left_run_peers = {}
 	CoopService.clear_coop_players()
 
