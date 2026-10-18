@@ -11,7 +11,7 @@ A [Brotato](https://store.steampowered.com/app/1942280/Brotato/) mod that adds L
 
 ## Install
 
-1. Run `./build.sh`. It creates `dist/Moolt-Lan_Coop.zip`.
+1. Download `Moolt-Lan_Coop.zip` from the [latest release](https://github.com/Moolt/brotato-lan-coop/releases/latest), or build it yourself with `./build.sh` (creates `dist/Moolt-Lan_Coop.zip`).
 2. Copy the zip into the `mods/` folder next to the Brotato executable (create the folder if it doesn't exist).
 3. Start the game.
 
@@ -35,6 +35,13 @@ ln -s ../../brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop mods-unpacked/Moolt-La
 ln -s ../brotato-lan-coop/CLAUDE.md CLAUDE.md
 ln -s ../brotato-lan-coop/docs docs
 ```
+
+### Releasing
+
+1. Bump `version_number` in `mods-unpacked/Moolt-Lan_Coop/manifest.json` and commit.
+2. Tag and push: `git tag v1.0.0 && git push origin v1.0.0` (the tag must match the manifest version).
+
+The `Release` workflow builds the zip and publishes a GitHub release with it attached. The `Build` workflow also builds the zip on every push to `master` and on pull requests; it is downloadable from the run's Artifacts section.
 
 ## License
 
