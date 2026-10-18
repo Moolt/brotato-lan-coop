@@ -482,7 +482,11 @@ remote func _rpc_hello(hello) -> void :
 		_kick_peer_later(sender)
 		return
 
-	var entry: = NetProtocol.new_player_entry(sender, players.size(), NetProtocol.sanitize_name(hello.name))
+	var taken_names: = []
+	for other in players:
+		taken_names.append(other.name)
+	var player_name: = NetProtocol.make_unique_name(NetProtocol.sanitize_name(hello.name), taken_names)
+	var entry: = NetProtocol.new_player_entry(sender, players.size(), player_name)
 	players.append(entry)
 	ModLoaderLog.info("%s joined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
 	rpc_id(sender, "_rpc_welcome", entry.player_index)

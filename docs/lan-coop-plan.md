@@ -53,11 +53,11 @@ Visuals, controls and menus with what exists (Step 8). Done so far:
 - [x] Mouse aim for keyboard players, remote aim point on the host (8a, protocol 15).
 - [x] Lobby layout: both previews, starting items with popups, grids fill the height (8b).
 - [x] End screen player dropdown: any player's stats, weapons and items, own player first.
+- [x] Default player names: a random potato name (`net_config.gd` `DEFAULT_NAMES`); the host appends " 2", " 3", … to a name already in the lobby.
 
 Open:
 - [ ] **Name overlap.** 12 names overlap when players stand close, e.g. on the spawn circle at wave start. Options: fade names while they overlap, or shorten long names.
 - [ ] **Lobby hint for a client that quit to the lobby.** It shows "A wave is in progress" until the host is back from its end screen, because it gets no end-of-run notice (`LanNet.run_over` is only set in `main`). The host's wave-end state at the run's end, or the lobby broadcast, could carry it.
-- [ ] **Default player name.** If the player never set one, pick a random funny name fitting the game (potatoes, aliens, weapons: "Spud Lightyear", "Tater Tot", "Mashed Menace") instead of "Player123" in `net_config.gd`.
 - [ ] **Controller text entry.** An on-screen keyboard for the name and the join address. Until then controller players keep the default name and join from the discovered games list.
 - [ ] **End screen sorted by kills.** The player dropdown lists players by index. Vanilla only counts kills globally (`ProgressData` `enemies_killed`, `main.gd`), not per player. Count kills per player on the host (the killer's player index from the hit), carry them in the run state, then sort the dropdown by them and show the count.
 - [ ] **End screen focus.** Vanilla `end_run.gd` gives the focus to the New Run button (hidden in a session) after an inventory element is pressed; with a gamepad the focus is lost until the mouse or a direction moves it.

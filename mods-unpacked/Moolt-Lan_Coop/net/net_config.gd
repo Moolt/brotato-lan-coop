@@ -9,6 +9,14 @@ const SECTION: = "lan_coop"
 const SCALING_SECTION: = "scaling"
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 
+# Picked at random until the player sets a name (at most 14 characters, so the host's " 2"
+# suffix for a taken name fits NetProtocol.MAX_NAME_LENGTH).
+const DEFAULT_NAMES: = [
+	"Spud Lightyear", "Tater Tot", "Mashed Menace", "Couch Potato", "Hash Brown", "Sir Fries",
+	"Baked Brawler", "Spudnik", "Jacket Potato", "Captain Mash", "Wedge Wizard", "Chip Shot",
+	"Alien Snack", "Peel Deal", "Gravy Train", "Spud Bud",
+]
+
 var player_name: = ""
 var last_ip: = "127.0.0.1"
 var port: = NetProtocol.DEFAULT_PORT
@@ -28,10 +36,11 @@ func load_config() -> void :
 		for key in scaling:
 			scaling[key] = clamp(float(file.get_value(SCALING_SECTION, key, scaling[key])), 0.0, NetProtocol.MAX_SCALING_VALUE)
 
-	if player_name.empty():
+	# Earlier versions picked "Player" and three digits.
+	if player_name.empty() or _is_old_default_name(player_name):
 		var rng: = RandomNumberGenerator.new()
 		rng.randomize()
-		player_name = "Player" + str(rng.randi_range(100, 999))
+		player_name = DEFAULT_NAMES[rng.randi_range(0, DEFAULT_NAMES.size() - 1)]
 		save_config()
 
 	if port <= 0 or port > 65535:
@@ -48,3 +57,7 @@ func save_config() -> void :
 	for key in scaling:
 		file.set_value(SCALING_SECTION, key, scaling[key])
 	var _err = file.save(CONFIG_PATH)
+
+
+static func _is_old_default_name(name: String) -> bool:
+	return name.length() == 9 and name.begins_with("Player") and name.right(6).is_valid_integer()

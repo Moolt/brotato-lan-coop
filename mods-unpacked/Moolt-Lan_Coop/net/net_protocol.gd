@@ -110,6 +110,20 @@ static func sanitize_name(raw_name) -> String:
 	return clean
 
 
+# The name, or with " 2", " 3", ... appended if a name in taken_names has it already (any case).
+static func make_unique_name(player_name: String, taken_names: Array) -> String:
+	var taken: = []
+	for taken_name in taken_names:
+		taken.append(str(taken_name).to_lower())
+	var result: = player_name
+	var number: = 2
+	while taken.has(result.to_lower()):
+		var suffix: = " " + str(number)
+		result = player_name.left(MAX_NAME_LENGTH - suffix.length()).strip_edges() + suffix
+		number += 1
+	return result
+
+
 static func new_player_entry(peer_id: int, player_index: int, player_name: String) -> Dictionary:
 	return {
 		"peer_id": peer_id, 

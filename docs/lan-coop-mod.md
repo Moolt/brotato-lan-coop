@@ -8,7 +8,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `mod_main.gd` | Installs the extensions (one line each), registers translations, adds `/root/LanNet` deferred. |
 | `net/net_manager.gd` | `LanNet`: ENet peer, handshake, lobby state, run sync (Start and each next wave), wave-end state, shop waiting and merge, all RPCs, session flags. |
 | `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 15, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
-| `net/net_config.gd` | `user://lan_coop.cfg`: name, last IP, port, last zone/difficulty, `[scaling]` knobs. |
+| `net/net_config.gd` | `user://lan_coop.cfg`: name, last IP, port, last zone/difficulty, `[scaling]` knobs. Without a name (or with an old "Player123" default) it picks one of `DEFAULT_NAMES`. |
 | `net/net_discovery.gd` | UDP beacon (host) and listener (join page). |
 | `net/lobby_rules.gd` | Character/weapon/zone/difficulty lookup and validation. |
 | `net/run_builder.gd` | Builds the run from the lobby (host), serializes it as JSON via the save loader, applies it, digests it; pending level-ups/crates (`pack_pending`), solo shop results (`parse_solo_run`, `merge_solo_run`), vanilla's once-for-all Go parts (`apply_go`). |
@@ -22,7 +22,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `tools/lan_test_driver.gd` (repo root, not in the mod) | Test autoload for the throwaway game copy; see [testing.md](testing.md). |
 
 ## Session flow
-1. **Host / join** (`LanNet.host()` / `join()`): sets `active`, `is_host`/`is_client`, blocks saves (`ProgressData.lan_coop_saves_blocked`), unlocks everything (own unlock lists restored on leave), switches to the solo mouse rule. Client sends `_rpc_hello`; host validates (protocol, game version, DLCs, full, in progress) and answers `_rpc_welcome(player_index)` or `_rpc_rejected(reason)`.
+1. **Host / join** (`LanNet.host()` / `join()`): sets `active`, `is_host`/`is_client`, blocks saves (`ProgressData.lan_coop_saves_blocked`), unlocks everything (own unlock lists restored on leave), switches to the solo mouse rule. Client sends `_rpc_hello`; host validates (protocol, game version, DLCs, full, in progress), makes the name unique in the lobby (`NetProtocol.make_unique_name`: " 2", " 3", … appended, any case) and answers `_rpc_welcome(player_index)` or `_rpc_rejected(reason)`.
 2. **Lobby**: `LanNet.players` (entries from `NetProtocol.new_player_entry`, sorted by `player_index`; the host is peer 1 and index 0) and `lobby_settings` (`zone`, `difficulty`, `run_id`, `in_wave`, `scaling`) are broadcast with `_rpc_lobby_state` on every change. Clients change their own entry with `_rpc_update_player`.
 3. **Start** (`start_run`): host builds the run (`RunBuilder.build_run`), serializes it, applies its own copy from the same JSON, sends `_rpc_run_state(run_id, json, digest)`; clients apply and ack. Any lobby change makes the run stale (`run_id` = 0).
 4. **Wave**: once every client acked, the host sets `run_in_progress` (`lobby_settings.in_wave`), fills `CoopService.connected_players` (own device 7 keyboard / 6 gamepad, others -1), sends `_rpc_enter_wave(run_id)` and everyone loads `main.tscn`. The `main.gd` extension adds `LanWaveSync` in `_ready`.
