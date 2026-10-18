@@ -830,19 +830,53 @@ func _lobby_step() -> void :
 			next_t = t + 1.5
 		3:
 			var lobby = m.get_node("LanLobby")
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			lobby._on_CharacterGrid_element_hovered(first_element(lobby._character_grid, 4))
 			next_t = t + 0.5
 		4:
 			shot("lobby_character_hovered")
 			var lobby = m.get_node("LanLobby")
-			lobby._on_CharacterGrid_element_unhovered(lobby._hovered_character)
-			lobby._on_WeaponGrid_element_hovered(first_element(lobby._weapon_grid, 2))
+			lobby._on_StartingItems_element_shown(lobby._starting_items.get_child(0))
 			next_t = t + 0.5
 		5:
-			shot("lobby_weapon_hovered")
+			shot("lobby_starting_item_popup")
 			var lobby = m.get_node("LanLobby")
-			lobby._on_WeaponGrid_element_unhovered(lobby._hovered_weapon)
+			var vb = lobby._character_panel.get_node("MarginContainer/VBoxContainer")
+			print("[TEST] lobby sizes holder=", lobby._character_panel.get_parent().rect_size, " panel=", lobby._character_panel.rect_size, " min=", lobby._character_panel.get_combined_minimum_size(), " items=", lobby._starting_items.get_combined_minimum_size(), " children=", vb.get_children().size())
+			for c in vb.get_children():
+				print("[TEST]   ", c.name, " ", c.rect_size, " min=", c.get_combined_minimum_size())
+			print("[TEST] lobby bottoms ready=", lobby._ready_button.get_global_rect().end.y, " start=", lobby._start_button.get_global_rect().end.y, " character=", lobby._character_panel.get_global_rect().end.y, " weapon=", lobby._item_panel.get_global_rect().end.y, "/", lobby._item_panel.get_parent().get_global_rect().end.y)
+			lobby._on_StartingItems_element_unhovered(lobby._starting_items.get_child(0))
+			lobby._hovered_character = null
+			lobby._on_WeaponGrid_element_hovered(first_element(lobby._weapon_grid, 2))
 			next_t = t + 0.5
 		6:
+			shot("lobby_weapon_hovered")
+			var lobby = m.get_node("LanLobby")
+			lobby._hovered_weapon = null
+			lobby._update_previews()
+			next_t = t + 0.5
+		7:
 			shot("lobby_nothing_hovered")
+			# Keyboard: focus a character, then its first starting item; the preview keeps it.
+			Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+			var lobby = m.get_node("LanLobby")
+			for e in lobby._character_grid.get_children():
+				if e.item != null and e.item.my_id == "character_mage":
+					e.grab_focus()
+			next_t = t + 0.5
+		8:
+			var lobby = m.get_node("LanLobby")
+			print("[TEST] lobby focused character=", lobby._focused_character.item.my_id, " items=", lobby._starting_items.get_child_count())
+			lobby._starting_items.get_child(0).grab_focus()
+			next_t = t + 0.5
+		9:
+			var lobby = m.get_node("LanLobby")
+			print("[TEST] lobby after item focus: character=", lobby._focused_character.item.my_id if lobby._focused_character != null else "-", " preview=", lobby._starting_items_character.my_id if lobby._starting_items_character != null else "-", " popup=", lobby._starting_item_popup.visible)
+			shot("lobby_starting_item_focused")
+			lobby._ready_button.grab_focus()
+			next_t = t + 0.5
+		10:
+			var lobby = m.get_node("LanLobby")
+			print("[TEST] lobby after ready focus: character=", lobby._focused_character, " preview=", lobby._starting_items_character.my_id if lobby._starting_items_character != null else "-", " popup=", lobby._starting_item_popup.visible)
 			get_tree().quit()

@@ -4,10 +4,13 @@ extends Control
 # Left: every player (colour, character, name, weapon, ready), the run settings (host: zone and
 # difficulty pickers, clients: a summary), Leave and the host's Start. Right: the local player's
 # character and starting weapon grids side by side, each with its preview below, and the Ready
-# button. The grids reuse vanilla's Inventory (inventory.tscn). Both previews are vanilla's small
-# item panel (item_panel_ui.tscn) without the icon the grid already shows; the character one
-# lists the starting items below. A preview shows the hovered entry, else (keyboard and gamepad,
-# while the cursor is hidden) the focused one, else the player's pick.
+# button; the grids grow so the previews and Ready end level with Start. The grids reuse
+# vanilla's Inventory (inventory.tscn). Both previews are vanilla's small item panel
+# (item_panel_ui.tscn) without the icon the grid already shows; the character one lists the
+# starting weapons and items below, with vanilla's item popup (item_popup.tscn) on hover and
+# focus. A preview shows, with the cursor visible, the last hovered entry while the mouse stays
+# in that grid or its preview; with the cursor hidden (keyboard, gamepad), the focused entry
+# (kept while the focus is on its starting items); else the player's pick.
 # Picks are sent to the host (LanNet.set_local_player_info), which validates them and
 # re-broadcasts the lobby. Leaving (button or ui_cancel) ends the session; the title screen
 # menus then switch back through LanNet.session_ended.
@@ -19,6 +22,7 @@ const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.g
 const INVENTORY_SCENE = preload("res://ui/menus/shop/inventory.tscn")
 const CHARACTER_PANEL_SCENE = preload("res://ui/menus/ingame/character_panel_ui.tscn")
 const ITEM_PANEL_SCENE = preload("res://ui/menus/ingame/item_panel_ui.tscn")
+const ITEM_POPUP_SCENE = preload("res://ui/menus/shop/item_popup.tscn")
 const RANDOM_ICON = preload("res://items/global/random_icon.png")
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
 const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
@@ -26,12 +30,16 @@ const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme
 const WIDTH: = 1800.0
 const LEFT_WIDTH: = 620.0
 const CHARACTER_COLUMN_WIDTH: = 760.0
-const GRID_HEIGHT: = 250.0
+const GRID_MIN_HEIGHT: = 150.0
 const PREVIEW_HEIGHT: = 440.0
+const READY_HEIGHT: = 72.0
+const COLUMN_SEPARATION: = 12.0
 const ELEMENT_SIZE: = Vector2(72, 72)
 const STARTING_ITEM_SIZE: = Vector2(56, 56)
+const STARTING_ITEM_COLUMNS: = 11
 # Name and category of a preview; without the icon box (96 px) the header would collapse.
 const PREVIEW_HEADER_HEIGHT: = 64.0
+const PREVIEW_DETAILS_MIN_HEIGHT: = 100.0
 const ROW_ICON_SIZE: = Vector2(40, 40)
 const SELECTED_MARKER_NAME: = "LanSelectedMarker"
 
@@ -45,17 +53,24 @@ var _difficulty_option: OptionButton
 var _settings_label: Label
 var _hint_label: Label
 var _start_button: Button
+var _character_scroll: ScrollContainer
 var _character_grid: GridContainer
+var _weapon_area: VBoxContainer
 var _weapon_grid: GridContainer
 var _weapon_scroll: ScrollContainer
 var _weapon_label: Label
 var _no_choice_label: Label
 var _character_panel: Control
-var _starting_items_row: HBoxContainer
+var _starting_items: GridContainer
+var _starting_item_popup: Control
+# Character whose starting items _starting_items holds (refilled only when it changes, so a
+# focused starting item survives lobby updates).
+var _starting_items_character: ItemParentData = null
 var _item_panel: Control
 var _ready_button: Button
 
-# Grid elements under the mouse and with the focus, per grid (null if none).
+# Grid elements last hovered (cleared when the mouse leaves the grid and its preview) and with
+# the focus, per grid (null if none).
 var _hovered_character = null
 var _focused_character = null
 var _hovered_weapon = null
@@ -94,6 +109,8 @@ func _input(event: InputEvent) -> void :
 	if (Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE) != _mouse_visible:
 		# LanNet shows or hides the cursor in its own _input; update once it has.
 		call_deferred("_update_previews")
+	if event is InputEventMouseMotion:
+		_clear_hover_outside()
 	if event.is_action_pressed("ui_cancel"):
 		_cancel_armed = not (_zone_option.get_popup().visible or _difficulty_option.get_popup().visible)
 	elif event.is_action_released("ui_cancel") and _cancel_armed:
@@ -168,94 +185,95 @@ func _build_ui() -> void :
 	_e = _start_button.connect("pressed", self, "_on_StartButton_pressed")
 	buttons.add_child(_start_button)
 
-	# Right: the local player's picks. Top: the character and weapon grids; below each, its
-	# preview; Ready under the weapon preview.
-	var right: = VBoxContainer.new()
+	# Right: the local player's picks, two columns. Character: grid, preview. Weapon: grid,
+	# preview, Ready. The grids take the height the left side leaves, so the previews and Ready
+	# end level with Start.
+	var right: = HBoxContainer.new()
 	right.size_flags_horizontal = SIZE_EXPAND_FILL
-	right.add_constant_override("separation", 12)
+	right.add_constant_override("separation", 30)
 	columns.add_child(right)
 
-	var grids: = HBoxContainer.new()
-	grids.add_constant_override("separation", 30)
-	right.add_child(grids)
-
-	var character_column: = VBoxContainer.new()
+	var character_column: = _new_column(right)
 	character_column.rect_min_size = Vector2(CHARACTER_COLUMN_WIDTH, 0)
-	character_column.add_constant_override("separation", 12)
-	grids.add_child(character_column)
-
 	var character_label: = Label.new()
 	character_label.text = "LAN_CHOOSE_CHARACTER"
 	character_column.add_child(character_label)
 
-	var character_scroll: = ScrollContainer.new()
-	character_scroll.rect_min_size = Vector2(0, GRID_HEIGHT)
-	character_scroll.scroll_horizontal_enabled = false
-	character_scroll.follow_focus = true
-	character_column.add_child(character_scroll)
+	_character_scroll = ScrollContainer.new()
+	_character_scroll.rect_min_size = Vector2(0, GRID_MIN_HEIGHT)
+	_character_scroll.size_flags_vertical = SIZE_EXPAND_FILL
+	_character_scroll.scroll_horizontal_enabled = false
+	_character_scroll.follow_focus = true
+	character_column.add_child(_character_scroll)
 	_character_grid = _new_inventory(9)
-	character_scroll.add_child(_character_grid)
+	_character_scroll.add_child(_character_grid)
 	_e = _character_grid.connect("element_pressed", self, "_on_CharacterGrid_element_pressed")
 	_e = _character_grid.connect("element_focused", self, "_on_CharacterGrid_element_focused")
 	_e = _character_grid.connect("element_unfocused", self, "_on_CharacterGrid_element_unfocused")
 	_e = _character_grid.connect("element_hovered", self, "_on_CharacterGrid_element_hovered")
-	_e = _character_grid.connect("element_unhovered", self, "_on_CharacterGrid_element_unhovered")
 
-	var weapon_column: = VBoxContainer.new()
+	_character_panel = _new_preview_panel(character_column, Vector2(CHARACTER_COLUMN_WIDTH, PREVIEW_HEIGHT))
+	# The starting weapons and items, with vanilla's item popup on hover and focus.
+	_starting_items = _new_inventory(STARTING_ITEM_COLUMNS)
+	_starting_items.element_size = STARTING_ITEM_SIZE
+	_character_panel.get_node("MarginContainer/VBoxContainer").add_child(_starting_items)
+	_e = _starting_items.connect("element_hovered", self, "_on_StartingItems_element_shown")
+	_e = _starting_items.connect("element_focused", self, "_on_StartingItems_element_shown")
+	_e = _starting_items.connect("element_pressed", self, "_on_StartingItems_element_shown")
+	_e = _starting_items.connect("element_unhovered", self, "_on_StartingItems_element_unhovered")
+	_e = _starting_items.connect("element_unfocused", self, "_on_StartingItems_element_unfocused")
+
+	var weapon_column: = _new_column(right)
 	weapon_column.size_flags_horizontal = SIZE_EXPAND_FILL
-	weapon_column.add_constant_override("separation", 12)
-	grids.add_child(weapon_column)
-
 	_weapon_label = Label.new()
 	_weapon_label.text = "LAN_CHOOSE_WEAPON"
 	weapon_column.add_child(_weapon_label)
 
-	# Fixed height, whether the grid or the no-choice text shows, so the previews never move.
-	var weapon_area: = VBoxContainer.new()
-	weapon_area.rect_min_size = Vector2(0, GRID_HEIGHT)
-	weapon_column.add_child(weapon_area)
+	# The grid or the no-choice text, in the same space, so the preview never moves.
+	_weapon_area = VBoxContainer.new()
+	_weapon_area.rect_min_size = Vector2(0, GRID_MIN_HEIGHT)
+	_weapon_area.size_flags_vertical = SIZE_EXPAND_FILL
+	weapon_column.add_child(_weapon_area)
 	_weapon_scroll = ScrollContainer.new()
 	_weapon_scroll.size_flags_vertical = SIZE_EXPAND_FILL
 	_weapon_scroll.scroll_horizontal_enabled = false
 	_weapon_scroll.follow_focus = true
-	weapon_area.add_child(_weapon_scroll)
+	_weapon_area.add_child(_weapon_scroll)
 	_weapon_grid = _new_inventory(4)
 	_weapon_scroll.add_child(_weapon_grid)
 	_e = _weapon_grid.connect("element_pressed", self, "_on_WeaponGrid_element_pressed")
 	_e = _weapon_grid.connect("element_focused", self, "_on_WeaponGrid_element_focused")
 	_e = _weapon_grid.connect("element_unfocused", self, "_on_WeaponGrid_element_unfocused")
 	_e = _weapon_grid.connect("element_hovered", self, "_on_WeaponGrid_element_hovered")
-	_e = _weapon_grid.connect("element_unhovered", self, "_on_WeaponGrid_element_unhovered")
 
 	_no_choice_label = Label.new()
 	_no_choice_label.autowrap = true
 	_no_choice_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
-	weapon_area.add_child(_no_choice_label)
+	_weapon_area.add_child(_no_choice_label)
 
-	var previews: = HBoxContainer.new()
-	previews.add_constant_override("separation", 30)
-	right.add_child(previews)
-
-	_character_panel = _new_preview_panel(previews, Vector2(CHARACTER_COLUMN_WIDTH, PREVIEW_HEIGHT))
-	_starting_items_row = HBoxContainer.new()
-	_starting_items_row.add_constant_override("separation", 8)
-	_character_panel.get_node("MarginContainer/VBoxContainer").add_child(_starting_items_row)
-
-	var weapon_preview_column: = VBoxContainer.new()
-	weapon_preview_column.size_flags_horizontal = SIZE_EXPAND_FILL
-	weapon_preview_column.add_constant_override("separation", 12)
-	previews.add_child(weapon_preview_column)
-	_item_panel = _new_preview_panel(weapon_preview_column, Vector2(0, 0))
-	_item_panel.get_parent().size_flags_vertical = SIZE_EXPAND_FILL
-
-	_ready_button = UiKit.new_button("LAN_READY", Vector2(0, 72))
+	# Preview and Ready together as tall as the character preview.
+	_item_panel = _new_preview_panel(weapon_column, Vector2(0, PREVIEW_HEIGHT - READY_HEIGHT - COLUMN_SEPARATION))
+	_ready_button = UiKit.new_button("LAN_READY", Vector2(0, READY_HEIGHT))
 	_e = _ready_button.connect("pressed", self, "_on_ReadyButton_pressed")
-	weapon_preview_column.add_child(_ready_button)
+	weapon_column.add_child(_ready_button)
+
+	# Last child, so it draws over the page.
+	_starting_item_popup = ITEM_POPUP_SCENE.instance()
+	add_child(_starting_item_popup)
+	_starting_item_popup.hide()
+
+
+func _new_column(parent: Control) -> VBoxContainer:
+	var column: = VBoxContainer.new()
+	column.add_constant_override("separation", COLUMN_SEPARATION)
+	parent.add_child(column)
+	return column
 
 
 # Vanilla's small item panel in a holder of a fixed size (the panel hides while there is nothing
 # to show), without the icon box: the grid above shows the icon already. The description scrolls
-# within the panel (expand_indefinitely, read in the description's _ready).
+# within the panel (expand_indefinitely, read in the description's _ready) and takes the height
+# the panel leaves, instead of vanilla's fixed one.
 func _new_preview_panel(parent: Control, min_size: Vector2) -> Control:
 	var holder: = Control.new()
 	holder.rect_min_size = min_size
@@ -266,6 +284,10 @@ func _new_preview_panel(parent: Control, min_size: Vector2) -> Control:
 	description.expand_indefinitely = false
 	description.get_node("HBoxContainer/IconPanel").hide()
 	description.get_node("HBoxContainer/ScrollContainer").rect_min_size.y = PREVIEW_HEADER_HEIGHT
+	description.size_flags_vertical = SIZE_EXPAND_FILL
+	var details: Control = description.get_node("ScrollContainer")
+	details.rect_min_size.y = PREVIEW_DETAILS_MIN_HEIGHT
+	details.size_flags_vertical = SIZE_EXPAND_FILL
 	panel.set_anchors_and_margins_preset(PRESET_WIDE)
 	panel.hide()
 	holder.add_child(panel)
@@ -477,14 +499,43 @@ func _update_previews() -> void :
 	_show_preview(_item_panel, _get_preview_element(_hovered_weapon, _focused_weapon), weapon)
 
 
-# The hovered element, else the focused one while the cursor is hidden (keyboard or gamepad; with
-# the mouse, focus stays where a pick moved it), else null.
+# With the cursor visible, the hovered element; with it hidden (keyboard or gamepad), the focused
+# one (with the mouse, focus stays where a pick moved it); else null.
 func _get_preview_element(hovered, focused):
-	if hovered != null and is_instance_valid(hovered):
-		return hovered
-	if focused != null and is_instance_valid(focused) and not _mouse_visible:
-		return focused
+	var element = hovered if _mouse_visible else focused
+	if element != null and is_instance_valid(element):
+		return element
 	return null
+
+
+# Ends a hover once the mouse leaves the grid and its preview, so the mouse can move from a
+# character to its starting items without the preview switching back to the pick.
+func _clear_hover_outside() -> void :
+	var changed: = false
+	if _hovered_character != null and not _has_mouse(_character_scroll) and not _has_mouse(_character_panel.get_parent()):
+		_hovered_character = null
+		changed = true
+	if _hovered_weapon != null and not _has_mouse(_weapon_area) and not _has_mouse(_item_panel.get_parent()):
+		_hovered_weapon = null
+		changed = true
+	if changed:
+		_update_previews()
+
+
+func _has_mouse(control: Control) -> bool:
+	return control.is_visible_in_tree() and control.get_global_rect().has_point(control.get_global_mouse_position())
+
+
+# Drops the focused character once the focus is neither on the character grid nor on the
+# starting items (deferred: while focus moves, the old element reports the loss first).
+func _check_character_focus() -> void :
+	if not is_inside_tree() or _focused_character == null:
+		return
+	var focus_owner: = get_focus_owner()
+	if focus_owner != null and (_character_grid.is_a_parent_of(focus_owner) or _starting_items.is_a_parent_of(focus_owner)):
+		return
+	_focused_character = null
+	_update_previews()
 
 
 func _show_preview(panel: Control, element, selected: ItemParentData) -> void :
@@ -505,29 +556,25 @@ func _show_preview(panel: Control, element, selected: ItemParentData) -> void :
 		_fill_starting_items(data)
 
 
-# Icons of the character's starting weapons and items (as vanilla's character panel lists them),
-# with the name as tooltip.
+# The character's starting weapons and items, as vanilla's character panel lists them.
 func _fill_starting_items(character: ItemParentData) -> void :
-	for child in _starting_items_row.get_children():
-		_starting_items_row.remove_child(child)
-		child.queue_free()
+	if character == _starting_items_character:
+		return
+	_starting_items_character = character
+	_starting_item_popup.hide()
+	_starting_items.clear_elements()
 	if character == null:
 		return
+	var items: = []
 	for effect in character.effects:
 		var item: ItemParentData = null
 		if effect.custom_key_hash == Keys.starting_weapon_hash or effect.custom_key_hash == Keys.cursed_starting_weapon_hash:
 			item = ItemService.get_element(ItemService.weapons, effect.key_hash)
 		elif effect.custom_key_hash == Keys.starting_item_hash or effect.custom_key_hash == Keys.cursed_starting_item_hash:
 			item = ItemService.get_element(ItemService.items, effect.key_hash)
-		if item == null:
-			continue
-		var icon: = TextureRect.new()
-		icon.rect_min_size = STARTING_ITEM_SIZE
-		icon.expand = true
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		icon.texture = item.get_icon()
-		icon.hint_tooltip = item.get_name_text()
-		_starting_items_row.add_child(icon)
+		if item != null:
+			items.append(item)
+	_starting_items.set_elements(items, false, false)
 
 
 
@@ -623,10 +670,8 @@ func _on_CharacterGrid_element_focused(element) -> void :
 	_update_previews()
 
 
-func _on_CharacterGrid_element_unfocused(element) -> void :
-	if _focused_character == element:
-		_focused_character = null
-		_update_previews()
+func _on_CharacterGrid_element_unfocused(_element) -> void :
+	call_deferred("_check_character_focus")
 
 
 func _on_CharacterGrid_element_hovered(element) -> void :
@@ -634,10 +679,21 @@ func _on_CharacterGrid_element_hovered(element) -> void :
 	_update_previews()
 
 
-func _on_CharacterGrid_element_unhovered(element) -> void :
-	if _hovered_character == element:
-		_hovered_character = null
-		_update_previews()
+# Without the last-wave line vanilla adds for inventory elements (it reads run data).
+func _on_StartingItems_element_shown(element) -> void :
+	if element.item == null:
+		return
+	_starting_item_popup.set_synergies_visible(false)
+	_starting_item_popup.display_item_data(element.item, element)
+
+
+func _on_StartingItems_element_unhovered(_element) -> void :
+	_starting_item_popup.hide()
+
+
+func _on_StartingItems_element_unfocused(_element) -> void :
+	_starting_item_popup.hide()
+	call_deferred("_check_character_focus")
 
 
 func _on_CharacterGrid_element_pressed(element) -> void :
@@ -670,12 +726,6 @@ func _on_WeaponGrid_element_unfocused(element) -> void :
 func _on_WeaponGrid_element_hovered(element) -> void :
 	_hovered_weapon = element
 	_update_previews()
-
-
-func _on_WeaponGrid_element_unhovered(element) -> void :
-	if _hovered_weapon == element:
-		_hovered_weapon = null
-		_update_previews()
 
 
 func _on_WeaponGrid_element_pressed(element) -> void :
