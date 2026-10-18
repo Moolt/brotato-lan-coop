@@ -510,7 +510,8 @@ var end_step: = 0
 var end_wait: = 0.0
 
 
-# On the end screen: logs what it shows, then presses Exit (the client first, the host 3 s
+# On the end screen: logs what it shows, switches to the other player and back (LAN player
+# dropdown), then presses Exit (the client first, the host 3 s
 # later) and logs the lobby the client lands in.
 func end_screen_actions(delta: float) -> void :
 	var scene = get_tree().current_scene
@@ -529,11 +530,32 @@ func end_screen_actions(delta: float) -> void :
 		print("[TEST] ", tag, " scene=", scene.filename, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " won=", RunData.run_won, " wave=", RunData.current_wave, " title='", scene._title.text, "' character=", own.current_character.my_id, " gold=", own.gold, " weapons=", own.weapons.size(), " buttons restart=", scene._restart_button.visible, " new_run=", scene._new_run_button.visible, " exit=", scene._exit_button.visible, " exit_focus=", scene._exit_button.has_focus())
 		shot(tag)
 		end_step = 1
+		var option = scene.get("_lan_player_option")
+		if option != null:
+			var other = 1 - option.selected
+			option.select(other)
+			scene._on_LanPlayerOption_item_selected(other)
+			log_end_screen_player(tag + "_other", scene)
+			end_step = 4
+	elif end_step == 4 and end_wait >= 2.0:
+		shot(tag + "_other")
+		var option = scene._lan_player_option
+		var own = 1 - option.selected
+		option.select(own)
+		scene._on_LanPlayerOption_item_selected(own)
+		log_end_screen_player(tag + "_own", scene)
+		end_step = 1
 	elif end_step == 1 and end_wait >= (2.5 if role != "host" else 5.5):
 		print("[TEST] ", tag, " exit")
 		scene._on_ExitButton_pressed()
 		end_step = 2
 		end_wait = 0.0
+
+
+func log_end_screen_player(tag: String, scene) -> void :
+	var shown = RunData.players_data[0]
+	var option = scene._lan_player_option
+	print("[TEST] ", tag, " option='", option.get_item_text(option.selected), "' items=", option.get_item_count(), " character=", shown.current_character.my_id, " weapons=", shown.weapons.size(), " items_shown=", scene._items_container._elements.get_child_count(), " max_hp=", Utils.get_stat(Keys.stat_max_hp_hash, 0), " focus_left=", scene._exit_button.focus_neighbour_left)
 
 
 func log_saved_run(tag: String) -> void :

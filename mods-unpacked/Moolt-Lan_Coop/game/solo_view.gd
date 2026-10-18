@@ -6,6 +6,7 @@ extends Reference
 # leave() puts everything back, with whatever the solo phase changed in the own player.
 # RunData's per-player arrays outside players_data move between slot player_index and 0; pure
 # caches are reset instead, since index 0 means another player afterwards.
+# The end screen can show another player in slot 0 (show_player); leave() puts the own one back.
 
 # RunData arrays that hold player state: slot player_index goes to 0 and back.
 const MOVED_ARRAYS: = [
@@ -21,11 +22,15 @@ const MOVED_ARRAYS: = [
 var active: = false
 # The own player's index in the coop run.
 var player_index: = - 1
+# The coop index of the player in slot 0 (show_player).
+var shown_index: = - 1
 
 var _players_data: = []
 var _arrays: = {}
 var _is_coop_run: = false
 var _connected_players: = []
+# The own player's slot 0 while another one is shown.
+var _own_slot: = {}
 
 
 # local_coop_player: the local device's CoopService.connected_players entry.
@@ -34,6 +39,7 @@ func enter(index: int, local_coop_player: Array) -> bool:
 		return false
 	active = true
 	player_index = index
+	shown_index = index
 	_players_data = RunData.players_data.duplicate()
 	_is_coop_run = RunData.is_coop_run
 	_connected_players = CoopService.connected_players.duplicate(true)
@@ -57,6 +63,7 @@ func enter(index: int, local_coop_player: Array) -> bool:
 func leave() -> void :
 	if not active:
 		return
+	var _shown = show_player(player_index)
 	# Vanilla may have replaced the arrays meanwhile; slot 0 is the own player either way.
 	for array_name in MOVED_ARRAYS:
 		var solo_array: Array = RunData.get(array_name)
@@ -74,6 +81,42 @@ func leave() -> void :
 	_reset_caches()
 
 
+func get_player_count() -> int:
+	return _players_data.size()
+
+
+# A player's run data by coop index (the own one may be stale while it is in slot 0).
+func get_player_data(index: int):
+	return _players_data[index] if index >= 0 and index < _players_data.size() else null
+
+
+# Puts another player (coop index) into slot 0, so screens built for player 0 show it.
+func show_player(index: int) -> bool:
+	if not active or index == shown_index or get_player_data(index) == null:
+		return false
+	if shown_index == player_index:
+		_own_slot = {"players_data": RunData.players_data[0]}
+		for array_name in MOVED_ARRAYS:
+			var solo_array: Array = RunData.get(array_name)
+			_own_slot[array_name] = solo_array[0] if not solo_array.empty() else _default_slot(array_name)
+	var own: = index == player_index
+	RunData.players_data[0] = _own_slot.players_data if own else _players_data[index]
+	for array_name in MOVED_ARRAYS:
+		var solo_array: Array = RunData.get(array_name)
+		var coop_array: Array = _arrays[array_name]
+		if solo_array.empty():
+			continue
+		if own:
+			solo_array[0] = _own_slot[array_name]
+		else:
+			solo_array[0] = coop_array[index] if index < coop_array.size() else _default_slot(array_name)
+	if own:
+		_own_slot = {}
+	shown_index = index
+	_reset_caches()
+	return true
+
+
 # Forgets the coop run without restoring it (the session ended and RunData is reset anyway).
 func discard() -> void :
 	_clear()
@@ -82,6 +125,8 @@ func discard() -> void :
 func _clear() -> void :
 	active = false
 	player_index = - 1
+	shown_index = - 1
+	_own_slot = {}
 	_players_data = []
 	_arrays = {}
 	_connected_players = []
