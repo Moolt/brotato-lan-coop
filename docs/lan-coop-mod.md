@@ -66,9 +66,10 @@ A reference for working on the mod: what exists, how a session flows, the sync p
   | `enemy_health_per_player` | 0.3 | HP for players 2–4 … |
   | `enemy_health_per_player_beyond_4` | 0.2 | … and beyond (averaged: 3.5× at 12 instead of 4.3×) |
   | `enemy_damage_per_player` | 0.08 | damage |
-  | `enemy_cap_per_player` | 0.25 | `max_enemies × (1 + 0.25(n-1))` (375 at 12) instead of vanilla's `(n-1)/8` |
+  | `enemy_cap_per_player` | 0.25 | `max_enemies × min(1 + 0.25(n-1), 2.5)` (250 from 7 players, `LanGame.MAX_ENEMY_CAP_FACTOR`) instead of vanilla's `(n-1)/8`; past ~300 enemies vanilla physics can't keep 60 ticks a second. Vanilla enforces the cap only at a group spawn, so queued enemies can push past it for a while (~285 seen) |
 
   `LanGame.apply_enemy_scaling(n)` runs in main's `_enter_tree`; `CoopService.clear()` on the main menu restores vanilla's values. Danger effects are read from player 0 only, `double_boss` is summed.
+- **Physics quirk fixes (session only, no gameplay change):** each unit's burning `SpreadArea` (r = 128, enemies mask) starts disabled; vanilla leaves it on from the start and only `apply_burning` needs it (`extensions/particles/burning/burning_particles.gd`). Enemy hitboxes move from the enemies layer to `LanGame.ENEMY_HITBOX_BIT` (layer 20, `enemy.gd` `_ready`), and hurtboxes with the enemies bit in their mask (players, scapegoat) get it too (`overlap/hurtbox.gd`). Both cut collision pairs about fivefold at 400 enemies (measurements in [lan-coop-plan.md](lan-coop-plan.md#performance)).
 - **Spawn rate** is vanilla's: queued enemies are released 1 (2 with 110+ queued) every 3 physics frames, whatever the player count.
 - **Camera:** each machine follows only its own player (solo behaviour, `lock_coop_camera` ignored); after its death, vanilla's coop camera over the living players.
 
@@ -98,7 +99,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 **Order on every machine:** `main._on_EndWaveTimer_timeout` → host `send_wave_end_state` / client waits for `lan_wave_end_ready` (main's relay of `LanNet.wave_end_ready`) → `LanWaveSync.stop()` → run end: `enter_solo_view(false)`, `end_run.tscn`; otherwise `enter_solo_view()`, solo `UpgradesUI` (its `_ready` run again), `shop.tscn` → Go → host merges when nobody is shopping → next run via `_send_run` → client leaves the solo view in `_rpc_run_state` → `_rpc_enter_wave`.
 
 ## In-wave sync (`LanWaveSync`)
-**Authority:** each machine moves its own player; the host simulates everything else. Clients spawn copies of host entities through vanilla code, then make them inert.
+**Authority:** each machine moves its own player; the host simulates everything else. Clients spawn copies of host entities through vanilla code, then make them inert (`_make_inert`: no physics process, kinematic, areas neither monitoring nor monitorable, collision mask reduced to the walls bit so copies don't pair with each other; the layer stays so client weapon ranges still see them).
 
 **RPCs** (all on `LanNet`, which forwards to `LanNet.wave_sync`; every remote func checks sender and argument types):
 | RPC | Direction | Mode | Content |
@@ -154,7 +155,9 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `global/entity_spawner.gd` | 12-slot arrays, spawn circle, enemy cap, reports spawns and markers (host), markers only show (client) |
 | `entities/units/player/player.gd` | `lan_net_driven`, `lan_move_speed`, `lan_no_regen` |
 | `entities/units/movement_behaviors/player_movement_behavior.gd` | remote players (device -1) read no input; local player stands still while the pause menu is open |
-| `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd` | attacks from animations do nothing on clients |
+| `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd` | attacks from animations do nothing on clients; enemy hitbox on `LanGame.ENEMY_HITBOX_BIT` in a session |
+| `overlap/hurtbox.gd` | in a session, hurtboxes that listen to the enemies layer also listen to `LanGame.ENEMY_HITBOX_BIT` |
+| `particles/burning/burning_particles.gd` | in a session the burning `SpreadArea` starts disabled (`apply_burning` enables it) |
 | `entities/birth/entity_birth.gd` | client markers ignore players standing on them |
 | `weapons/weapon.gd` | clients never fire; host reports attacks; remote players' manual aim towards their reported aim point (host) |
 | `projectiles/projectile.gd` | host reports shoot/stop/pool; ids |
@@ -185,6 +188,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 - **Several connections to one signal** run in no guaranteed order; don't let them depend on each other.
 - **Signals while a scene is freed:** a scene leaves the tree children first, and a focused control emits `focus_exited` on the way out. A handler that then fills vanilla UI (e.g. an item description, whose `EffectLine`s need `_ready`) on nodes already out of the tree raises script errors in vanilla files. Check `is_inside_tree()` of what it fills (the lobby previews, 8b).
 - **Shop:** vanilla's Go button clears Go when it loses focus (`_on_GoButton_focus_exited`); the waiting overlay takes the focus. `_on_tree_exited` curses locked items randomly per player, so in a session only the host does it (`RunBuilder.apply_go`). The Go handler's hourglass, extra-elite roll and wave increment must run once for everyone (host).
+- **Don't extend `overlap/hitbox.gd`:** its inner class `HitboxArgs` has methods typed `-> Hitbox.HitboxArgs`; the reload that installs an extension breaks them (`Parse Error: The returned value type (HitboxArgs) doesn't match the function return type (HitboxArgs)`). Change hitboxes from their owner's extension instead.
 - **Save loader has 4 slots** for `locked_shop_items` and `shop_items` (`ProgressDataLoaderV3`); the extension handles the rest. Extending a `class_name` script works for `ClassName.new()` too.
 - **`saved_run_state` changes in memory during a session** (shop, lost run) although disk saves are blocked; the `progress_data.gd` extension puts the own one aside.
 - **Disconnects during a run** must not reset the run id (`_broadcast_lobby_state(run_in_progress)`), or a pending next-wave sync stalls; lobby entry changes are ignored during a run for the same reason.

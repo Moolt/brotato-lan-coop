@@ -28,6 +28,18 @@ extends Node
 #         weapon are hovered and with nothing hovered, and quits (lobby layout)
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
+#   (any role) PERF_LOG=1: once a second in a wave, enemies, physics bodies/pairs, physics and
+#         process time, FPS; ENEMY_CAP=n: the wave's enemy cap (solo: exactly n);
+#         PHYS_ITER=n: Physics2DServer collision iterations; NO_ENEMY_COLLIDE=1: enemies don't
+#         collide with each other; TIMING=1: times enemy scripts and weapon target scans;
+#         NO_SYNC=1 (host alone): LanWaveSync's per-tick work off
+#   (host) MORTAL=1: players can be hit; at t=16 an enemy is placed on the host player
+#   (host) at t=16 an enemy burns with spread 2 next to two others (burn_spread_test); log_sync
+#         logs the session's physics quirk fixes and enemy contacts on player hurtboxes
+#   (solo) START_WAVE, ENEMY_MULT as for host; a 20 s wave
+#   (host) WAVE_DURATION=s: the first wave lasts s seconds (default 20)
+# log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
+# clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
 # Lines start with [TEST]; screenshots go to $SHOT_DIR.
 var role: = ""
@@ -39,6 +51,12 @@ var started: = false
 var run_states_logged: = false
 # ROUNDS=n: after the run ends in the lobby, the host starts the next run in the same session.
 var round_nr: = 1
+# Wave perf since the last log_perf: frame times, and on clients snapshot arrivals and losses.
+var perf: = {}
+var perf_log_t: = 0.0
+var perf_scene = null
+# Enemy hitboxes that entered a player's hurtbox this wave (contact hits, also when invulnerable).
+var enemy_contacts: = 0
 
 
 func _ready() -> void :
@@ -119,7 +137,10 @@ func _process(delta: float) -> void :
 	var scene = get_tree().current_scene
 	if not run_states_logged and scene != null and scene.filename == MenuData.game_scene and scene._cleaning_up:
 		run_states_logged = true
+		log_perf(role + "_cleanup")
 		log_run_states(role + "_cleanup")
+	perf_sample(delta)
+	perf_curve(delta)
 	pick_upgrades(delta)
 	shop_actions(delta)
 	end_screen_actions(delta)
@@ -137,6 +158,196 @@ func _process(delta: float) -> void :
 	else:
 		_client_step()
 	step += 1
+
+
+func perf_curve(delta: float) -> void :
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main._cleaning_up:
+		return
+	if perf_scene != main:
+		perf_scene = main
+		perf_log_t = 0.0
+		enemy_contacts = 0
+		for player in main._players:
+			var _e = player._hurtbox.connect("area_entered", self, "_on_player_hurtbox_area_entered")
+		if OS.get_environment("ENEMY_CAP") != "":
+			main._entity_spawner._current_wave_data.max_enemies = int(OS.get_environment("ENEMY_CAP"))
+		if OS.get_environment("PHYS_ITER") != "":
+			Physics2DServer.set_collision_iterations(int(OS.get_environment("PHYS_ITER")))
+		# Perf comparison only: the host's LanWaveSync stops its per-tick work (nothing is sent).
+		if OS.get_environment("NO_SYNC") == "1" and main.get_node_or_null("LanWaveSync") != null:
+			main.get_node("LanWaveSync").set_physics_process(false)
+	if OS.get_environment("PERF_LOG") != "1":
+		return
+	perf_log_t += delta
+	if perf_log_t < 1.0:
+		return
+	perf_log_t = 0.0
+	var enemies = main._entity_spawner.enemies
+	if OS.get_environment("NO_ENEMY_COLLIDE") == "1":
+		for enemy in enemies:
+			enemy.set_collision_mask_bit(2, false)
+	var timing = ""
+	if OS.get_environment("TIMING") == "1":
+		# One extra call of each per-tick script, timed: enemy movement/attack scripts, then every
+		# weapon's nearest-target scan.
+		var start = OS.get_ticks_usec()
+		for enemy in enemies:
+			if is_instance_valid(enemy) and not enemy.dead:
+				enemy._physics_process(1.0 / 60.0)
+		var enemies_us = OS.get_ticks_usec() - start
+		var weapons = 0
+		var in_range = 0
+		start = OS.get_ticks_usec()
+		for player in main._players:
+			for weapon in player.current_weapons:
+				weapons += 1
+				in_range += weapon._targets_in_range.size()
+				var _d = weapon.get_direction_and_calculate_target()
+		timing = " enemy_scripts_us=%d weapons=%d targets_in_range=%d weapon_scan_us=%d" % [enemies_us, weapons, in_range, OS.get_ticks_usec() - start]
+	var sync = main.get_node_or_null("LanWaveSync")
+	print("[TEST] ", role, "_curve wave_t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 1), " enemies=", main._entity_spawner.enemies.size(), " bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " fps=", Engine.get_frames_per_second(), timing)
+
+
+func _on_player_hurtbox_area_entered(area: Area2D) -> void :
+	if area.get_parent() is Enemy:
+		enemy_contacts += 1
+
+
+# The session's physics quirk fixes (extensions/overlap, burning_particles, wave_sync _make_inert).
+func log_quirk_fixes(tag: String, main, wave_sync) -> void :
+	var LanGame = load("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
+	var hitboxes_moved = 0
+	var spread_on = 0
+	var burning = 0
+	var masks = {}
+	for enemy in main._entity_spawner.enemies:
+		if enemy._hitbox.collision_layer & LanGame.ENEMY_HITBOX_BIT and not enemy._hitbox.collision_layer & Utils.ENEMIES_BIT:
+			hitboxes_moved += 1
+		if not enemy._burning_particles._collision.disabled:
+			spread_on += 1
+		if enemy._is_burning:
+			burning += 1
+		masks[enemy.collision_mask] = masks.get(enemy.collision_mask, 0) + 1
+	var hurtbox_masks = []
+	for player in main._players:
+		hurtbox_masks.append(player._hurtbox.collision_mask)
+	print("[TEST] ", tag, " quirks enemies=", main._entity_spawner.enemies.size(), " hitboxes_moved=", hitboxes_moved, " spread_on=", spread_on, " burning=", burning, " enemy_masks=", masks, " hurtbox_masks=", hurtbox_masks, " enemy_contacts=", enemy_contacts, " cap_factor=", LanGame.get_enemy_cap_factor(main._players.size()) if wave_sync != null else "-")
+
+
+# Host: one enemy burns with spread 2 and two others stand next to it (all with 10000 HP, so they
+# live); vanilla spreads the burn to both (Unit.apply_burning enables the SpreadArea).
+func burn_spread_test(main) -> void :
+	var enemies = []
+	for enemy in main._entity_spawner.enemies:
+		if is_instance_valid(enemy) and not enemy.dead and not enemy._is_burning:
+			enemies.append(enemy)
+	if enemies.size() < 3:
+		print("[TEST] burn_spread skipped enemies=", enemies.size())
+		return
+	enemies = enemies.slice(0, 2)
+	for i in 3:
+		enemies[i].max_stats.health = 10000
+		enemies[i].current_stats.health = 10000
+		if i > 0:
+			enemies[i].global_position = enemies[0].global_position + Vector2(40 * i, 0)
+	var burning_data = BurningData.new()
+	burning_data.chance = 1.0
+	burning_data.damage = 1
+	burning_data.duration = 5
+	burning_data.spread = 2
+	enemies[0].apply_burning(burning_data)
+	for wait in [0.5, 1.0]:
+		yield(get_tree().create_timer(wait), "timeout")
+		var states = []
+		for enemy in enemies:
+			states.append(is_instance_valid(enemy) and enemy._is_burning)
+		var particles = enemies[0]._burning_particles if is_instance_valid(enemies[0]) else null
+		print("[TEST] burn_spread burning=", states, " shape_disabled=", particles._collision.disabled if particles != null else "-", " bodies=", particles.bodies.size() if particles != null else "-", " spread=", particles.burning_data.spread if particles != null and particles.burning_data != null else "-", " physics=", particles.is_physics_processing() if particles != null else "-", " dist=", [enemies[0].global_position.distance_to(enemies[1].global_position), enemies[0].global_position.distance_to(enemies[2].global_position)])
+
+
+# Host with MORTAL=1: an enemy on the host player; its contact hits count in enemy_contacts.
+func contact_test(main) -> void :
+	if OS.get_environment("MORTAL") != "1":
+		return
+	for enemy in main._entity_spawner.enemies:
+		if is_instance_valid(enemy) and not enemy.dead:
+			enemy.global_position = main._players[0].global_position
+			print("[TEST] contact_test enemy placed hp_before=", main._players[0].current_stats.health)
+			return
+
+
+func perf_reset() -> void :
+	perf = {"frames": 0, "time": 0.0, "max_ms": 0.0, "slow": 0, "snaps": 0, "lost": 0, "max_gap": 0, "last_seq": perf.get("last_seq", - 1), "last_at": perf.get("last_at", 0), "min_cushion": 100000.0, "starved": 0, "last_time": perf.get("last_time", - 1)}
+
+
+func perf_sample(delta: float) -> void :
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main.get_node_or_null("LanWaveSync") == null:
+		perf = {}
+		return
+	if perf.empty():
+		perf_reset()
+	perf.frames += 1
+	perf.time += delta
+	perf.max_entities = max(perf.get("max_entities", 0), main.get_node("LanWaveSync")._entities.size())
+	perf.max_ms = max(perf.max_ms, delta * 1000.0)
+	if delta > 1.0 / 30.0:
+		perf.slow += 1
+	var sync = main.get_node("LanWaveSync")
+	if sync.is_host or sync._last_seq < 0:
+		return
+	var now = OS.get_ticks_msec()
+	if sync._last_seq != perf.last_seq:
+		# Received = new entries in the snapshot buffer (several can arrive in one frame);
+		# lost = the seq advance not covered by them.
+		var received = 0
+		for snapshot in sync._snapshots:
+			if snapshot.time > perf.get("last_time", - 1):
+				received += 1
+		if not sync._snapshots.empty():
+			perf.last_time = sync._snapshots[- 1].time
+		var lost = max(0, sync._last_seq - perf.last_seq - received) if perf.last_seq >= 0 else 0
+		# Per snapshot size in UDP packets (ENet fragments above about 1400 bytes).
+		var frags = "%dpkt" % ceil((sync.SNAPSHOT_HEADER_SIZE + sync.SNAPSHOT_PLAYER_SIZE * main._players.size() + 2 + sync.SNAPSHOT_ENTITY_SIZE * sync._entities.size()) / 1400.0)
+		if not perf.has("by_size"):
+			perf.by_size = {}
+		if not perf.by_size.has(frags):
+			perf.by_size[frags] = [0, 0]
+		perf.by_size[frags][0] += received
+		perf.by_size[frags][1] += lost
+		perf.lost += lost
+		if perf.last_seq >= 0:
+			perf.max_gap = max(perf.max_gap, now - perf.last_at)
+		perf.snaps += received
+		perf.last_seq = sync._last_seq
+		perf.last_at = now
+	# How far the newest snapshot is ahead of the interpolation's render time (below 0: extrapolating).
+	if not sync._snapshots.empty() and sync._clock_offset != null:
+		var cushion = sync._snapshots[- 1].time - (now - sync._clock_offset - sync.INTERP_DELAY_MS)
+		perf.min_cushion = min(perf.min_cushion, cushion)
+		if cushion < 0:
+			perf.starved += 1
+
+
+func log_perf(tag: String) -> void :
+	if perf.empty() or perf.frames == 0:
+		return
+	var main = get_tree().current_scene
+	var sync = main.get_node("LanWaveSync") if main != null and main.filename == MenuData.game_scene else null
+	var mod_us = - 1
+	if sync != null:
+		var start = OS.get_ticks_usec()
+		if sync.is_host:
+			var _snapshot = sync._build_snapshot()
+			# Not sent: clients would see a gap.
+			sync._snapshot_seq -= 1
+		else:
+			sync._update_puppets()
+		mod_us = OS.get_ticks_usec() - start
+	print("[TEST] ", tag, " perf_detail physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " active_bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " collision_pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " ", "build_snapshot_us=" if sync != null and sync.is_host else "update_puppets_us=", mod_us)
+	print("[TEST] ", tag, " perf frames=", perf.frames, " avg_fps=", stepify(perf.frames / max(perf.time, 0.001), 0.1), " max_frame_ms=", stepify(perf.max_ms, 0.1), " slow_frames=", perf.slow, " snaps=", perf.snaps, " snap_hz=", stepify(perf.snaps / max(perf.time, 0.001), 0.1), " lost=", perf.lost, " max_gap_ms=", perf.max_gap, " min_cushion_ms=", stepify(perf.min_cushion, 1), " starved_frames=", perf.starved, " max_entities=", perf.get("max_entities", 0), " received_lost_by_size=", perf.get("by_size", {}))
+	perf_reset()
 
 
 func add_fake_players(net, count: int) -> void :
@@ -262,8 +473,10 @@ func log_sync(tag: String) -> void :
 				gold_scales.append(stepify(gold.scale.x, 0.01))
 		print("[TEST] ", tag, " births=", birth_positions, " grown_golds=", gold_scales.size(), " max_gold_scale=", gold_scales.max() if not gold_scales.empty() else 1.0)
 		print("[TEST] ", tag, " synced_projectiles=", sync._projectiles.size(), " flying_player_proj=", visible_children(main._player_projectiles), " flying_enemy_proj=", visible_children(main._enemy_projectiles), " weapons_attacking=", swings)
-		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes~", 15 + 23 * main._players.size() + 7 * ids.size(), " sample=", sample)
+		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes=", sync.SNAPSHOT_HEADER_SIZE + sync.SNAPSHOT_PLAYER_SIZE * main._players.size() + 2 + sync.SNAPSHOT_ENTITY_SIZE * ids.size(), " sample=", sample)
 		log_visuals(tag, main, main.get_node("LanWaveSync"))
+		log_quirk_fixes(tag, main, main.get_node("LanWaveSync"))
+		log_perf(tag)
 	shot(tag)
 
 
@@ -328,8 +541,8 @@ func _host_step() -> void :
 			next_t = 10.0
 		4:
 			log_lobby("host_before_start")
-			DebugService.invulnerable = true
-			DebugService.custom_wave_duration = 20
+			DebugService.invulnerable = OS.get_environment("MORTAL") != "1"
+			DebugService.custom_wave_duration = int(OS.get_environment("WAVE_DURATION")) if OS.get_environment("WAVE_DURATION") != "" else 20
 			if OS.get_environment("START_WAVE") != "":
 				DebugService.starting_wave = int(OS.get_environment("START_WAVE"))
 			if OS.get_environment("ENEMY_MULT") != "":
@@ -391,6 +604,8 @@ func _host_step() -> void :
 				boss.max_stats.health = 5000
 				boss.current_stats.health = 5000
 				boss.emit_signal("health_updated", boss, 5000, 5000)
+			burn_spread_test(get_tree().current_scene)
+			contact_test(get_tree().current_scene)
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
@@ -831,6 +1046,11 @@ func _solo_step() -> void :
 			entry.weapon_id = "weapon_knife_1"
 			# Invulnerable, so the wave ends cleared ($SOLO_MORTAL=1 lets it die).
 			DebugService.invulnerable = OS.get_environment("SOLO_MORTAL") != "1"
+			DebugService.custom_wave_duration = 20
+			if OS.get_environment("START_WAVE") != "":
+				DebugService.starting_wave = int(OS.get_environment("START_WAVE"))
+			if OS.get_environment("ENEMY_MULT") != "":
+				DebugService.nb_enemies_mult = float(OS.get_environment("ENEMY_MULT"))
 			RB.build_run([entry], {"zone": 0, "difficulty": 0})
 			RunData.set_coop_run(false)
 			RunData.play_mode = RunData.PlayMode.SOLO

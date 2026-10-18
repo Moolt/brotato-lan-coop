@@ -10,6 +10,14 @@ const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol
 const MAX_PLAYERS: = NetProtocol.MAX_PLAYERS
 # Vanilla coop players; enemy HP grows slower beyond them (see apply_enemy_scaling).
 const VANILLA_MAX_PLAYERS: = 4
+# Enemy cap factor at most (250 enemies in a normal wave): past ~300 enemies vanilla physics
+# can't keep 60 ticks a second, on a laptop host already earlier.
+const MAX_ENEMY_CAP_FACTOR: = 2.5
+# In a session enemy hitboxes move off the enemies layer (Utils.ENEMIES_BIT) onto unused
+# layer 20, and hurtboxes that listen to enemies listen to it too (extensions: enemy.gd,
+# overlap/hurtbox.gd). On the
+# enemies layer every enemy body and every weapon range also paired with nearby hitboxes.
+const ENEMY_HITBOX_BIT: = 1 << 19
 
 
 static func in_session() -> bool:
@@ -56,7 +64,7 @@ static func get_arena_factor(player_count: int) -> float:
 
 # Enemy cap factor; vanilla's is 1 + (n-1)/8 (entity_spawner.gd on_group_spawn_timing_reached).
 static func get_enemy_cap_factor(player_count: int) -> float:
-	return 1.0 + get_scaling("enemy_cap_per_player") * (player_count - 1)
+	return min(1.0 + get_scaling("enemy_cap_per_player") * (player_count - 1), MAX_ENEMY_CAP_FACTOR)
 
 
 # Sets the per-player enemy factors that vanilla reads (EntitySpawner, EntityService), from

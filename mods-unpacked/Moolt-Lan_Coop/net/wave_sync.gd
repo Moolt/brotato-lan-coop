@@ -793,9 +793,12 @@ func _resolve_data_ref(ref, player_index: int):
 
 
 # The host simulates; the client copy only shows. Kinematic, so setting the position moves it.
+# Its mask keeps only the walls (a dying unit's knockback slide): copies don't push each other,
+# and the physics server doesn't pair them (perf). The layer stays, so weapon ranges see them.
 func _make_inert(entity: Node) -> void :
 	entity.set_physics_process(false)
 	entity.mode = RigidBody2D.MODE_KINEMATIC
+	entity.collision_mask &= Utils.OBSTACLES_BIT
 	for area in _find_areas(entity, []):
 		area.set_deferred("monitoring", false)
 		area.set_deferred("monitorable", false)

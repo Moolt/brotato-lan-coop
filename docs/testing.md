@@ -53,12 +53,20 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |
 | `FAKE_SAVED_RUN=1` | a stand-in "Continue" run in memory before the session (never saved) |
 | `AIM_TEST=1` | manual aim on both, the client's mouse at its top left |
+| `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`enemy_contacts` in the `quirks` line) |
+| `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
+| `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS (`*_curve` lines) |
+| `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
+| `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |
 
 ### Helpers and checks
 - Between waves, every frame: `pick_upgrades` (first upgrade, or take the crate item on the host and recycle it on the client; logs the picked stat per player), `shop_actions` (buy one item, lock another, Go; the client goes Back and Go again; the host is last), `end_screen_actions` (log the end screen, Exit: the client first).
 - `solo_view_test` (on `LanNet.wave_end_ready`) enters and leaves the solo view once and checks the run is unchanged.
 - `log_run_check` prints every player's gear, the scene's weapon nodes and the digest; compare host and client.
+- `log_quirk_fixes` (with `log_sync`): enemy hitboxes on `LanGame.ENEMY_HITBOX_BIT`, enabled burning `SpreadArea`s, burning enemies, enemy collision masks (clients: 128), player hurtbox masks, enemy contacts, the cap factor. `burn_spread_test` (host, t=16): an enemy with spread 2 and two neighbours (10000 HP); `burn_spread burning=[true, true, true]` when the fire spread.
+- `TIME_PHYSICS_PROCESS` is the longest physics tick of the last second, updated once a second; sample it once a second and compare medians over separate runs. Switching parts off one after another within one run changes the crowd (enemies without scripts drift apart) and is not a clean breakdown.
 - `log_sync` / `log_visuals`: off-screen players, skulls, manual aim, first weapon rotation per player, the host's reported aims. `LanWaveSync.event_counts` (sent on the host, received on clients) shows whether events arrive.
+- `log_perf` (with every `log_sync` and at the wave's cleanup): frames, avg FPS, max frame time and frames over 33 ms since the last call; physics/process time, physics bodies and pairs, the mod's own per-frame cost (`_build_snapshot` on the host, `_update_puppets` on clients). Clients also log snapshots received and lost (new buffer entries against the seq advance, by size in UDP packets), the largest gap, and the interpolation cushion (below 0: the 100 ms buffer ran dry). Each screenshot costs ~120 ms, which shows up in `max_frame_ms`.
 - Screenshots: `get_viewport().get_texture().get_data()`, `flip_y()`, `save_png()` into `$SHOT_DIR`. Output lines start with `[TEST]`.
 
 ### Writing steps
@@ -93,6 +101,9 @@ Each takes about 1–2 min.
 - `grep -a "SCRIPT\|ERROR"` the logs. Nothing from mod code is allowed: any `ERROR:` mentioning `mods-unpacked` makes the crash reporter disable mods on the next launch.
 - Ignore (vanilla prints them too, check with `--disable-mods`): engine shutdown errors (`_first != nullptr`, `self_list.h`, resources/MemoryPool still in use, ObjectDB leaks) and `WARNING: Node './Attach' was modified from inside an instance` on wave load.
 - A stray background instance from an earlier run can mix into results; check `ps` first.
+
+## Two machines
+Host here, join on the second PC (same layout, its own test copy from `tools/make_test_copy.sh`, the driver copied over with `scp`). Start the client over `ssh` with `DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.*)` (GNOME Wayland session), pass the test options in that environment too, and start the host 1 s later; discovery finds the host across the LAN. Run `ping` alongside for RTT. Interface byte counters are useless for bandwidth when the other PC syncs files in the background; work it out from `snapshot_bytes` × 20 Hz.
 
 ## Manual test by the user
 Two windows, `--resolution 1280x720 --position 0,0` and `--position 1280,0`, no role argument (the driver stays idle), started with `nohup` and logging to files. Check the logs afterwards.
