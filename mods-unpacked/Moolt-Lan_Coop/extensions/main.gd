@@ -22,9 +22,10 @@ extends "res://main.gd"
 #   vanilla's all-players-dead check (deaths come from the host too) comes first.
 # - Losing window focus doesn't pause in a session (the others keep playing).
 # - At the end of a wave the host sends the run and the pending level-ups and crates to the
-#   clients (LanNet.send_wave_end_state). Temporary until Step 7 is done: then everyone goes back
-#   to the title screen (and its lobby) instead of the coop upgrade UI and shop, which only have
-#   4 slots.
+#   clients (LanNet.send_wave_end_state). Every machine then picks its own upgrades in the
+#   vanilla solo UpgradesUI, with RunData as the local player's solo run (game/solo_view.gd).
+#   Temporary until Step 7 is done: then everyone goes back to the title screen (and its lobby)
+#   instead of the shop.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
@@ -33,7 +34,11 @@ const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.
 
 const VANILLA_HUD_SLOTS: = 4
 
+# LanNet.wave_end_ready, relayed: a yield on main's own signal ends with the scene.
+signal lan_wave_end_ready
+
 var _lan_host_run_states: = []
+var _lan_solo_upgrades_ui_ready: = false
 const NAME_LABEL_NAME: = "LanNameLabel"
 const NAME_FONT_SIZE: = 22
 const NAME_OUTLINE_SIZE: = 2
@@ -72,6 +77,7 @@ func _enter_tree() -> void :
 func _ready() -> void :
 	if LanGame.in_session():
 		add_child(WaveSync.new())
+		var _e = LanGame.get_lan_net().connect("wave_end_ready", self, "_lan_on_wave_end_ready")
 
 
 # Copies a HUD node set with the player number in its names. Names are changed before the owner
@@ -409,10 +415,105 @@ func _on_EndWaveTimer_timeout() -> void :
 	_end_wave_timer_timedout = true
 	# As vanilla, except after a failed wave (vanilla shows the retry screen there). The host
 	# then sends the run after the wave; clients apply it once this has run (LanNet).
-	if not (_is_wave_failed and RunData.current_wave > 0):
-		RunData.on_wave_end()
-		LinkedStats.reset()
-		var lan_net = LanGame.get_lan_net()
-		if lan_net.is_host:
-			lan_net.send_wave_end_state(_upgrades_to_process, _consumables_to_process)
+	if _is_wave_failed and RunData.current_wave > 0:
+		_change_scene(MenuData.title_screen_scene)
+		return
+	RunData.on_wave_end()
+	LinkedStats.reset()
+	var lan_net = LanGame.get_lan_net()
+	if lan_net.is_host:
+		lan_net.send_wave_end_state(_upgrades_to_process, _consumables_to_process)
+	elif lan_net.wave_end_state.get("wave", - 1) != RunData.current_wave:
+		yield(self, "lan_wave_end_ready")
+
+	if not _is_run_lost and not _is_run_won:
+		_wave_cleared_label.hide()
+		_wave_timer_label.hide()
+		_camera.move_speed_factor = 0.0
+		_camera.zoom_in_speed_factor = 0.0
+		_camera.zoom_out_speed_factor = 0.0
+		MusicManager.tween( - 8)
+		var wave_sync = LanGame.get_wave_sync()
+		if wave_sync != null:
+			wave_sync.stop()
+		if lan_net.enter_solo_view():
+			_lan_set_up_solo_upgrades_ui()
+			var pending: Array = _lan_get_own_pending(lan_net)
+			if _upgrades_ui.show_options(pending[0], pending[1]):
+				var things_to_process_player_container = _things_to_process_player_containers[lan_net.local_player_index]
+				var ui_consumables_to_process = things_to_process_player_container.consumables
+				var ui_upgrades_to_process = things_to_process_player_container.upgrades
+				while not ui_consumables_to_process.is_empty():
+					var consumable = yield(_upgrades_ui, "consumable_selected")
+					ui_consumables_to_process.remove_element(consumable.consumable_data)
+				while not ui_upgrades_to_process.is_empty():
+					var args = yield(_upgrades_ui, "upgrade_selected")
+					var upgrade = args[1]
+					ui_upgrades_to_process.remove_element(upgrade.level)
+				yield(_upgrades_ui, "options_processed")
+			_upgrades_ui.hide()
+			if _is_chal_ui_displayed:
+				yield(_challenge_completed_ui, "finished")
+			# Temporary until 7d: the shop isn't there yet.
+			lan_net.leave_solo_view()
 	_change_scene(MenuData.title_screen_scene)
+
+
+func _lan_on_wave_end_ready() -> void :
+	emit_signal("lan_wave_end_ready")
+
+
+# In the solo view RunData's index 0 is the local player, whose HUD is _players_ui[local index]
+# (e.g. gold from recycling a crate item).
+func on_gold_changed(new_value: int, player_index: int) -> void :
+	.on_gold_changed(new_value, _lan_hud_index(player_index))
+
+
+func on_xp_added(current_xp: float, max_xp: float, player_index: int) -> void :
+	.on_xp_added(current_xp, max_xp, _lan_hud_index(player_index))
+
+
+func _lan_hud_index(player_index: int) -> int:
+	var lan_net = LanGame.get_lan_net()
+	if lan_net != null and lan_net.solo_view.active and player_index == 0:
+		return lan_net.local_player_index
+	return player_index
+
+
+# The solo UpgradesUI's _ready returned early, since the run was a coop run then. In the solo
+# view it sets itself up for the one player.
+func _lan_set_up_solo_upgrades_ui() -> void :
+	if _lan_solo_upgrades_ui_ready:
+		return
+	_lan_solo_upgrades_ui_ready = true
+	_upgrades_ui._ready()
+
+
+# [consumables, upgrades] to process for the solo view (player_index 0), from the host's
+# wave-end state. The own things-to-process icons are rebuilt to match them, since the
+# client's came from its own copy of the wave.
+func _lan_get_own_pending(lan_net: Node) -> Array:
+	var consumables: = []
+	var upgrades: = []
+	var pending: Array = lan_net.wave_end_state.get("pending", [])
+	var own: Array = pending[lan_net.local_player_index] if lan_net.local_player_index < pending.size() else [[], []]
+
+	var container = _things_to_process_player_containers[lan_net.local_player_index]
+	for consumable_data in container.consumables._elements.duplicate():
+		container.consumables.remove_element(consumable_data)
+	for level in container.upgrades._elements.duplicate():
+		container.upgrades.remove_element(level)
+
+	for consumable_id in own[1]:
+		var consumable_to_process = UpgradesUI.ConsumableToProcess.new()
+		consumable_to_process.consumable_data = ItemService.get_element_safe(ItemService.consumables, consumable_id)
+		consumable_to_process.player_index = 0
+		consumables.append(consumable_to_process)
+		container.consumables.add_element(consumable_to_process.consumable_data)
+	for level in own[0]:
+		var upgrade_to_process = UpgradesUI.UpgradeToProcess.new()
+		upgrade_to_process.level = level
+		upgrade_to_process.player_index = 0
+		upgrades.append(upgrade_to_process)
+		container.upgrades.add_element(ItemService.get_icon(Keys.icon_upgrade_to_process_hash), level)
+	return [[consumables], [upgrades]]

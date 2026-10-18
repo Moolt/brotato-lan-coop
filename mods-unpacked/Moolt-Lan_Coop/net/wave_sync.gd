@@ -199,6 +199,14 @@ func _exit_tree() -> void :
 		_net.send_left_wave()
 
 
+# The wave is over and RunData is about to become the solo view (game/solo_view.gd): no more
+# snapshots or events either way, since they index players RunData no longer holds.
+func stop() -> void :
+	set_physics_process(false)
+	if _net.wave_sync == self:
+		_net.wave_sync = null
+
+
 func _physics_process(delta: float) -> void :
 	_frame += 1
 	if is_host:

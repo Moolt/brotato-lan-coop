@@ -325,11 +325,17 @@ func get_local_run_index() -> int:
 
 # Between waves: RunData becomes the local player's solo run (game/solo_view.gd) and back.
 func enter_solo_view() -> bool:
-	return active and solo_view.enter(local_player_index, _get_local_coop_player())
+	if not active or not solo_view.enter(local_player_index, _get_local_coop_player()):
+		return false
+	ModLoaderLog.info("Solo view entered (player %d)" % local_player_index, NetProtocol.MOD_ID)
+	return true
 
 
 func leave_solo_view() -> void :
+	if not solo_view.active:
+		return
 	solo_view.leave()
+	ModLoaderLog.info("Solo view left: %s" % to_json(RunBuilder.summarize()), NetProtocol.MOD_ID)
 
 
 func get_player_count() -> int:
@@ -512,8 +518,9 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 	if me != null:
 		local_player_index = me.player_index
 	emit_signal("lobby_changed")
-	# The host is back in the lobby (wave over, or it quit): follow it.
-	if not lobby_settings.get("in_wave", false) and _is_in_wave_scene():
+	# The host is back in the lobby (wave over, or it quit): follow it. Temporary until 7e:
+	# a client still picking its upgrades (solo view) goes there itself when done.
+	if not lobby_settings.get("in_wave", false) and _is_in_wave_scene() and not solo_view.active:
 		var _e = get_tree().change_scene(MenuData.title_screen_scene)
 
 

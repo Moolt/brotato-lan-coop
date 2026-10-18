@@ -106,6 +106,7 @@ func _process(delta: float) -> void :
 	if not run_states_logged and scene != null and scene.filename == MenuData.game_scene and scene._cleaning_up:
 		run_states_logged = true
 		log_run_states(role + "_cleanup")
+	pick_upgrades(delta)
 	if t < next_t:
 		return
 	if role == "quit" or get_node_or_null("/root/LanNet") == null:
@@ -294,20 +295,23 @@ func _host_step() -> void :
 			next_t = 16.0
 		7:
 			var main7 = get_tree().current_scene
-			# A level-up for the host player and a crate right next to it.
+			# A level-up for the host player and the client's, and three crates right next to the
+			# host (vanilla hands each to a player with the fewest, so everyone gets one).
 			RunData.add_xp(30, 0)
-			# get_node_from_pool creates the pool, which vanilla's pickup returns the crate to.
-			var crate = main7.get_node_from_pool(main7._consumable_pool_id, main7._consumables_container)
-			if crate == null:
-				crate = main7.consumable_scene.instance()
-				main7._consumables_container.add_child(crate)
-			var _c = crate.connect("picked_up", main7, "on_consumable_picked_up")
-			crate.already_picked_up = false
-			crate.consumable_data = ItemService.get_element_safe(ItemService.consumables, "consumable_item_box")
-			crate.set_texture(crate.consumable_data.icon)
-			var crate_pos = main7._players[0].global_position + Vector2(5, 0)
-			crate.drop(crate_pos, 0, crate_pos)
-			main7._consumables.push_back(crate)
+			RunData.add_xp(30, 1)
+			for i in 3:
+				# get_node_from_pool creates the pool, which vanilla's pickup returns the crate to.
+				var crate = main7.get_node_from_pool(main7._consumable_pool_id, main7._consumables_container)
+				if crate == null:
+					crate = main7.consumable_scene.instance()
+					main7._consumables_container.add_child(crate)
+				var _c = crate.connect("picked_up", main7, "on_consumable_picked_up")
+				crate.already_picked_up = false
+				crate.consumable_data = ItemService.get_element_safe(ItemService.consumables, "consumable_item_box")
+				crate.set_texture(crate.consumable_data.icon)
+				var crate_pos = main7._players[0].global_position + Vector2(5 + i * 10, 0)
+				crate.drop(crate_pos, 0, crate_pos)
+				main7._consumables.push_back(crate)
 			# An explosion next to the host player.
 			var explode_args = WeaponServiceExplodeArgs.new()
 			explode_args.pos = get_tree().current_scene._players[0].global_position + Vector2(150, 0)
@@ -350,7 +354,7 @@ func _host_step() -> void :
 						p.die()
 			next_t = 24.0
 		11:
-			next_t = 40.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
+			next_t = 50.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
 		12:
 			log_lobby("host_after_wave_end")
 			log_wave_end("host_wave_end")
@@ -366,6 +370,9 @@ func solo_view_test() -> void :
 	var net = get_node("/root/LanNet")
 	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
 	var tag = role + "_solo_view"
+	if net.solo_view.active:
+		print("[TEST] ", tag, " skipped, main is in the solo view")
+		return
 	var index: int = net.local_player_index
 	var before_json = RB.serialize_run()
 	var before_digest = RB.digest()
@@ -379,6 +386,50 @@ func solo_view_test() -> void :
 	net.leave_solo_view()
 	var after_json = RB.serialize_run()
 	print("[TEST] ", tag, " left active=", net.solo_view.active, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " connected=", CoopService.connected_players, " same_json=", after_json == before_json, " same_digest=", RB.digest() == before_digest, " max_hp=", RunData.get_player_max_health(index), "/", own_max_hp)
+
+
+var pick_wait: = 0.0
+
+
+# Between waves: in the solo upgrades UI, picks the first upgrade or takes the crate's item.
+func pick_upgrades(delta: float) -> void :
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or not main._upgrades_ui.visible:
+		return
+	pick_wait += delta
+	if pick_wait < 1.0:
+		return
+	pick_wait = 0.0
+	var container = main._upgrades_ui._player_container1
+	var own = RunData.players_data[0]
+	var before = "count=%d coop=%s gold=%d max_hp=%d items=%d" % [RunData.get_player_count(), RunData.is_coop_run, own.gold, RunData.get_player_max_health(0), own.items.size()]
+	if container._upgrades_container.visible and not container._old_upgrades.empty():
+		var upgrade = container._old_upgrades[0]
+		# The upgrade's stat for every player: from the coop run stashed by the solo view before,
+		# and after the pick (the coop run again once the last pick left the solo view).
+		var net = get_node("/root/LanNet")
+		var key_hash = Keys.generate_hash(upgrade.effects[0].key)
+		var stat_before = []
+		for player_data in net.solo_view._players_data:
+			stat_before.append(player_data.effects.get(key_hash))
+		container._on_choose_button_pressed(upgrade)
+		var stat_after = []
+		if net.solo_view.active:
+			stat_after = ["own", RunData.players_data[0].effects.get(key_hash)]
+		else:
+			for player_data in RunData.players_data:
+				stat_after.append(player_data.effects.get(key_hash))
+		print("[TEST] ", role, "_pick upgrade=", upgrade.my_id, " ", upgrade.effects[0].key, "+", upgrade.effects[0].value, " before ", before, " stat coop_before=", stat_before, " after=", stat_after, " icons=", main._things_to_process_player_containers[net.local_player_index].upgrades._elements)
+	elif container._items_container.visible:
+		# The host takes the item, the client recycles it (gold shows in its own HUD).
+		var item = container._item_data
+		var local_index = get_node("/root/LanNet").local_player_index
+		if role == "host":
+			container._on_TakeButton_pressed()
+		else:
+			container._on_DiscardButton_pressed()
+		print("[TEST] ", role, "_pick item=", item.my_id if item != null else "-", " ", "taken" if role == "host" else "recycled", " before ", before, " after items=", own.items.size(), " gold=", own.gold, " hud_gold=", main._players_ui[local_index].gold.gold_label.text, " crate_icons=", main._things_to_process_player_containers[local_index].consumables._elements.size())
+	shot(role + "_upgrades")
 
 
 func log_wave_end(tag: String) -> void :
@@ -477,7 +528,7 @@ func _client_step() -> void :
 				log_sync("client_w21")
 			next_t = 23.6
 		10:
-			next_t = 40.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
+			next_t = 50.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
 		11:
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")
