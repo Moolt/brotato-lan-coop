@@ -16,6 +16,7 @@ extends Node
 #         wave-end state it received
 #   (host and join) WAVES=n: n waves with upgrades and shop in between, then both check the
 #         next wave (digest, every player's gear) before the end steps
+#   (join) TIMER_LAG=s: the client's wave timer s seconds behind the host's near the wave's end
 #   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
 #         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
@@ -433,6 +434,8 @@ func pick_upgrades(delta: float) -> void :
 	pick_wait = 0.0
 	var container = main._upgrades_ui._player_container1
 	var own = RunData.players_data[0]
+	var wave_timer = main._wave_timer
+	print("[TEST] ", role, "_upgrades wave_timer time_left=", stepify(wave_timer.time_left, 0.01), " paused=", wave_timer.paused, " ticking=", not wave_timer.tick_timer.is_stopped())
 	var before = "count=%d coop=%s gold=%d max_hp=%d items=%d" % [RunData.get_player_count(), RunData.is_coop_run, own.gold, RunData.get_player_max_health(0), own.items.size()]
 	if container._upgrades_container.visible and not container._old_upgrades.empty():
 		var upgrade = container._old_upgrades[0]
@@ -611,6 +614,7 @@ func log_run_states(tag: String) -> void :
 		print("[TEST] ", tag, " not in wave, scene=", scene_name())
 		return
 	print("[TEST] ", tag, " cleaning_up=", main._cleaning_up, " wave_failed=", main._is_wave_failed, " run_lost=", main._is_run_lost, " run_won=", main._is_run_won)
+	print("[TEST] ", tag, " wave_timer time_left=", stepify(main._wave_timer.time_left, 0.01), " paused=", main._wave_timer.paused, " ticking=", not main._wave_timer.tick_timer.is_stopped())
 
 
 func _client_step() -> void :
@@ -692,6 +696,11 @@ func _client_step() -> void :
 				log_lobby("client_left_wave")
 			else:
 				log_sync("client_w21")
+				if OS.get_environment("TIMER_LAG") != "":
+					# The client's wave timer a little behind the host's (within the resync
+					# threshold), as network delay leaves it.
+					var timer = get_tree().current_scene._wave_timer
+					timer.start(timer.time_left + float(OS.get_environment("TIMER_LAG")))
 			next_t = 23.6
 		10:
 			if waves_target() > 1:

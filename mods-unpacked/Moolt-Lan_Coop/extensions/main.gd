@@ -319,6 +319,13 @@ func clean_up_room() -> void :
 	if _lan_is_client() and _cleaning_up:
 		return
 	.clean_up_room()
+	# WaveTimer.stop() only pauses the timer and stops its tick sound, and its _physics_process
+	# restarts the tick while 0.1-6 s are left. A client's timer runs a little behind the host's,
+	# so the host's cleanup can stop it with time left: the countdown would tick through the
+	# upgrades until the scene changes.
+	if LanGame.in_session():
+		_wave_timer.set_physics_process(false)
+		_wave_timer.tick_timer.stop()
 
 
 # clean_up_room starts with this. The host sends its verdict (wave failed, run lost, run won)

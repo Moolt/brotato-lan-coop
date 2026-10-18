@@ -542,6 +542,7 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - `FAKE_SAVED_RUN=1`: the stand-in run (wave 7) is the same after leaving the session (same hash).
   - `ROUNDS=2 KILL_ALL=1` (the regression test for the stale wave-end state, now that a lost run sends one): both runs end on the end screens, round 2's client receives the state before entering the solo view.
   - Default (one wave, then wave 2): unchanged. No `ERROR:`.
+- **Fix after the manual test (ticking in the upgrade screen):** vanilla's `WaveTimer.stop()` only pauses the timer and stops the tick timer, and its `_physics_process` restarts the tick while 0.1–6 s are left. A client's wave timer runs a little behind the host's (resynced only beyond 0.5 s), so the host's cleanup could pause it with time left, and the countdown ticked through the upgrades until the shop. In a session `clean_up_room` now also turns off the wave timer's physics process. Driver `TIMER_LAG=0.3` (the client's timer 0.3 s behind) reproduced it (`ticking=True` in the upgrades) and passes with the fix.
 
 ## Step 8: Polish
 - ~~Floating names above players.~~ Moved into 4c.
