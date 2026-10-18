@@ -464,7 +464,11 @@ func _new_selected_marker(color: Color) -> Control:
 
 # Previews
 
+# Not while the page leaves the tree (scene change): the focused grid element reports losing the
+# focus after the panels' nodes have left, and filling them then fails in vanilla's EffectLine.
 func _update_previews() -> void :
+	if not _character_panel.is_inside_tree() or not _item_panel.is_inside_tree():
+		return
 	_mouse_visible = Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE
 	var me = _net.get_local_player() if _net != null else null
 	var character = LobbyRules.get_character(me.character_id) if me != null else null
