@@ -24,6 +24,8 @@ extends Node
 #   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
 #         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
+#   lobby: hosts, picks and readies, then screenshots the lobby page while a character and a
+#         weapon are hovered and with nothing hovered, and quits (lobby layout)
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -42,7 +44,7 @@ var round_nr: = 1
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
 	for a in OS.get_cmdline_args():
-		if a in ["host", "join", "quit", "solo"]:
+		if a in ["host", "join", "quit", "solo", "lobby"]:
 			role = a
 	print("[TEST] role=", role)
 
@@ -128,6 +130,8 @@ func _process(delta: float) -> void :
 		return
 	if role == "solo":
 		_solo_step()
+	elif role == "lobby":
+		_lobby_step()
 	elif role == "host":
 		_host_step()
 	else:
@@ -809,4 +813,36 @@ func _solo_step() -> void :
 		3:
 			print("[TEST] solo after wave scene=", scene_name())
 			shot("solo_after")
+			get_tree().quit()
+
+
+func _lobby_step() -> void :
+	var m = menus()
+	match step:
+		0:
+			next_t = 2.0
+		1:
+			m._main_menu.left_container.get_node("LanMultiplayerButton").emit_signal("pressed")
+			m.get_node("LanMultiplayerMenu")._host_button.emit_signal("pressed")
+			next_t = t + 0.5
+		2:
+			pick_and_ready(m.get_node("LanLobby"), 0)
+			next_t = t + 1.5
+		3:
+			var lobby = m.get_node("LanLobby")
+			lobby._on_CharacterGrid_element_hovered(first_element(lobby._character_grid, 4))
+			next_t = t + 0.5
+		4:
+			shot("lobby_character_hovered")
+			var lobby = m.get_node("LanLobby")
+			lobby._on_CharacterGrid_element_unhovered(lobby._hovered_character)
+			lobby._on_WeaponGrid_element_hovered(first_element(lobby._weapon_grid, 2))
+			next_t = t + 0.5
+		5:
+			shot("lobby_weapon_hovered")
+			var lobby = m.get_node("LanLobby")
+			lobby._on_WeaponGrid_element_unhovered(lobby._hovered_weapon)
+			next_t = t + 0.5
+		6:
+			shot("lobby_nothing_hovered")
 			get_tree().quit()

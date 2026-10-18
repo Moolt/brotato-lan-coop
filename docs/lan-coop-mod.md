@@ -17,7 +17,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `game/solo_view.gd` | `SoloView` (`LanNet.solo_view`): between waves, RunData becomes the local player's solo run (index 0, not coop, only the local device) and back; moves RunData's per-player slots, resets per-player caches. |
 | `game/offscreen_arrows.gd` | Arrows at the screen edge pointing at off-screen teammates, in their colour (main's `UI` layer). |
 | `game/lan_game.gd` | Static helpers: `MAX_PLAYERS` (12), `in_session()`, `get_lan_net()`, `get_wave_sync()`, `is_wave_client()`, `get_player_name()`, `grow()` for 4-slot arrays, scaling formulas. |
-| `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby, `ui_kit.gd` building blocks; `shop_waiting_overlay.gd` (over the shop after Go). |
+| `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby (player list; character and weapon grids, each with a simplified preview of the hovered entry or the pick), `ui_kit.gd` building blocks; `shop_waiting_overlay.gd` (over the shop after Go). |
 | `extensions/…` | Script extensions, mirrored vanilla paths (list below). |
 | `tools/lan_test_driver.gd` (repo root, not in the mod) | Test autoload for the throwaway game copy; see the plan's Verification section. |
 
