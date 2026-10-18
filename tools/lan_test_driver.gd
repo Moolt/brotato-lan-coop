@@ -317,7 +317,14 @@ func _host_step() -> void :
 			pick_and_ready(m.get_node("LanLobby"), 0)
 			next_t = 9.0
 		3:
-			add_fake_players(net, int(OS.get_environment("FAKES")) if OS.get_environment("FAKES") != "" else 1)
+			if round_nr == 1:
+				add_fake_players(net, int(OS.get_environment("FAKES")) if OS.get_environment("FAKES") != "" else 1)
+			else:
+				# Back in the lobby everyone is un-readied.
+				for entry in net.players:
+					if entry.peer_id >= 1000:
+						entry.ready = true
+				net._broadcast_lobby_state()
 			next_t = 10.0
 		4:
 			log_lobby("host_before_start")
@@ -426,10 +433,10 @@ func _host_step() -> void :
 			next_t = t + 2.0
 		13:
 			if next_round():
-				# Start again (step 4) half a second later.
-				step = 3
-				t = 9.5
-				next_t = 10.0
+				# Pick and ready again (step 2), then Start (step 4).
+				step = 1
+				t = 8.5
+				next_t = 9.0
 				return
 			net.leave()
 			log_saved_run("host_after_session")
@@ -803,10 +810,11 @@ func _client_step() -> void :
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")
 			if next_round():
-				# Back to the in-wave steps (4) once the host's next run is up.
-				step = 3
+				# Pick and ready again (step 3), then the in-wave steps (4) once the host's next
+				# run is up.
+				step = 2
 				t = 10.0
-				next_t = 14.0
+				next_t = 10.5
 				return
 			get_tree().quit()
 

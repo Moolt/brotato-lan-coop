@@ -245,7 +245,8 @@ func set_lobby_settings(changes: Dictionary) -> void :
 
 # Host only: while true, new joins are rejected and dropped players keep their slot.
 # lobby_settings.in_wave tells the clients' lobbies. Ending it drops the players who left
-# meanwhile and makes the run stale (it was played), so Start builds a fresh one.
+# meanwhile and makes the run stale (it was played), so Start builds a fresh one. Everyone is
+# un-readied, so the next run starts only after each player confirmed their pick again.
 func set_run_in_progress(value: bool) -> void :
 	if not is_host or run_in_progress == value:
 		return
@@ -255,6 +256,8 @@ func set_run_in_progress(value: bool) -> void :
 		for entry in players.duplicate():
 			if not entry.connected:
 				players.erase(entry)
+			else:
+				entry.ready = false
 		_compact_player_indices()
 	_broadcast_lobby_state(value)
 
