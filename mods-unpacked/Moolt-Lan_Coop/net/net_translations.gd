@@ -54,6 +54,9 @@ const STRINGS: = {
 		"LAN_RUN_FAILED_CLIENT": "Your run differs from the host's (see log).", 
 		"LAN_HINT_HOST_IN_WAVE": "A wave is in progress. You are back in when it ends.", 
 		"LAN_WAITING_FOR_PLAYERS": "Waiting for players...", 
+		"LAN_SHOP_WAITING": "Waiting for the others", 
+		"LAN_SHOP_STILL_SHOPPING": "Still shopping: {0}", 
+		"LAN_SHOP_BACK": "Back to the shop", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -106,6 +109,9 @@ const STRINGS: = {
 		"LAN_RUN_FAILED_CLIENT": "Deine Runde weicht von der des Hosts ab (siehe Log).", 
 		"LAN_HINT_HOST_IN_WAVE": "Eine Welle läuft gerade. Wenn sie endet, bist du wieder dabei.",
 		"LAN_WAITING_FOR_PLAYERS": "Warte auf Spieler...", 
+		"LAN_SHOP_WAITING": "Warte auf die anderen", 
+		"LAN_SHOP_STILL_SHOPPING": "Noch im Shop: {0}", 
+		"LAN_SHOP_BACK": "Zurück zum Shop", 
 	}, 
 }
 

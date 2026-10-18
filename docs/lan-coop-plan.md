@@ -486,9 +486,26 @@ Goal (milestone 5): after a wave, every machine picks its own level-up upgrades,
   - Until 7e, the host collects everyone's Go and then sends all peers back to the lobby.
   - **Test:** both machines shop independently; the waiting list updates as players press Go.
 
+**7d status: done.**
+- **`main.gd` extension:** after the upgrades and the challenge UI, `_change_scene(RunData.get_shop_scene_path())`, still in the solo view, so `shop.tscn` on the own data.
+- **`extensions/ui/menus/shop/base_shop.gd`** (`Shop` picks it up, ModLoader reloads `class_name` children): in a session, Go doesn't run vanilla's next-wave code. It marks the candy-bag item locking (vanilla's Go reads the shop items locked on screen, which only this machine has, so this runs here and not on the host), opens the waiting overlay and calls `LanNet.send_shop_done(true)`. "Back to the shop" or cancel (vanilla's `_clear_go_button_pressed`) hides it and sends `send_shop_done(false)`. Vanilla clears Go when the Go button loses focus; the overlay takes the focus, so that is off in a session. The pause menu hides the overlay and shows it again afterwards.
+- **`ui/shop_waiting_overlay.gd`** (instead of the planned `ui/net_player_list.gd`): full-screen dim (0.8, blocks the mouse), "Waiting for the others", "Still shopping: …", "Back to the shop" (focus stays on it). Added right after the shop's `Content`, so the pause menu's own handling (hide `Content`) doesn't apply and `on_paused` hides it instead.
+- **`LanNet`** (`PROTOCOL_VERSION` 14):
+  - `between_waves` (set when entering the solo view, cleared on the title screen or when everyone is done), `shop_done`, `shop_waiting_names`, signal `shop_waiting_changed`.
+  - `send_shop_done(done)`: the own solo run (`RunBuilder.serialize_run()`, its slot 0 is the player with locked items and tracked effects) or `""` goes to the host as `_rpc_shop_done(wave, json)`; the host handles its own directly.
+  - Host: `_shop_runs[player_index]` (checked with `RunBuilder.parse_solo_run`: save-loader deserialization without touching `RunData`, exactly one player), `_update_shop_waiting()` lists the host and every connected client not in `_left_run_peers` that hasn't sent its run, broadcasts `_rpc_shop_waiting(names)` on change, and goes on when the list is empty. Called on Go, Back, disconnect and quit.
+  - `_left_run_peers`: `_rpc_left_wave` now also works between waves (no `LanWaveSync`); cleared when a wave is entered.
+  - `on_title_screen()` (from the title-screen extension's `_ready`): a client that hadn't pressed Go sends `_rpc_left_wave`; any solo view is left; `between_waves` ends.
+  - Clients follow the host's "back in the lobby" broadcast from `main.tscn` and from the shop (7c's exception for the solo view is gone: the host only returns there once everyone is done, or when it quits).
+  - Fix for 7a: `_rpc_wave_end_state` carries `_run_id_counter`, not `lobby_settings.run_id`, which a disconnect during the run resets to 0 (clients would have dropped the state).
+- **Temporary (until 7e):** once everyone is done, the host logs each result (gold, items, weapons, locked items), leaves the solo view and goes to the lobby; the clients follow.
+- **Tested** (driver: each buys one shop item and locks another; the client presses Go, Back, Go again; the host is last): client overlay "Still shopping: HostPlayer", Back hides it and takes the Go back, Go again shows it; the host gets both results (e.g. player 1: gold 45, 3 weapons, 1 locked) and both end in the lobby. `SHOP_QUIT=1` (client quits from the shop): the host goes on after its own Go. Found and fixed on the way: vanilla's Go-button `focus_exited` took the Go back as soon as the overlay took the focus. No `ERROR:`.
+
 - **7e: host merge and next wave (milestone 5).**
   - When all players are done, the host deserializes each player into `players_data[i]` (JSON round trips turn ints into floats, see 7a), puts their per-player shop state into their slots, and restores the coop run.
-  - It runs the once-per-wave parts of vanilla's Go handler: `save_run_state`, candy-bag item locking, hourglass items and `extra_elite_next_wave_chance` per player, then the wave increment **once** for everyone (`current_wave += 1 - wave_reset_count`).
+  - It runs the once-per-wave parts of vanilla's Go handler: `save_run_state`, hourglass items and `extra_elite_next_wave_chance` per player, then the wave increment **once** for everyone (`current_wave += 1 - wave_reset_count`). (The candy-bag item locking already ran on each machine at Go, 7d.)
+  - **12-player fix needed:** `ProgressDataLoaderV3.deserialize_run_state` builds `locked_shop_items` as `[[], [], [], []]` and then loops over the state's slots (12 in a session), so `apply_run` fails as soon as a player with index 4+ has a locked shop item. Extend the loader (grow the result's `locked_shop_items` before the loop) before merging runs with locked items.
+  - Inputs: `LanNet._shop_runs[player_index]` (solo run JSON; `RunBuilder.parse_solo_run` gives `players_data[0]`, `locked_shop_items[0]`, `tracked_item_effects[0]`). Players without a result (quit or disconnected) keep their wave-end state.
   - Then it sends the run state and everyone loads `main.tscn` (same path as Start: run state, digest, `_rpc_enter_wave`). Every peer leaves its solo view first.
   - **Gap carried over:** clients that left the wave mid-way sit in the lobby and need the run state when the next wave starts.
   - **Test:** several waves in a row on two machines; items bought on the client exist on the host in the next wave (and the reverse), gold and stats match.
@@ -534,7 +551,7 @@ Status: milestones 1–4 are done (3 and 4 with Step 6). Steps 4 (12 players in 
 ## Critical files to extend
 **Already extended:** `singletons/progress_data.gd`, `ui/menus/title_screen/title_screen_menus.gd`, `ui/menus/ingame/ingame_main_menu.gd`, `ui/menus/global/popup_manager.gd`, `main.gd`, `entities/units/movement_behaviors/player_movement_behavior.gd`, `global/entity_spawner.gd`, `global/stats_manager.gd`, `singletons/coop_service.gd`, `singletons/debug_service.gd`, `singletons/run_data.gd`, `singletons/utils.gd`, `singletons/zone_service.gd`, `entities/units/player/player.gd`, `entities/birth/entity_birth.gd`, `weapons/weapon.gd`, `projectiles/projectile.gd`, `entities/units/enemies/enemy.gd`, `entities/structures/turret/turret.gd`, `singletons/weapon_service.gd`, `items/global/item.gd`, `ui/menus/ingame/pause_menu.gd`, `singletons/focus_emulator_signal.gd`. `TempStats`/`LinkedStats` arrays are grown from `LanNet._ready` instead of an extension.
 
-**Still to come:** `ui/menus/shop/base_shop.gd` (Step 7).
+**Also extended:** `ui/menus/shop/base_shop.gd` (7d).
 
 ## Verification
 - **Local multi-instance testing.**

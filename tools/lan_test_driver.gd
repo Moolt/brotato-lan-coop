@@ -107,6 +107,7 @@ func _process(delta: float) -> void :
 		run_states_logged = true
 		log_run_states(role + "_cleanup")
 	pick_upgrades(delta)
+	shop_actions(delta)
 	if t < next_t:
 		return
 	if role == "quit" or get_node_or_null("/root/LanNet") == null:
@@ -354,7 +355,7 @@ func _host_step() -> void :
 						p.die()
 			next_t = 24.0
 		11:
-			next_t = 50.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
+			next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 30.0
 		12:
 			log_lobby("host_after_wave_end")
 			log_wave_end("host_wave_end")
@@ -430,6 +431,66 @@ func pick_upgrades(delta: float) -> void :
 			container._on_DiscardButton_pressed()
 		print("[TEST] ", role, "_pick item=", item.my_id if item != null else "-", " ", "taken" if role == "host" else "recycled", " before ", before, " after items=", own.items.size(), " gold=", own.gold, " hud_gold=", main._players_ui[local_index].gold.gold_label.text, " crate_icons=", main._things_to_process_player_containers[local_index].consumables._elements.size())
 	shot(role + "_upgrades")
+
+
+var shop_step: = 0
+var shop_wait: = 0.0
+
+
+# Between waves, in the solo shop: buys an item, locks another, presses Go. The client presses
+# Go, goes back to the shop and presses Go again; the host is done last.
+func shop_actions(delta: float) -> void :
+	var shop = get_tree().current_scene
+	if shop == null or not shop is BaseShop:
+		shop_step = 0
+		shop_wait = 0.0
+		return
+	shop_wait += delta
+	var net = get_node("/root/LanNet")
+	var overlay = shop.get_node_or_null("LanShopWaitingOverlay")
+	var tag = role + "_shop"
+	var delay = 7.0 if role == "host" else 1.0
+	if shop_step == 0 and shop_wait >= delay and role != "host" and OS.get_environment("SHOP_QUIT") == "1":
+		# Quit the run from the shop (like the pause menu's Quit): the host stops waiting.
+		print("[TEST] ", tag, " quitting to the title screen")
+		shop_step = 3
+		var _e = get_tree().change_scene(MenuData.title_screen_scene)
+		return
+	if shop_step == 0 and shop_wait >= delay:
+		var container = shop._get_shop_items_container(0)
+		var own = RunData.players_data[0]
+		var gold_before = own.gold
+		var bought = "-"
+		var locked = "-"
+		for item in container._shop_items:
+			if not item.active:
+				continue
+			if bought == "-":
+				container.on_shop_item_buy_button_pressed(item)
+				if own.gold < gold_before:
+					bought = item.item_data.my_id
+					continue
+			if locked == "-":
+				item.change_lock_status(true)
+				locked = item.item_data.my_id
+		print("[TEST] ", tag, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " scene=", shop.filename, " bought=", bought, " gold=", gold_before, "->", own.gold, " locked=", locked, " locked_slot0=", RunData.locked_shop_items[0].size(), " items=", own.items.size(), " weapons=", own.weapons.size())
+		shot(tag)
+		shop._on_GoButton_pressed(0)
+		print("[TEST] ", tag, " go overlay=", overlay.visible if overlay != null else "none", " done=", net.shop_done, " waiting=", net.shop_waiting_names)
+		shop_step = 1
+		shop_wait = 0.0
+	elif shop_step == 1 and shop_wait >= 1.0:
+		print("[TEST] ", tag, " waiting=", net.shop_waiting_names, " overlay_text='", overlay._names_label.text if overlay != null else "", "'")
+		shot(tag + "_waiting")
+		if role != "host":
+			overlay._back_button.emit_signal("pressed")
+			print("[TEST] ", tag, " back overlay=", overlay.visible, " done=", net.shop_done)
+		shop_step = 2
+		shop_wait = 0.0
+	elif shop_step == 2 and shop_wait >= 1.5 and role != "host":
+		shop._on_GoButton_pressed(0)
+		print("[TEST] ", tag, " go_again overlay=", overlay.visible, " done=", net.shop_done)
+		shop_step = 3
 
 
 func log_wave_end(tag: String) -> void :
@@ -528,7 +589,7 @@ func _client_step() -> void :
 				log_sync("client_w21")
 			next_t = 23.6
 		10:
-			next_t = 50.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
+			next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 29.0
 		11:
 			log_lobby("client_end")
 			log_wave_end("client_wave_end")

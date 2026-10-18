@@ -79,6 +79,19 @@ static func apply_run(run_json: String) -> bool:
 	return true
 
 
+# Host: a player's solo run from the shop's Go (serialize_run in the solo view), deserialized
+# by the save loader like apply_run, without touching RunData. Its slot 0 holds the player:
+# players_data, locked_shop_items, tracked_item_effects. Empty if the text isn't a solo run.
+static func parse_solo_run(run_json: String) -> Dictionary:
+	var parsed: = JSON.parse(run_json)
+	if parsed.error != OK or typeof(parsed.result) != TYPE_DICTIONARY or not parsed.result.get("has_run_state", false):
+		return {}
+	var state: Dictionary = ProgressDataLoaderV3.new().deserialize_run_state(parsed.result)
+	if not state.get("has_run_state", false) or state.players_data.size() != 1 or not state.players_data[0] is PlayerRunData:
+		return {}
+	return state
+
+
 # Host: each player's level-ups and crates still to process, from main's _upgrades_to_process
 # and _consumables_to_process (they live in main, not in RunData): [[levels], [consumable ids]]
 # per player.

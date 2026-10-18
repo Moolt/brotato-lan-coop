@@ -23,9 +23,9 @@ extends "res://main.gd"
 # - Losing window focus doesn't pause in a session (the others keep playing).
 # - At the end of a wave the host sends the run and the pending level-ups and crates to the
 #   clients (LanNet.send_wave_end_state). Every machine then picks its own upgrades in the
-#   vanilla solo UpgradesUI, with RunData as the local player's solo run (game/solo_view.gd).
-#   Temporary until Step 7 is done: then everyone goes back to the title screen (and its lobby)
-#   instead of the shop.
+#   vanilla solo UpgradesUI, with RunData as the local player's solo run (game/solo_view.gd),
+#   and goes on to the solo shop. After a lost or won run everyone goes back to the title
+#   screen (and its lobby) until 7f.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
@@ -454,8 +454,9 @@ func _on_EndWaveTimer_timeout() -> void :
 			_upgrades_ui.hide()
 			if _is_chal_ui_displayed:
 				yield(_challenge_completed_ui, "finished")
-			# Temporary until 7d: the shop isn't there yet.
-			lan_net.leave_solo_view()
+			# Still in the solo view, so this is the solo shop.tscn (Go: the base_shop.gd extension).
+			_change_scene(RunData.get_shop_scene_path())
+			return
 	_change_scene(MenuData.title_screen_scene)
 
 

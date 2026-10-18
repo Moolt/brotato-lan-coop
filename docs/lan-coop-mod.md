@@ -7,7 +7,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 |---|---|
 | `mod_main.gd` | Installs the extensions (one line each), registers translations, adds `/root/LanNet` deferred. |
 | `net/net_manager.gd` | `LanNet`: ENet peer, handshake, lobby state, run sync, all RPCs, session flags. |
-| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 13, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
+| `net/net_protocol.gd` | `PROTOCOL_VERSION` (now 14, bump on any RPC/layout change), limits, reject reasons, `DEFAULT_SCALING`, lobby entry and settings defaults, unlock helpers. |
 | `net/net_config.gd` | `user://lan_coop.cfg`: name, last IP, port, last zone/difficulty, `[scaling]` knobs. |
 | `net/net_discovery.gd` | UDP beacon (host) and listener (join page). |
 | `net/lobby_rules.gd` | Character/weapon/zone/difficulty lookup and validation. |
@@ -16,7 +16,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `net/net_translations.gd` | Runtime en + de translations for `LAN_*` / `MENU_MULTIPLAYER` keys. |
 | `game/solo_view.gd` | `SoloView` (`LanNet.solo_view`): between waves, RunData becomes the local player's solo run (index 0, not coop, only the local device) and back; moves RunData's per-player slots, resets per-player caches. |
 | `game/lan_game.gd` | Static helpers: `MAX_PLAYERS` (12), `in_session()`, `get_lan_net()`, `get_wave_sync()`, `is_wave_client()`, `get_player_name()`, `grow()` for 4-slot arrays, scaling formulas. |
-| `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby, `ui_kit.gd` building blocks. |
+| `ui/*.gd` | Pages built in code: multiplayer menu, join menu, lobby, `ui_kit.gd` building blocks; `shop_waiting_overlay.gd` (over the shop after Go). |
 | `extensions/…` | Script extensions, mirrored vanilla paths (list below). |
 | `tools/lan_test_driver.gd` (repo root, not in the mod) | Test autoload for the throwaway game copy; see the plan's Verification section. |
 
@@ -26,8 +26,9 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 3. **Start** (`start_run`): host builds the run (`RunBuilder.build_run`), serializes it, applies its own copy from the same JSON, sends `_rpc_run_state(run_id, json, digest)`; clients apply and ack. Any lobby change makes the run stale (`run_id` = 0).
 4. **Wave**: once every client acked, the host sets `run_in_progress` (`lobby_settings.in_wave`), fills `CoopService.connected_players` (own device 7 keyboard / 6 gamepad, others -1), sends `_rpc_enter_wave(run_id)` and everyone loads `main.tscn`. The `main.gd` extension adds `LanWaveSync` in `_ready`.
 5. **Wave end**: unless the wave failed, the host's `main.gd` extension runs `RunData.on_wave_end()` / `LinkedStats.reset()` and `LanNet.send_wave_end_state`: the run after the wave (JSON, applied on the host too) with its digest and each player's pending level-ups and crates (`RunBuilder.pack_pending`: `[[levels], [consumable ids]]` per player) go out as `_rpc_wave_end_state(run_id, wave, json, digest, pending)`. A client applies it once its own wave is over (end-wave timer ran, or it left `main.tscn`), stores `LanNet.wave_end_state = {wave, pending, ok}` and answers `_rpc_wave_end_ack(wave, ok)`. Both roles emit `LanNet.wave_end_ready` once `wave_end_state` is set (`main` relays it as its own `lan_wave_end_ready`, which a client's end-wave code yields on).
-6. **Upgrades** (not after a lost or won run): every peer stops `LanWaveSync` (`stop()`: no physics, `LanNet.wave_sync` = null, so late snapshots and events are dropped), enters the solo view (`game/solo_view.gd`) and runs vanilla's solo flow on the solo `UpgradesUI` with its own pending level-ups and crates from `wave_end_state` (`player_index` 0; the own things-to-process icons are rebuilt from them). The solo `UpgradesUI` set itself up as nothing in `_ready` (the run was coop then), so its `_ready` runs again once in the solo view. Then the challenge UI, then (temporary until 7d) the solo view is left and the peer goes back to the title screen (whose vanilla `_ready` resets `RunData`), whose extension reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients still in `main.tscn` follow when a lobby broadcast says `in_wave` is false, unless they are still picking (solo view active).
-7. **Leave / errors**: `_end_session(reason)` restores unlocks and saves, resets RunData if a synced run replaced it, and returns to the title screen with a reason popup.
+6. **Upgrades** (not after a lost or won run): every peer stops `LanWaveSync` (`stop()`: no physics, `LanNet.wave_sync` = null, so late snapshots and events are dropped), enters the solo view (`game/solo_view.gd`) and runs vanilla's solo flow on the solo `UpgradesUI` with its own pending level-ups and crates from `wave_end_state` (`player_index` 0; the own things-to-process icons are rebuilt from them). The solo `UpgradesUI` set itself up as nothing in `_ready` (the run was coop then), so its `_ready` runs again once in the solo view. Then the challenge UI, then the solo `shop.tscn`, still in the solo view.
+7. **Shop**: the `base_shop.gd` extension's Go marks the candy-bag item locking, shows `ui/shop_waiting_overlay.gd` and calls `LanNet.send_shop_done(true)`: the own solo run (JSON) goes to the host as `_rpc_shop_done(wave, json)`; "Back to the shop" or cancel sends `""`. The host keeps the runs (`_shop_runs`), waits for itself and every connected client that didn't quit (`_left_run_peers`, from `_rpc_left_wave`, which a client also sends when it reaches the title screen between waves without having pressed Go), and broadcasts who is still shopping (`_rpc_shop_waiting(names)`). Once nobody is (temporary until 7e), it logs the results, leaves the solo view and goes back to the title screen (whose vanilla `_ready` resets `RunData`), whose extension calls `LanNet.on_title_screen()`, reopens the lobby and (host) calls `set_run_in_progress(false)`, which drops disconnected players and makes the run stale. Clients in `main.tscn` or the shop follow when a lobby broadcast says `in_wave` is false.
+8. **Leave / errors**: `_end_session(reason)` restores unlocks and saves, resets RunData if a synced run replaced it, and returns to the title screen with a reason popup.
 
 ## In-wave sync (`LanWaveSync`)
 **Authority:** each machine moves its own player; the host simulates everything else. Clients spawn copies of host entities through vanilla code, then make them inert.
@@ -91,6 +92,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `ui/menus/ingame/pause_menu.gd` | session pause without `get_tree().paused`, native focus (no FocusEmulator) |
 | `singletons/focus_emulator_signal.gd` | answers the local player (`LanNet.get_local_run_index()`, 0 in the solo view) when no emulator reported one |
 | `ui/menus/ingame/ingame_main_menu.gd` | hides Restart and End Run in a session |
+| `ui/menus/shop/base_shop.gd` | Go sends the own solo run to the host and shows the waiting overlay; Back/cancel takes it back; no Go clear on focus loss; candy-bag locking at Go |
 | `ui/menus/title_screen/title_screen_menus.gd` | Multiplayer button, mod pages, lobby restore |
 
 ## Pitfalls learned

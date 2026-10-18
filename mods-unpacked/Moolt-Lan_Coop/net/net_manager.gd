@@ -12,6 +12,8 @@ signal player_disconnected(player_index)
 signal run_sync_changed()
 # wave_end_state was set (host: sent, client: applied).
 signal wave_end_ready()
+# shop_waiting_names changed.
+signal shop_waiting_changed()
 
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const NetConfig = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_config.gd")
@@ -71,6 +73,21 @@ var _incoming_wave_end: = {}
 var _wave_end_acks: = {}
 # Between waves RunData holds only the local player (game/solo_view.gd).
 var solo_view = SoloView.new()
+
+# Between waves (from entering the solo view at wave end until the next wave or the lobby),
+# every player shops on its own machine. Go sends the own solo run (RunBuilder.serialize_run)
+# to the host; "Back to the shop" takes it back. The host waits for every player still in the
+# run (connected and not quit), tells everyone who is still shopping, and goes on once all are
+# done.
+var between_waves: = false
+# Names of the players still shopping (all peers).
+var shop_waiting_names: = []
+# This machine pressed Go (and didn't take it back).
+var shop_done: = false
+# Host: player_index -> the player's solo run (JSON) for wave_end_state.wave.
+var _shop_runs: = {}
+# Host: peers that quit the run (pause menu, in the wave or between waves); not waited for.
+var _left_run_peers: = {}
 
 # The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
 # In-wave RPCs are forwarded to it.
@@ -276,9 +293,11 @@ func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Arr
 	var digest: = RunBuilder.digest()
 	wave_end_state = {"wave": RunData.current_wave, "pending": pending, "ok": true}
 	_wave_end_acks = {}
+	_shop_runs = {}
 	ModLoaderLog.info("Wave %d over, sending the run: %s, pending %s" % [RunData.current_wave, to_json(RunBuilder.summarize()), to_json(pending)], NetProtocol.MOD_ID)
 	for entry in _get_connected_clients():
-		rpc_id(entry.peer_id, "_rpc_wave_end_state", lobby_settings.get("run_id", 0), RunData.current_wave, run_state, digest, pending)
+		# The run the clients hold: a disconnect meanwhile reset lobby_settings.run_id.
+		rpc_id(entry.peer_id, "_rpc_wave_end_state", _run_id_counter, RunData.current_wave, run_state, digest, pending)
 	emit_signal("wave_end_ready")
 
 
@@ -318,6 +337,31 @@ func get_local_player():
 	return get_player(local_player_index)
 
 
+# Shop Go (done) or "Back to the shop" (not done): the own solo run goes to the host.
+func send_shop_done(done: bool) -> void :
+	if not between_waves:
+		return
+	shop_done = done
+	var run_json: = RunBuilder.serialize_run() if done else ""
+	var wave: int = wave_end_state.get("wave", - 1)
+	if is_host:
+		_on_shop_done(local_player_index, wave, run_json)
+	elif joined:
+		rpc_id(HOST_PEER_ID, "_rpc_shop_done", wave, run_json)
+
+
+# Back on the title screen (lobby) during a session: whatever happened between waves is over.
+# A client that hadn't pressed Go quit the run; the host stops waiting for it.
+func on_title_screen() -> void :
+	if is_client and joined and between_waves and not shop_done:
+		rpc_id(HOST_PEER_ID, "_rpc_left_wave")
+	between_waves = false
+	shop_done = false
+	shop_waiting_names = []
+	if solo_view.active:
+		leave_solo_view()
+
+
 # The local player's index in RunData right now: 0 in the solo view, else local_player_index.
 func get_local_run_index() -> int:
 	return 0 if solo_view.active else local_player_index
@@ -328,6 +372,9 @@ func enter_solo_view() -> bool:
 	if not active or not solo_view.enter(local_player_index, _get_local_coop_player()):
 		return false
 	ModLoaderLog.info("Solo view entered (player %d)" % local_player_index, NetProtocol.MOD_ID)
+	between_waves = true
+	shop_done = false
+	_update_shop_waiting()
 	return true
 
 
@@ -377,6 +424,7 @@ func _on_network_peer_disconnected(peer_id: int) -> void :
 		players.erase(entry)
 		_compact_player_indices()
 	_broadcast_lobby_state()
+	_update_shop_waiting()
 
 
 func _on_connected_to_server() -> void :
@@ -467,6 +515,14 @@ remote func _rpc_run_state(run_id, state, digest) -> void :
 
 
 
+# Host -> client: who is still shopping.
+remote func _rpc_shop_waiting(names) -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(names) != TYPE_ARRAY:
+		return
+	shop_waiting_names = names
+	emit_signal("shop_waiting_changed")
+
+
 # Host -> client: the run after the wave (see send_wave_end_state).
 remote func _rpc_wave_end_state(run_id, wave, state, digest, pending) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
@@ -494,6 +550,14 @@ remote func _rpc_run_state_ack(run_id, ok) -> void :
 	_enter_wave_if_synced()
 
 
+remote func _rpc_shop_done(wave, run_json) -> void :
+	if not is_host or typeof(wave) != TYPE_INT or typeof(run_json) != TYPE_STRING:
+		return
+	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
+	if entry != null:
+		_on_shop_done(entry.player_index, wave, run_json)
+
+
 remote func _rpc_wave_end_ack(wave, ok) -> void :
 	if not is_host or typeof(wave) != TYPE_INT or typeof(ok) != TYPE_BOOL:
 		return
@@ -518,9 +582,9 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 	if me != null:
 		local_player_index = me.player_index
 	emit_signal("lobby_changed")
-	# The host is back in the lobby (wave over, or it quit): follow it. Temporary until 7e:
-	# a client still picking its upgrades (solo view) goes there itself when done.
-	if not lobby_settings.get("in_wave", false) and _is_in_wave_scene() and not solo_view.active:
+	# The host is back in the lobby (run over, or it quit): follow it, from the wave or from
+	# between waves.
+	if not lobby_settings.get("in_wave", false) and (_is_in_wave_scene() or _is_in_shop_scene()):
 		var _e = get_tree().change_scene(MenuData.title_screen_scene)
 
 
@@ -579,12 +643,17 @@ remote func _rpc_wave_loaded() -> void :
 
 
 # The client quit the wave from its pause menu.
+# The client quit the run from its pause menu (in the wave or between waves).
 remote func _rpc_left_wave() -> void :
-	if not is_host or wave_sync == null:
+	if not is_host:
 		return
 	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
-	if entry != null:
+	if entry == null:
+		return
+	_left_run_peers[entry.peer_id] = true
+	if wave_sync != null:
 		wave_sync.on_player_left(entry.player_index, entry.peer_id)
+	_update_shop_waiting()
 
 
 
@@ -706,6 +775,7 @@ func _enter_wave_if_synced() -> void :
 		return
 	_start_requested = false
 	set_run_in_progress(true)
+	_left_run_peers = {}
 	_fill_coop_players()
 	for entry in _get_connected_clients():
 		rpc_id(entry.peer_id, "_rpc_enter_wave", lobby_settings.run_id)
@@ -728,12 +798,65 @@ func _apply_wave_end_if_ready() -> void :
 	run_state = incoming.state
 	var ok: bool = RunBuilder.apply_run(incoming.state) and RunBuilder.digest() == incoming.digest and RunBuilder.is_valid_pending(incoming.pending)
 	wave_end_state = {"wave": incoming.wave, "pending": incoming.pending if ok else [], "ok": ok}
+	shop_done = false
 	if ok:
 		ModLoaderLog.info("Run after wave %d received and verified, pending %s" % [incoming.wave, to_json(incoming.pending)], NetProtocol.MOD_ID)
 	else:
 		ModLoaderLog.warning("Run after wave %d differs from the host's: %s" % [incoming.wave, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
 	rpc_id(HOST_PEER_ID, "_rpc_wave_end_ack", incoming.wave, ok)
 	emit_signal("wave_end_ready")
+
+
+# Host: a player's Go (run_json) or "Back to the shop" ("").
+func _on_shop_done(player_index: int, wave: int, run_json: String) -> void :
+	if not between_waves or wave != wave_end_state.get("wave", - 1):
+		return
+	if run_json.empty():
+		_shop_runs.erase(player_index)
+	elif RunBuilder.parse_solo_run(run_json).empty():
+		ModLoaderLog.warning("Player %d sent a shop result that isn't a solo run" % player_index, NetProtocol.MOD_ID)
+		return
+	else:
+		_shop_runs[player_index] = run_json
+	_update_shop_waiting()
+
+
+# Host: recounts who is still shopping, tells everyone, and goes on once nobody is.
+func _update_shop_waiting() -> void :
+	if not is_host or not between_waves:
+		return
+	var names: = []
+	var own_entry = get_local_player()
+	if not _shop_runs.has(local_player_index) and own_entry != null:
+		names.append(own_entry.name)
+	for entry in _get_connected_clients():
+		if not _left_run_peers.has(entry.peer_id) and not _shop_runs.has(entry.player_index):
+			names.append(entry.name)
+	if names != shop_waiting_names:
+		shop_waiting_names = names
+		for entry in _get_connected_clients():
+			rpc_id(entry.peer_id, "_rpc_shop_waiting", names)
+		emit_signal("shop_waiting_changed")
+	if names.empty():
+		_on_all_shops_done()
+
+
+# Host: every player still in the run pressed Go. Temporary until 7e (merge and next wave):
+# logs what came in and goes back to the lobby; the clients follow its lobby broadcast.
+func _on_all_shops_done() -> void :
+	between_waves = false
+	for player_index in _shop_runs:
+		var parsed: Dictionary = RunBuilder.parse_solo_run(_shop_runs[player_index])
+		var player_data = parsed.players_data[0]
+		ModLoaderLog.info("Shop result of player %d: gold %d, %d items, %d weapons, %d locked" % [player_index, player_data.gold, player_data.items.size(), player_data.weapons.size(), parsed.locked_shop_items[0].size()], NetProtocol.MOD_ID)
+	ModLoaderLog.info("Everyone is done shopping after wave %d" % wave_end_state.get("wave", - 1), NetProtocol.MOD_ID)
+	leave_solo_view()
+	var _e = get_tree().change_scene(MenuData.title_screen_scene)
+
+
+func _is_in_shop_scene() -> bool:
+	var current_scene: = get_tree().current_scene
+	return current_scene != null and current_scene is BaseShop
 
 
 func _is_in_wave_scene() -> bool:
@@ -858,6 +981,11 @@ func _end_session(reason: String) -> void :
 	_incoming_wave_end = {}
 	_wave_end_acks = {}
 	solo_view.discard()
+	between_waves = false
+	shop_done = false
+	shop_waiting_names = []
+	_shop_runs = {}
+	_left_run_peers = {}
 	CoopService.clear_coop_players()
 
 	active = false

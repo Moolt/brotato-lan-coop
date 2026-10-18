@@ -38,6 +38,7 @@ func _ready() -> void :
 	_e = _join_menu.connect("lobby_requested", self, "_open_lobby", [_join_menu])
 
 	_add_multiplayer_button()
+	_lan_net.on_title_screen()
 	_lan_net.set_run_in_progress(false)
 	_e = _lan_net.connect("session_ended", self, "_on_LanNet_session_ended")
 	call_deferred("_restore_lan_page")
