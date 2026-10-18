@@ -487,7 +487,9 @@ remote func _rpc_hello(hello) -> void :
 
 
 remote func _rpc_update_player(changes) -> void :
-	if not is_host or typeof(changes) != TYPE_DICTIONARY:
+	# During a run the entries stay as the run was built (a client that quit waits in the lobby;
+	# a change would also make the next wave's run stale).
+	if not is_host or typeof(changes) != TYPE_DICTIONARY or run_in_progress:
 		return
 	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
 	if entry != null and _apply_player_changes(entry, changes):
@@ -612,7 +614,11 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 remote func _rpc_enter_wave(run_id) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
-	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or not _received_run_ok or _is_in_wave_scene():
+	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or _is_in_wave_scene():
+		return
+	# A mismatch at Start keeps the client out (the lobby shows it); during a run the host
+	# starts the next wave anyway (_enter_wave_if_synced), with its run.
+	if not _received_run_ok and not lobby_settings.get("in_wave", false):
 		return
 	_reset_between_waves()
 	_fill_coop_players()
@@ -792,7 +798,14 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 
 # Host: once every client holds the run, everyone loads the wave.
 func _enter_wave_if_synced() -> void :
-	if not _start_requested or get_run_sync_status().state != "synced":
+	if not _start_requested:
+		return
+	var sync: = get_run_sync_status()
+	# At Start the lobby shows a mismatch and nobody plays. During a run (the next wave) nobody
+	# could act on it, so the wave starts with the host's run anyway.
+	if sync.state == "failed" and run_in_progress and _all_clients_acked():
+		ModLoaderLog.warning("Starting the wave although the run differs for %s" % PoolStringArray(sync.names).join(", "), NetProtocol.MOD_ID)
+	elif sync.state != "synced":
 		return
 	_start_requested = false
 	set_run_in_progress(true)
@@ -896,6 +909,13 @@ func _reset_between_waves() -> void :
 	shop_waiting_names = []
 	_shop_runs = {}
 	run_over = false
+
+
+func _all_clients_acked() -> bool:
+	for entry in _get_connected_clients():
+		if not _run_acks.has(entry.peer_id):
+			return false
+	return true
 
 
 func _is_in_shop_scene() -> bool:

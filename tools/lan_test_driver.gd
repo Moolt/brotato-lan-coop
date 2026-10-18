@@ -16,6 +16,7 @@ extends Node
 #         wave-end state it received
 #   (host and join) WAVES=n: n waves with upgrades and shop in between, then both check the
 #         next wave (digest, every player's gear) before the end steps
+#   (host and join) FAIL_ACK=1: the next wave's run counts as different from the host's, once
 #   (join) TIMER_LAG=s: the client's wave timer s seconds behind the host's near the wave's end
 #   (host and join) ROUNDS=n: back in the lobby, the host starts the next run in the same
 #         session and both play it again, n runs in all
@@ -106,6 +107,7 @@ func _process(delta: float) -> void :
 		started = menus() != null
 		if started and get_node_or_null("/root/LanNet") != null:
 			var _e = get_node("/root/LanNet").connect("wave_end_ready", self, "solo_view_test")
+			_e = get_node("/root/LanNet").connect("run_sync_changed", self, "fail_ack_test")
 		return
 	t += delta
 	# The wave's verdict, once, as soon as its cleanup starts (the scene changes soon after).
@@ -601,6 +603,29 @@ func next_round() -> bool:
 	return true
 
 
+var ack_failed: = false
+
+
+# FAIL_ACK=1: the next wave's run counts as different from the host's (as if the digest didn't
+# match), once on each side: the host gets a failed ack, the client marks its run as not ok.
+func fail_ack_test() -> void :
+	if OS.get_environment("FAIL_ACK") != "1" or ack_failed:
+		return
+	var net = get_node("/root/LanNet")
+	if not net.lobby_settings.get("in_wave", false) and not net.run_in_progress:
+		return
+	if net.is_host:
+		for peer_id in net._run_acks:
+			if net._run_acks[peer_id] and net._start_requested:
+				net._run_acks[peer_id] = false
+				ack_failed = true
+				print("[TEST] host fail_ack peer=", peer_id)
+	elif net._received_run_ok and net.lobby_settings.get("run_id", 0) != 0:
+		net._received_run_ok = false
+		ack_failed = true
+		print("[TEST] client fail_ack run=", net._received_run_id)
+
+
 func log_wave_end(tag: String) -> void :
 	var net = get_node("/root/LanNet")
 	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
@@ -654,6 +679,8 @@ func _client_step() -> void :
 			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			next_t = 17.0
 		7:
+			# Set before the yields below: _process goes on as soon as this returns at the first one.
+			next_t = 18.5
 			var main = get_tree().current_scene
 			var player = main._players[main.get_node("LanWaveSync")._local_index]
 			print("[TEST] client_paused_moved=", player.global_position.distance_to(start_pos), " time_left=", stepify(main._wave_timer.time_left, 0.1))
@@ -679,7 +706,6 @@ func _client_step() -> void :
 				yield(get_tree(), "idle_frame")
 			yield(get_tree(), "idle_frame")
 			print("[TEST] client_unpaused_by_click open=", main._pause_menu.visible, " net_flag=", get_node("/root/LanNet").pause_menu_open)
-			next_t = 18.5
 		8:
 			if OS.get_environment("CLIENT_QUITS") == "2":
 				# The process ends mid-wave (crash, closed window): the host sees a disconnect.
@@ -694,6 +720,8 @@ func _client_step() -> void :
 		9:
 			if quits:
 				log_lobby("client_left_wave")
+				# A different character from the lobby mid-run: the host ignores it.
+				pick_and_ready(m.get_node("LanLobby"), 3)
 			else:
 				log_sync("client_w21")
 				if OS.get_environment("TIMER_LAG") != "":
