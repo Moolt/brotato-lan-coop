@@ -46,7 +46,7 @@ Milestones:
 
 ### Bugs
 Reported in play (2026-10-19), not reproduced yet.
-- [ ] **Left stick does nothing in the level-up upgrade selection and the shop** in a session; it works in single player. Sessions use native focus instead of the FocusEmulator between waves (see the pitfalls in [lan-coop-mod.md](lan-coop-mod.md#pitfalls-learned)); check how vanilla maps the stick to UI navigation and whether the D-pad works.
+- [ ] **Left stick does nothing in the level-up upgrade selection and the shop** in a session; it works in single player. Sessions use native focus instead of the FocusEmulator between waves (see the pitfalls in [lan-coop-mod.md](lan-coop-mod.md#pitfalls-learned)); the D-pad works there, so check how vanilla maps the stick to UI navigation.
 - [ ] **Enemy bullets fly through players without hitting.** Machine (host or client player) and enemy not known yet. Driver `MORTAL=1` (`hurtbox_hits` line, 4 spitters): on the host enemy bullets do enter player hurtboxes (2–7 per wave, 1.2.0 the same), so it is not the hitbox layer change of 1.3.0. Candidates: no damage on the client's player (the host decides hits at its copy of the client player), or only the client's view (bullets come as events at the host's time while enemies are drawn 100–300 ms in the past).
 
 ### Polish
