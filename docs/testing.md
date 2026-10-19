@@ -53,9 +53,10 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |
 | `FAKE_SAVED_RUN=1` | a stand-in "Continue" run in memory before the session (never saved) |
 | `AIM_TEST=1` | manual aim on both, the client's mouse at its top left |
+| `TEST_VOLUME=x` | master volume at x of the saved one (default 0.2), in every role including the idle manual-test windows |
 | `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`enemy_contacts` in the `quirks` line) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
-| `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS (`*_curve` lines) |
+| `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
 | `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |
 

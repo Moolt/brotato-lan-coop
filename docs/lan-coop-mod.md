@@ -62,12 +62,13 @@ A reference for working on the mod: what exists, how a session flows, the sync p
   | Knob | Default | Effect |
   |---|---|---|
   | `arena_area_per_player` | 0.25 | width/height × `sqrt(1 + 0.25(n-1))` (1.94× at 12), applied after vanilla's `map_size` effect |
-  | `enemy_count_per_player` | 0.3 | `CoopService.additional_enemies_per_coop_player` |
+  | `enemy_count_per_player` | 0.3 | spawn count `1 + 0.3(n-1)`, but only up to the player count where the cap stops growing (`LanGame.get_count_players`, 7: 2.8×); `CoopService.additional_enemies_per_coop_player` gets the average over all extra players |
   | `enemy_health_per_player` | 0.3 | HP for players 2–4 … |
-  | `enemy_health_per_player_beyond_4` | 0.2 | … and beyond (averaged: 3.5× at 12 instead of 4.3×) |
+  | `enemy_health_per_player_beyond_4` | 0.2 | … and beyond (averaged: 3.5× at 12 instead of 4.3×), times the spawn count cut off above 7 players (12: 4.3 / 2.8 → 5.4×) |
   | `enemy_damage_per_player` | 0.08 | damage |
   | `enemy_cap_per_player` | 0.25 | `max_enemies × min(1 + 0.25(n-1), 2.5)` (250 from 7 players, `LanGame.MAX_ENEMY_CAP_FACTOR`) instead of vanilla's `(n-1)/8`; past ~300 enemies vanilla physics can't keep 60 ticks a second. Vanilla enforces the cap only at a group spawn, so queued enemies can push past it for a while (~285 seen) |
 
+  Above 7 players the count stops because the cap does: vanilla would cull random enemies without loot at every group spawn. Count × HP stays the same (12: 2.8 × 5.4 ≈ 4.3 × 3.5), and vanilla's coop material bonus (`get_additional_materials_per_coop_player`, from players ÷ count) rises with the lower count (12: 3.6× per enemy instead of 2.4×), so materials per player keep up.
   `LanGame.apply_enemy_scaling(n)` runs in main's `_enter_tree`; `CoopService.clear()` on the main menu restores vanilla's values. Danger effects are read from player 0 only, `double_boss` is summed.
 - **Physics quirk fixes (session only, no gameplay change):** each unit's burning `SpreadArea` (r = 128, enemies mask) starts disabled; vanilla leaves it on from the start and only `apply_burning` needs it (`extensions/particles/burning/burning_particles.gd`). Enemy hitboxes move from the enemies layer to `LanGame.ENEMY_HITBOX_BIT` (layer 20, `enemy.gd` `_ready`), and hurtboxes with the enemies bit in their mask (players, scapegoat) get it too (`overlap/hurtbox.gd`). Both cut collision pairs about fivefold at 400 enemies (measurements in [lan-coop-plan.md](lan-coop-plan.md#performance)).
 - **Spawn rate** is vanilla's: queued enemies are released 1 (2 with 110+ queued) every 3 physics frames, whatever the player count.

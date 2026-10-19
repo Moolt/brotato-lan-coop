@@ -33,6 +33,7 @@ extends Node
 #         PHYS_ITER=n: Physics2DServer collision iterations; NO_ENEMY_COLLIDE=1: enemies don't
 #         collide with each other; TIMING=1: times enemy scripts and weapon target scans;
 #         NO_SYNC=1 (host alone): LanWaveSync's per-tick work off
+#   (any role, also none) TEST_VOLUME=x: master volume at x (default 0.2) of the saved one
 #   (host) MORTAL=1: players can be hit; at t=16 an enemy is placed on the host player
 #   (host) at t=16 an enemy burns with spread 2 next to two others (burn_spread_test); log_sync
 #         logs the session's physics quirk fixes and enemy contacts on player hurtboxes
@@ -65,6 +66,10 @@ func _ready() -> void :
 		if a in ["host", "join", "quit", "solo", "lobby"]:
 			role = a
 	print("[TEST] role=", role)
+	# Quieter test sessions: the master bus at $TEST_VOLUME (default 0.2) of the saved volume.
+	var master = AudioServer.get_bus_index("Master")
+	var volume = float(OS.get_environment("TEST_VOLUME")) if OS.get_environment("TEST_VOLUME") != "" else 0.2
+	AudioServer.set_bus_volume_db(master, AudioServer.get_bus_volume_db(master) + linear2db(max(volume, 0.0001)))
 
 
 func shot(tag: String) -> void :
@@ -206,7 +211,7 @@ func perf_curve(delta: float) -> void :
 				var _d = weapon.get_direction_and_calculate_target()
 		timing = " enemy_scripts_us=%d weapons=%d targets_in_range=%d weapon_scan_us=%d" % [enemies_us, weapons, in_range, OS.get_ticks_usec() - start]
 	var sync = main.get_node_or_null("LanWaveSync")
-	print("[TEST] ", role, "_curve wave_t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 1), " enemies=", main._entity_spawner.enemies.size(), " bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " fps=", Engine.get_frames_per_second(), timing)
+	print("[TEST] ", role, "_curve wave_t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 1), " enemies=", main._entity_spawner.enemies.size(), " bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " fps=", Engine.get_frames_per_second(), " removed_for_perf=", main._entity_spawner.enemies_removed_for_perf, timing)
 
 
 func _on_player_hurtbox_area_entered(area: Area2D) -> void :
@@ -403,7 +408,7 @@ func log_scaling(tag: String) -> void :
 	var main = get_tree().current_scene
 	var zone = ZoneService.current_zone
 	print("[TEST] ", tag, " zone=", zone.width, "x", zone.height, " rect=", ZoneService.get_current_zone_rect(), " camera_max=", ZoneService.current_zone_max_camera_rect)
-	print("[TEST] ", tag, " coop enemies=", CoopService.additional_enemies_per_coop_player, " hp=", CoopService.additional_enemy_health_per_coop_player, " dmg=", CoopService.additional_enemy_damage_per_coop_player, " hp100=", EntityService.get_final_enemy_health(100), " dmg100=", EntityService.get_final_enemy_damage(100.0), " max_enemies=", main._entity_spawner._current_wave_data.max_enemies)
+	print("[TEST] ", tag, " coop enemies=", CoopService.additional_enemies_per_coop_player, " hp=", CoopService.additional_enemy_health_per_coop_player, " dmg=", CoopService.additional_enemy_damage_per_coop_player, " hp100=", EntityService.get_final_enemy_health(100), " dmg100=", EntityService.get_final_enemy_damage(100.0), " max_enemies=", main._entity_spawner._current_wave_data.max_enemies, " materials_factor=", stepify(CoopService.get_coop_materials_factor(), 0.01), " removed_for_perf=", main._entity_spawner.enemies_removed_for_perf)
 
 
 func log_camera(tag: String) -> void :
@@ -476,6 +481,7 @@ func log_sync(tag: String) -> void :
 		print("[TEST] ", tag, " net_entities=", ids.size(), " fps=", Engine.get_frames_per_second(), " snapshot_bytes=", sync.SNAPSHOT_HEADER_SIZE + sync.SNAPSHOT_PLAYER_SIZE * main._players.size() + 2 + sync.SNAPSHOT_ENTITY_SIZE * ids.size(), " sample=", sample)
 		log_visuals(tag, main, main.get_node("LanWaveSync"))
 		log_quirk_fixes(tag, main, main.get_node("LanWaveSync"))
+		log_scaling(tag)
 		log_perf(tag)
 	shot(tag)
 

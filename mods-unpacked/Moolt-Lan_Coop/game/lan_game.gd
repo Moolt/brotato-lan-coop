@@ -70,17 +70,34 @@ static func get_enemy_cap_factor(player_count: int) -> float:
 # Sets the per-player enemy factors that vanilla reads (EntitySpawner, EntityService), from
 # the session's knobs. Enemy HP grows by enemy_health_per_player for players 2-4 and by
 # enemy_health_per_player_beyond_4 after that, because in the bigger arena fewer players share
-# each enemy. Vanilla multiplies the factor by (n-1), so HP gets the average over all extra
+# each enemy. Vanilla multiplies the factors by (n-1), so they get the average over all extra
 # players. CoopService.clear() (main menu) restores vanilla's values.
+# The spawn count grows only while the enemy cap does (get_count_players): past that, vanilla
+# would cull random enemies without loot at every group spawn. The count it would have added
+# goes into enemy HP instead. Vanilla's coop material bonus (CoopService
+# get_additional_materials_per_coop_player) reads the lower count, so materials keep up.
 static func apply_enemy_scaling(player_count: int) -> void :
-	CoopService.additional_enemies_per_coop_player = get_scaling("enemy_count_per_player")
 	CoopService.additional_enemy_damage_per_coop_player = get_scaling("enemy_damage_per_player")
+	CoopService.additional_enemies_per_coop_player = get_scaling("enemy_count_per_player")
 	if player_count > 1:
 		var extra: = player_count - 1
+		var count_extra: = get_count_players(player_count) - 1
+		var per_player: float = get_scaling("enemy_count_per_player")
+		var count_cut: float = (1.0 + per_player * extra) / (1.0 + per_player * count_extra)
+		CoopService.additional_enemies_per_coop_player = per_player * count_extra / extra
 		var small: = min(extra, VANILLA_MAX_PLAYERS - 1)
-		var health: float = small * get_scaling("enemy_health_per_player") + (extra - small) * get_scaling("enemy_health_per_player_beyond_4")
-		CoopService.additional_enemy_health_per_coop_player = health / extra
+		var health: float = 1.0 + small * get_scaling("enemy_health_per_player") + (extra - small) * get_scaling("enemy_health_per_player_beyond_4")
+		CoopService.additional_enemy_health_per_coop_player = (health * count_cut - 1.0) / extra
 	EntityService.reset_cache()
+
+
+# The player count up to which the spawn count grows: where the enemy cap factor reaches
+# MAX_ENEMY_CAP_FACTOR (7 with the default knobs), at most player_count.
+static func get_count_players(player_count: int) -> int:
+	var cap_per_player: = get_scaling("enemy_cap_per_player")
+	if cap_per_player <= 0.0:
+		return player_count
+	return int(min(player_count, 1 + floor((MAX_ENEMY_CAP_FACTOR - 1.0) / cap_per_player + 0.0001)))
 
 
 # Appends value until the array has MAX_PLAYERS slots. Arrays and dictionaries are copied per slot.
