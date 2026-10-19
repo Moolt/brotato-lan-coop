@@ -33,6 +33,9 @@ extends Node
 #         PHYS_ITER=n: Physics2DServer collision iterations; NO_ENEMY_COLLIDE=1: enemies don't
 #         collide with each other; TIMING=1: times enemy scripts and weapon target scans;
 #         NO_SYNC=1 (host alone): LanWaveSync's per-tick work off
+#   (any role) JITTER_LOG=1: every 2 s in a wave, how smoothly enemies move on screen (frame
+#         times, physics ticks per frame, stalls, speed changes), clock offset jumps and buffer
+#         starvation (clients)
 #   (any role, also none) TEST_VOLUME=x: master volume at x (default 0.2) of the saved one
 #   (host) MORTAL=1: players can be hit; at t=16 an enemy is placed on the host player
 #   (host) at t=16 an enemy burns with spread 2 next to two others (burn_spread_test); log_sync
@@ -56,8 +59,13 @@ var round_nr: = 1
 var perf: = {}
 var perf_log_t: = 0.0
 var perf_scene = null
+# JITTER_LOG=1: per-frame motion smoothness of enemies, summed over 2 s windows.
+var jitter: = {}
+var physics_ticks: = 0
 # Enemy hitboxes that entered a player's hurtbox this wave (contact hits, also when invulnerable).
 var enemy_contacts: = 0
+# Enemy bullets (layer 16) that entered a player's hurtbox this wave.
+var enemy_bullet_hits: = 0
 
 
 func _ready() -> void :
@@ -146,6 +154,7 @@ func _process(delta: float) -> void :
 		log_run_states(role + "_cleanup")
 	perf_sample(delta)
 	perf_curve(delta)
+	jitter_sample(delta)
 	pick_upgrades(delta)
 	shop_actions(delta)
 	end_screen_actions(delta)
@@ -173,6 +182,7 @@ func perf_curve(delta: float) -> void :
 		perf_scene = main
 		perf_log_t = 0.0
 		enemy_contacts = 0
+		enemy_bullet_hits = 0
 		for player in main._players:
 			var _e = player._hurtbox.connect("area_entered", self, "_on_player_hurtbox_area_entered")
 		if OS.get_environment("ENEMY_CAP") != "":
@@ -217,6 +227,8 @@ func perf_curve(delta: float) -> void :
 func _on_player_hurtbox_area_entered(area: Area2D) -> void :
 	if area.get_parent() is Enemy:
 		enemy_contacts += 1
+	elif area.collision_layer & Utils.ENEMY_PROJECTILES_BIT:
+		enemy_bullet_hits += 1
 
 
 # The session's physics quirk fixes (extensions/overlap, burning_particles, wave_sync _make_inert).
@@ -282,6 +294,88 @@ func contact_test(main) -> void :
 			return
 
 
+func _physics_process(_delta: float) -> void :
+	physics_ticks += 1
+	jitter_tick()
+
+
+# Per physics tick (JITTER_LOG): how far up to 20 enemies moved since the last tick. Vanilla
+# moves them a steady amount per tick; a stall (0 while walking) or a jump shows as a change.
+func jitter_tick() -> void :
+	if jitter.empty() or not jitter.has("tick_pos"):
+		return
+	var main = get_tree().current_scene
+	var tracked = 0
+	var new_pos = {}
+	for enemy in main._entity_spawner.enemies:
+		if tracked >= 20:
+			break
+		if not is_instance_valid(enemy) or enemy.dead:
+			continue
+		var id = enemy.get_instance_id()
+		new_pos[id] = enemy.global_position
+		tracked += 1
+		if not jitter.tick_pos.has(id):
+			continue
+		var step = enemy.global_position.distance_to(jitter.tick_pos[id])
+		var last_step = jitter.last_step.get(id, - 1.0)
+		if last_step > 0.5:
+			jitter.moving += 1
+			if step < 0.05:
+				jitter.stalls += 1
+			jitter.speed_changes.append(abs(step - last_step) / last_step)
+		jitter.last_step[id] = step
+	jitter.tick_pos = new_pos
+
+
+# JITTER_LOG: frame times, physics ticks per frame, enemy motion per tick (jitter_tick), and on
+# clients the snapshots' lateness, clock offset jumps and frames where the buffer ran dry.
+func jitter_sample(_delta: float) -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("JITTER_LOG") != "1" or main == null or main.filename != MenuData.game_scene or main._cleaning_up:
+		jitter = {}
+		physics_ticks = 0
+		return
+	var sync = main.get_node_or_null("LanWaveSync")
+	var now = OS.get_ticks_usec()
+	if jitter.empty():
+		jitter = {"start": now, "last": now, "pos": {}, "frames": 0, "ticks": {}, "dt": [], "stalls": 0, "moving": 0, "speed_changes": [], "last_speed": {}, "offset": sync._clock_offset if sync != null else null, "offset_jumps": [], "starved": 0, "tick_pos": {}, "last_step": {}, "late": [], "last_time": sync._snapshots[- 1].time if sync != null and not sync._snapshots.empty() else - 1}
+		physics_ticks = 0
+		return
+	var dt = (now - jitter.last) / 1000000.0
+	jitter.last = now
+	jitter.frames += 1
+	jitter.dt.append(dt * 1000.0)
+	jitter.ticks[physics_ticks] = jitter.ticks.get(physics_ticks, 0) + 1
+	physics_ticks = 0
+	if sync != null and not sync.is_host:
+		# Lateness of each new snapshot beyond the fastest one seen (the clock offset).
+		var now_ms = OS.get_ticks_msec()
+		for snapshot in sync._snapshots:
+			if snapshot.time > jitter.last_time and sync._clock_offset != null:
+				jitter.late.append(now_ms - snapshot.time - sync._clock_offset)
+		if not sync._snapshots.empty():
+			jitter.last_time = max(jitter.last_time, sync._snapshots[- 1].time)
+		if jitter.offset != null and sync._clock_offset != null and sync._clock_offset < jitter.offset - 2:
+			jitter.offset_jumps.append(jitter.offset - sync._clock_offset)
+		jitter.offset = sync._clock_offset
+		if not sync._snapshots.empty() and sync._render_time != null and sync._snapshots[- 1].time < sync._render_time:
+			jitter.starved += 1
+		jitter.delay = sync._interp_delay
+	if now - jitter.start >= 2000000:
+		var changes = jitter.speed_changes
+		changes.sort()
+		var dts = jitter.dt
+		dts.sort()
+		var median = changes[changes.size() / 2] if not changes.empty() else 0.0
+		var p90 = changes[int(changes.size() * 0.9)] if not changes.empty() else 0.0
+		var late = jitter.late
+		late.sort()
+		var late_text = "-" if late.empty() else "%d/%d/%d" % [late[late.size() / 2], late[int(late.size() * 0.9)], late[- 1]]
+		print("[TEST] ", role, "_jitter late_ms_p50/p90/max=", late_text, " snaps=", late.size(), " frames=", jitter.frames, " fps=", stepify(jitter.frames / 2.0, 1), " dt_ms_median=", stepify(dts[dts.size() / 2], 0.1), " dt_ms_max=", stepify(dts[- 1], 0.1), " ticks_per_frame=", jitter.ticks, " tick_samples=", jitter.moving, " tick_stall_pct=", stepify(100.0 * jitter.stalls / max(1, jitter.moving), 0.1), " speed_change_median=", stepify(median, 0.01), " p90=", stepify(p90, 0.01), " offset_jumps_ms=", jitter.offset_jumps, " starved_frames=", jitter.starved, " interp_delay_ms=", stepify(jitter.get("delay", 0.0), 1))
+		jitter = {}
+
+
 func perf_reset() -> void :
 	perf = {"frames": 0, "time": 0.0, "max_ms": 0.0, "slow": 0, "snaps": 0, "lost": 0, "max_gap": 0, "last_seq": perf.get("last_seq", - 1), "last_at": perf.get("last_at", 0), "min_cushion": 100000.0, "starved": 0, "last_time": perf.get("last_time", - 1)}
 
@@ -328,8 +422,8 @@ func perf_sample(delta: float) -> void :
 		perf.last_seq = sync._last_seq
 		perf.last_at = now
 	# How far the newest snapshot is ahead of the interpolation's render time (below 0: extrapolating).
-	if not sync._snapshots.empty() and sync._clock_offset != null:
-		var cushion = sync._snapshots[- 1].time - (now - sync._clock_offset - sync.INTERP_DELAY_MS)
+	if not sync._snapshots.empty() and sync._render_time != null:
+		var cushion = sync._snapshots[- 1].time - sync._render_time
 		perf.min_cushion = min(perf.min_cushion, cushion)
 		if cushion < 0:
 			perf.starved += 1
@@ -348,7 +442,8 @@ func log_perf(tag: String) -> void :
 			# Not sent: clients would see a gap.
 			sync._snapshot_seq -= 1
 		else:
-			sync._update_puppets()
+			# Step 0: the render clock stays where it is.
+			sync._update_puppets(0.0)
 		mod_us = OS.get_ticks_usec() - start
 	print("[TEST] ", tag, " perf_detail physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " active_bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " collision_pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " nodes=", Performance.get_monitor(Performance.OBJECT_NODE_COUNT), " ", "build_snapshot_us=" if sync != null and sync.is_host else "update_puppets_us=", mod_us)
 	print("[TEST] ", tag, " perf frames=", perf.frames, " avg_fps=", stepify(perf.frames / max(perf.time, 0.001), 0.1), " max_frame_ms=", stepify(perf.max_ms, 0.1), " slow_frames=", perf.slow, " snaps=", perf.snaps, " snap_hz=", stepify(perf.snaps / max(perf.time, 0.001), 0.1), " lost=", perf.lost, " max_gap_ms=", perf.max_gap, " min_cushion_ms=", stepify(perf.min_cushion, 1), " starved_frames=", perf.starved, " max_entities=", perf.get("max_entities", 0), " received_lost_by_size=", perf.get("by_size", {}))
@@ -446,6 +541,7 @@ func log_sync(tag: String) -> void :
 		var pd = RunData.players_data[p.player_index]
 		out.append("%d:%s%s hp=%d/%d spd=%d g=%d xp=%.1f lvl=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed(), pd.gold, pd.current_xp, pd.current_level])
 	var cam = main._camera
+	print("[TEST] ", tag, " hurtbox_hits contacts=", enemy_contacts, " bullets=", enemy_bullet_hits)
 	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
 	var spawner = main._entity_spawner
 	var boss_hp = []
@@ -943,7 +1039,15 @@ func _client_step() -> void :
 			m.get_node("LanMultiplayerMenu")._join_button.emit_signal("pressed")
 			next_t = t + 1.5
 		2:
-			m.get_node("LanJoinMenu")._first_row().emit_signal("pressed")
+			# Over WiFi with power saving, broadcast beacons can take a few seconds to arrive.
+			var row = m.get_node("LanJoinMenu")._first_row()
+			if row == null and t < 10.0:
+				step -= 1
+				next_t = t + 0.25
+				return
+			print("[TEST] join first row at t=", stepify(t, 0.1), " found=", row != null)
+			if row != null:
+				row.emit_signal("pressed")
 			next_t = t + 1.5
 		3:
 			pick_and_ready(m.get_node("LanLobby"), 1)

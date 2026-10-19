@@ -47,15 +47,31 @@ extends Node
 #   - Item copies drop, fly to whoever attracts them and vanish on the host's pickup (sound,
 #     effect, floating text). Gold, XP and level follow the snapshot; RunData's signals update the
 #     HUD, and a level-up runs vanilla's on_levelled_up (sound, things-to-process icon).
-#   - Other players and entities are puppets, interpolated between snapshots
-#     INTERP_DELAY_MS in the past.
+#   - Other players and entities are puppets, interpolated between snapshots at a render
+#     clock that runs a delay behind the host: INTERP_DELAY_MS, more while snapshots arrive late
+#     (WiFi power saving delivers them in bursts), see _note_lateness and _update_puppets.
 #   - The wave timer follows the host's. The wave ends when the host says so.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 
 const SNAPSHOT_INTERVAL: = 3
+# Interpolation delay: at least INTERP_DELAY_MS; with late snapshots, the largest recent
+# lateness plus LATENESS_MARGIN_MS (puppets stall whenever a snapshot is later than the delay),
+# at most MAX_INTERP_DELAY_MS.
 const INTERP_DELAY_MS: = 100
+const MAX_INTERP_DELAY_MS: = 300
+const LATENESS_MARGIN_MS: = 10.0
+# Snapshots whose lateness counts (5 s), and how fast a lower delay is taken (per snapshot).
+const LATENESS_WINDOW: = 100
+const INTERP_DELAY_DECAY: = 0.02
+# The clock offset follows the fastest snapshot and creeps up this much per snapshot (1 ms/s),
+# enough for clock drift between machines.
+const CLOCK_DRIFT_PER_SNAPSHOT: = 0.05
+# The render clock advances by the physics step and runs at most 10 % fast or slow to reach
+# its target; it jumps only when it is more than RENDER_CLOCK_SNAP_MS off.
+const MAX_RENDER_CLOCK_RATE: = 0.1
+const RENDER_CLOCK_SNAP_MS: = 500.0
 const MAX_BUFFERED_SNAPSHOTS: = 20
 const TIMER_RESYNC_THRESHOLD: = 0.5
 const MOVE_SCALE: = 127.0
@@ -148,6 +164,11 @@ var _snapshots: = []
 var _last_seq: = - 1
 # Local msec minus host msec, tracked from below (the smallest delay seen, slowly forgotten).
 var _clock_offset = null
+# Host msec the puppets show, the current interpolation delay and recent snapshot lateness (ms
+# beyond the fastest snapshot).
+var _render_time = null
+var _interp_delay: = float(INTERP_DELAY_MS)
+var _lateness: = []
 var _spawn_args = null
 
 # Host: peers whose wave isn't loaded yet; both: whether the wave waits for them.
@@ -232,7 +253,7 @@ func _physics_process(delta: float) -> void :
 			_net.send_snapshot(_build_snapshot())
 	else:
 		_send_own_state()
-		_update_puppets()
+		_update_puppets(delta)
 
 
 
@@ -614,11 +635,12 @@ func on_snapshot(data: PoolByteArray) -> void :
 	buffer.seek(SNAPSHOT_HEADER_SIZE)
 	_last_seq = seq
 
-	var offset: = OS.get_ticks_msec() - host_time
+	var offset: = float(OS.get_ticks_msec() - host_time)
 	if _clock_offset == null or offset < _clock_offset:
 		_clock_offset = offset
 	else:
-		_clock_offset += 1
+		_clock_offset += CLOCK_DRIFT_PER_SNAPSHOT
+	_note_lateness(offset - _clock_offset)
 
 	var positions: = []
 	for player_index in count:
@@ -1170,12 +1192,33 @@ func _send_own_state() -> void :
 	_net.send_player_state(player.global_position, player._current_movement, aim, manual_aim)
 
 
-# Puppets show where the host had them INTERP_DELAY_MS ago, between the two snapshots around
-# that time (or the newest one if none is newer).
-func _update_puppets() -> void :
+# Sets the interpolation delay from the recent lateness: up at once, down slowly.
+func _note_lateness(late: float) -> void :
+	_lateness.append(late)
+	if _lateness.size() > LATENESS_WINDOW:
+		_lateness.pop_front()
+	var target: float = clamp(_lateness.max() + LATENESS_MARGIN_MS, INTERP_DELAY_MS, MAX_INTERP_DELAY_MS)
+	if target > _interp_delay:
+		_interp_delay = target
+	else:
+		_interp_delay += (target - _interp_delay) * INTERP_DELAY_DECAY
+
+
+# Puppets show where the host had them at the render clock (the interpolation delay ago),
+# between the two snapshots around that time (or the newest one if none is newer). The clock
+# moves by the physics step, so puppets move the same amount every tick (not by the uneven
+# moments a tick runs at, nor in steps of whole milliseconds), and offset or delay changes
+# are taken gradually.
+func _update_puppets(delta: float) -> void :
 	if _snapshots.empty() or _clock_offset == null:
 		return
-	var render_time: float = OS.get_ticks_msec() - _clock_offset - INTERP_DELAY_MS
+	var target: float = OS.get_ticks_msec() - _clock_offset - _interp_delay
+	if _render_time == null or abs(target - _render_time) > RENDER_CLOCK_SNAP_MS:
+		_render_time = target
+	else:
+		var rate: float = clamp(1.0 + (target - _render_time) / 1000.0, 1.0 - MAX_RENDER_CLOCK_RATE, 1.0 + MAX_RENDER_CLOCK_RATE)
+		_render_time += delta * 1000.0 * rate
+	var render_time: float = _render_time
 	while _snapshots.size() > 2 and _snapshots[1].time <= render_time:
 		_snapshots.pop_front()
 	var from: Dictionary = _snapshots[0]

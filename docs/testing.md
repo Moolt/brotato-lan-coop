@@ -53,8 +53,9 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |
 | `FAKE_SAVED_RUN=1` | a stand-in "Continue" run in memory before the session (never saved) |
 | `AIM_TEST=1` | manual aim on both, the client's mouse at its top left |
+| `JITTER_LOG=1` | every 2 s in a wave: frame times, physics ticks per frame, enemy motion per tick (stalls, speed change median/p90; the host's is the vanilla baseline), and on clients snapshot lateness p50/p90/max, clock offset jumps, frames with a dry buffer, the interpolation delay |
 | `TEST_VOLUME=x` | master volume at x of the saved one (default 0.2), in every role including the idle manual-test windows |
-| `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`enemy_contacts` in the `quirks` line) |
+| `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`hurtbox_hits` line: enemy contacts and enemy bullets on player hurtboxes) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
 | `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
