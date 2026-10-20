@@ -24,6 +24,8 @@ const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const SoloView = preload("res://mods-unpacked/Moolt-Lan_Coop/game/solo_view.gd")
 
 const HOST_PEER_ID: = 1
+# The local player's CoopService device in a session (_fill_coop_players).
+const LOCAL_DEVICE: = 0
 
 var config = NetConfig.new()
 var discovery: Node = null
@@ -399,6 +401,7 @@ func leave_solo_view() -> void :
 	if not solo_view.active:
 		return
 	solo_view.leave()
+	_update_local_input_type()
 	ModLoaderLog.info("Solo view left: %s" % to_json(RunBuilder.summarize()), NetProtocol.MOD_ID)
 
 
@@ -937,9 +940,14 @@ func _is_in_wave_scene() -> bool:
 
 
 # CoopService.connected_players: one [device, type] per player, in player_index order.
-# The local player uses the keyboard (7) or the first gamepad (6). Remote players get
-# device -1, which reads no input (see the main.gd and player_movement_behavior.gd extensions);
-# their own machine moves them (net/wave_sync.gd).
+# The local player gets device 0, whose actions (move_left_0, ui_pause_0, ...) hold both the
+# keyboard and the first gamepad, so either works whatever was used last when the list was
+# filled (6 or 7 locked out the other one for the whole wave). Device 0 also keeps vanilla's
+# stick-to-UI emulation (InputService._emulate_action) on the plain ui_* actions that native
+# focus reads: for an assigned device 6 it sent ui_left_6, which only the FocusEmulator knows.
+# The type follows the last input (_update_local_input_type), for aim and button icons.
+# Remote players get device -1, which reads no input (see the main.gd and
+# player_movement_behavior.gd extensions); their own machine moves them (net/wave_sync.gd).
 func _fill_coop_players() -> void :
 	CoopService.connected_players.clear()
 	for entry in players:
@@ -951,9 +959,26 @@ func _fill_coop_players() -> void :
 
 
 func _get_local_coop_player() -> Array:
+	return [LOCAL_DEVICE, _get_local_input_type()]
+
+
+func _get_local_input_type() -> int:
 	if InputService.using_gamepad:
-		return [CoopService.GAMEPAD_REMAPPED_DEVICE_ID, CoopService.PlayerType.GAMEPAD_XBOX]
-	return [CoopService.KEYBOARD_REMAPPED_DEVICE_ID, CoopService.PlayerType.KEYBOARD_AND_MOUSE]
+		return CoopService.PlayerType.GAMEPAD_XBOX
+	return CoopService.PlayerType.KEYBOARD_AND_MOUSE
+
+
+# The local entry's type, after the input changed. In place and without
+# connected_players_updated, which would reset coop menus.
+func _update_local_input_type() -> void :
+	if not active:
+		return
+	var index: = get_local_run_index()
+	if index < 0 or index >= CoopService.connected_players.size():
+		return
+	var entry: Array = CoopService.connected_players[index]
+	if entry[0] == LOCAL_DEVICE:
+		entry[1] = _get_local_input_type()
 
 
 func _compact_player_indices() -> void :
@@ -1021,6 +1046,7 @@ func _input(event: InputEvent) -> void :
 		InputService.using_gamepad = true
 	elif is_keyboard_input or is_mouse_input:
 		InputService.using_gamepad = false
+	_update_local_input_type()
 
 
 func _set_saves_blocked(value: bool) -> void :
