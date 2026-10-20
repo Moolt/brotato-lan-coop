@@ -53,7 +53,11 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |
 | `FAKE_SAVED_RUN=1` | a stand-in "Continue" run in memory before the session (never saved) |
 | `AIM_TEST=1` | manual aim on both, the client's mouse at its top left |
-| `JITTER_LOG=1` | every 2 s in a wave: frame times, physics ticks per frame, enemy motion per tick (stalls, speed change median/p90; the host's is the vanilla baseline), and on clients snapshot lateness p50/p90/max, clock offset jumps, frames with a dry buffer, the interpolation delay |
+| `PUSH_TEST=1` | at t=20–26 the client walks straight at the host player, which stands still; both log both positions twice a second (the host's must not change) |
+| `CLIENT_WALK=1` | join: in a wave the client's player keeps walking, a new direction every second |
+| `HIT_LOG=1` | any role, also idle (manual tests): enemy bullets and enemies entering player hurtboxes, and every player HP change, with the wave time |
+| `STALE_DIE_ARGS=1` | host: at t=16 `Utils.default_die_args.from` is a freed node, as vanilla leaves it; with `CLIENT_QUITS=2` the host then kills the left client's player |
+| `JITTER_LOG=1` | every 2 s in a wave: frame times, physics ticks per frame, enemy motion per tick (stalls, speed change median/p90; the host's is the vanilla baseline), and on clients snapshot lateness p50/p90/max, clock offset jumps, frames with a dry buffer, the interpolation delay; on the host the remote players' state gaps and how smoothly they are shown (stalls, step change overall and while walking straight, state age) |
 | `TEST_VOLUME=x` | master volume at x of the saved one (default 0.2), in every role including the idle manual-test windows |
 | `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`hurtbox_hits` line: enemy contacts and enemy bullets on player hurtboxes) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |

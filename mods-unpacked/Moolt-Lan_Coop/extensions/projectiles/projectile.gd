@@ -16,13 +16,17 @@ func shoot() -> void :
 		wave_sync.on_projectile_shot(self)
 
 
+# Id and position are taken before vanilla's stop(): without a stop delay (enemy bullets) it
+# returns the projectile to the pool at once, which clears lan_net_id.
 func stop() -> void :
 	var already_stopping: = _enable_stop_delay
+	var net_id: = lan_net_id
+	var stopped_at: = global_position
 	.stop()
-	if lan_net_id != 0 and not already_stopping:
+	if net_id != 0 and not already_stopping:
 		var wave_sync = LanGame.get_wave_sync()
 		if wave_sync != null and wave_sync.is_host:
-			wave_sync.on_projectile_stopped(self)
+			wave_sync.on_projectile_stopped(self, net_id, stopped_at)
 
 
 func _return_to_pool() -> void :

@@ -72,6 +72,17 @@ const CLOCK_DRIFT_PER_SNAPSHOT: = 0.05
 # its target; it jumps only when it is more than RENDER_CLOCK_SNAP_MS off.
 const MAX_RENDER_CLOCK_RATE: = 0.1
 const RENDER_CLOCK_SNAP_MS: = 500.0
+# Host: between a client's states (bursty over WiFi with power saving) its player keeps moving
+# in the reported direction for at most MAX_EXTRAPOLATION s. When the next state arrives, the
+# difference to where it was shown fades out (REMOTE_CORRECTION_DECAY per tick) unless it is
+# more than REMOTE_SNAP_DISTANCE.
+const MAX_EXTRAPOLATION: = 0.25
+# Clients send their state every physics tick (60 Hz): 1 ms/s of clock drift.
+const REMOTE_CLOCK_DRIFT_PER_STATE: = 1.0 / 60.0
+const REMOTE_CORRECTION_DECAY: = 0.75
+const REMOTE_SNAP_DISTANCE: = 200.0
+# Vanilla's margin for units' test_motion (unit.gd).
+const REMOTE_MOTION_MARGIN: = 0.08
 const MAX_BUFFERED_SNAPSHOTS: = 20
 const TIMER_RESYNC_THRESHOLD: = 0.5
 const MOVE_SCALE: = 127.0
@@ -130,8 +141,15 @@ var _frame: = 0
 # Net id -> entity, on both sides. Ids are u16 and wrap; a wave never gets near 65535 alive.
 var _entities: = {}
 
-# Host: latest state per remote player_index: {pos, move, aim, manual_aim}.
+# Host: latest state per remote player_index: {pos, time (client msec), move, aim, manual_aim,
+# fresh (not applied yet), since (its age in s: estimated at arrival, then counted up),
+# reported_velocity (from the last two states), offset (correction still to blend out),
+# velocity (of the last tick's dead reckoning)}.
 var _remote_states: = {}
+# Host: per remote player_index, host msec minus the client's msec, tracked from below like
+# _clock_offset (the fastest state seen, creeping up 1 ms/s).
+var _remote_clock_offsets: = {}
+var _motion_result: = Physics2DTestMotionResult.new()
 var _snapshot_seq: = 0
 var _next_net_id: = 0
 var _events: = []
@@ -241,7 +259,7 @@ func _physics_process(delta: float) -> void :
 			_waiting_time += delta
 			if _waiting_time >= LOAD_TIMEOUT:
 				_set_waiting(false)
-		_apply_remote_states()
+		_apply_remote_states(delta)
 		_flush_pending_projectiles()
 		_check_item_attraction()
 		_check_births()
@@ -259,10 +277,26 @@ func _physics_process(delta: float) -> void :
 
 # Host
 
-func on_player_state(player_index: int, pos: Vector2, move: Vector2, aim: Vector2, manual_aim: bool) -> void :
+func on_player_state(player_index: int, time: int, pos: Vector2, move: Vector2, aim: Vector2, manual_aim: bool) -> void :
 	if player_index == _local_index or player_index < 0 or player_index >= _main._players.size():
 		return
-	_remote_states[player_index] = {"pos": pos, "move": move.clamped(1.0), "aim": aim, "manual_aim": manual_aim}
+	var offset: = float(OS.get_ticks_msec() - time)
+	var clock_offset = _remote_clock_offsets.get(player_index)
+	if clock_offset == null or offset < clock_offset:
+		clock_offset = offset
+	else:
+		clock_offset += REMOTE_CLOCK_DRIFT_PER_STATE
+	_remote_clock_offsets[player_index] = clock_offset
+	var age: float = min(offset - clock_offset, MAX_EXTRAPOLATION * 1000.0) / 1000.0
+	var previous = _remote_states.get(player_index)
+	# The player's actual velocity from the last two states (0 when blocked by a wall or a
+	# player, which the pressed direction doesn't show), unknown (0) after a long gap.
+	var reported_velocity: = Vector2.ZERO
+	if previous != null:
+		var interval: float = (time - previous.time) / 1000.0
+		if interval > 0.0 and interval <= MAX_EXTRAPOLATION:
+			reported_velocity = ((pos - previous.pos) / interval).clamped(_main._players[player_index].get_move_speed())
+	_remote_states[player_index] = {"pos": pos, "time": time, "move": move.clamped(1.0), "aim": aim, "manual_aim": manual_aim, "fresh": true, "since": age, "reported_velocity": reported_velocity, "offset": previous.offset if previous != null else Vector2.ZERO, "velocity": previous.velocity if previous != null else Vector2.ZERO}
 
 
 # Manual aim of a remote player as its client reported it, null for others.
@@ -336,7 +370,16 @@ func on_player_left(player_index: int, peer_id: int) -> void :
 		return
 	var player = _main._players[player_index]
 	if is_instance_valid(player) and not player.dead:
-		player.die()
+		player.die(_player_die_args())
+
+
+# Death args for a player killed by the session (left, or dead on the host), as vanilla's
+# Player.take_damage sets them but without a killer. Not Utils.default_die_args: vanilla leaves
+# the last killer in its `from`, which may be freed by now, and main._on_player_died reads it.
+func _player_die_args() -> Entity.DieArgs:
+	var args: = Entity.DieArgs.new()
+	args.enemy_killed_by_player = false
+	return args
 
 
 # Host, at the start of a later wave: players who disconnected in an earlier one stay dead.
@@ -376,16 +419,18 @@ func on_projectile_shot(projectile: Node) -> void :
 	_pending_projectiles.append(projectile)
 
 
-func on_projectile_stopped(projectile: Node) -> void :
+# net_id and pos as before the stop: a projectile without a stop delay is already back in the
+# pool (on_projectile_returned) and has no net id any more.
+func on_projectile_stopped(projectile: Node, net_id: int, pos: Vector2) -> void :
 	if not is_host:
 		return
 	if _pending_projectiles.has(projectile):
 		# Never sent: forget it.
 		_pending_projectiles.erase(projectile)
-		var _erased = _projectiles.erase(projectile.lan_net_id)
+		var _erased = _projectiles.erase(net_id)
 		projectile.lan_net_id = 0
 		return
-	_events.append([EVENT_PROJECTILE_STOP, projectile.lan_net_id, projectile.global_position])
+	_events.append([EVENT_PROJECTILE_STOP, net_id, pos])
 
 
 func on_projectile_returned(projectile: Node) -> void :
@@ -549,20 +594,61 @@ func _get_data_ref(data: Resource, player_index: int):
 	return null
 
 
-func _apply_remote_states() -> void :
+# Remote players are where their client reported them, moved on at their velocity between the
+# last two states for the state's age (dead reckoning, at most MAX_EXTRAPOLATION). Not the
+# pressed direction: a player blocked by another player would be moved into it and push it.
+# A new state's difference to the shown position is blended out over a few ticks.
+func _apply_remote_states(delta: float) -> void :
 	var zone_rect: Rect2 = ZoneService.get_current_zone_rect()
 	for player_index in _remote_states:
 		var player = _main._players[player_index]
 		if not is_instance_valid(player) or player.dead:
 			continue
 		var state: Dictionary = _remote_states[player_index]
-		player.global_position = Vector2(
-			clamp(state.pos.x, zone_rect.position.x, zone_rect.end.x),
-			clamp(state.pos.y, zone_rect.position.y, zone_rect.end.y)
-		)
+		var fresh: bool = state.fresh
+		if fresh:
+			state.fresh = false
+		else:
+			state.since += delta
+		var velocity: Vector2 = state.reported_velocity
+		var predicted: Vector2 = state.pos + velocity * min(state.since, MAX_EXTRAPOLATION)
+		if fresh:
+			# The new state: fade out its difference to where the old one would show the player
+			# this tick (last tick's position moved on at last tick's velocity).
+			state.offset = player.global_position + state.velocity * delta - predicted
+			if state.offset.length() > REMOTE_SNAP_DISTANCE:
+				state.offset = Vector2.ZERO
+		state.offset *= REMOTE_CORRECTION_DECAY
+		state.velocity = velocity if state.since < MAX_EXTRAPOLATION else Vector2.ZERO
+		var shown: Vector2 = predicted + state.offset
+		_move_remote_player(player, Vector2(
+			clamp(shown.x, zone_rect.position.x, zone_rect.end.x),
+			clamp(shown.y, zone_rect.position.y, zone_rect.end.y)
+		))
 		player.lan_move = state.move
 		if state.aim != Vector2.ZERO:
 			player.gamepad_attack_vector = state.aim.normalized()
+
+
+# Moves a remote player towards target the way vanilla moves units (test_motion, then slide),
+# so it stops at the host's player (and walls) instead of being placed inside it: the host's
+# kinematic player would push itself out. Far targets (a correction) are jumped to.
+func _move_remote_player(player: Node, target: Vector2) -> void :
+	var motion: Vector2 = target - player.global_position
+	if motion.length() > REMOTE_SNAP_DISTANCE:
+		player.global_position = target
+		return
+	if motion == Vector2.ZERO:
+		return
+	if not player.test_motion(motion, true, REMOTE_MOTION_MARGIN, _motion_result):
+		player.global_position = target
+		return
+	player.global_position += _motion_result.motion
+	var slide: Vector2 = _motion_result.motion_remainder.slide(_motion_result.collision_normal)
+	if not player.test_motion(slide, true, REMOTE_MOTION_MARGIN, _motion_result):
+		player.global_position += slide
+	else:
+		player.global_position += _motion_result.motion
 
 
 func _build_snapshot() -> PoolByteArray:
@@ -688,7 +774,7 @@ func _apply_player_state(player, speed: float, health: int, max_health: int, dea
 		player.current_stats.health = health
 		player.emit_signal("health_updated", player, health, max_health)
 	if dead:
-		player.die()
+		player.die(_player_die_args())
 
 
 # RunData's signals drive the HUD (gold, XP bar) and, for a level-up, vanilla's on_levelled_up.

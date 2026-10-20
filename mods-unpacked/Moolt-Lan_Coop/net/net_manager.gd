@@ -657,14 +657,14 @@ remote func _rpc_wave_cleanup(run_states) -> void :
 
 # RPCs: client -> host (in-wave)
 
-remote func _rpc_player_state(pos, move, aim, manual_aim) -> void :
+remote func _rpc_player_state(time, pos, move, aim, manual_aim) -> void :
 	if not is_host or wave_sync == null:
 		return
-	if typeof(pos) != TYPE_VECTOR2 or typeof(move) != TYPE_VECTOR2 or typeof(aim) != TYPE_VECTOR2 or typeof(manual_aim) != TYPE_BOOL:
+	if typeof(time) != TYPE_INT or typeof(pos) != TYPE_VECTOR2 or typeof(move) != TYPE_VECTOR2 or typeof(aim) != TYPE_VECTOR2 or typeof(manual_aim) != TYPE_BOOL:
 		return
 	var entry = _get_player_by_peer(get_tree().get_rpc_sender_id())
 	if entry != null:
-		wave_sync.on_player_state(entry.player_index, pos, move, aim, manual_aim)
+		wave_sync.on_player_state(entry.player_index, time, pos, move, aim, manual_aim)
 
 
 # The client's wave scene is up (the host holds the wave timer until every client sent this).
@@ -726,9 +726,10 @@ func get_connected_client_peers() -> Array:
 	return peers
 
 
+# time: the client's msec when sent (the host estimates the state's age from it).
 func send_player_state(pos: Vector2, move: Vector2, aim: Vector2, manual_aim: bool) -> void :
 	if is_client and joined:
-		rpc_unreliable_id(HOST_PEER_ID, "_rpc_player_state", pos, move, aim, manual_aim)
+		rpc_unreliable_id(HOST_PEER_ID, "_rpc_player_state", OS.get_ticks_msec(), pos, move, aim, manual_aim)
 
 
 

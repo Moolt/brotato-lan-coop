@@ -33,10 +33,17 @@ extends Node
 #         PHYS_ITER=n: Physics2DServer collision iterations; NO_ENEMY_COLLIDE=1: enemies don't
 #         collide with each other; TIMING=1: times enemy scripts and weapon target scans;
 #         NO_SYNC=1 (host alone): LanWaveSync's per-tick work off
+#   (host and join) PUSH_TEST=1: at t=20-26 the client walks at the host player, the host stands
+#         still; both log the host's and the client's position twice a second
+#   (join) CLIENT_WALK=1: in a wave the client's player keeps walking (a new direction every second)
 #   (any role) JITTER_LOG=1: every 2 s in a wave, how smoothly enemies move on screen (frame
 #         times, physics ticks per frame, stalls, speed changes), clock offset jumps and buffer
 #         starvation (clients)
+#   (any role, also none) HIT_LOG=1: logs enemy bullets and enemies entering player hurtboxes and
+#         every player HP change (bullet bug)
 #   (any role, also none) TEST_VOLUME=x: master volume at x (default 0.2) of the saved one
+#   (host) STALE_DIE_ARGS=1: at t=16 Utils.default_die_args.from is a freed node, as vanilla
+#         leaves it (with CLIENT_QUITS=2: the host kills the left client's player)
 #   (host) MORTAL=1: players can be hit; at t=16 an enemy is placed on the host player
 #   (host) at t=16 an enemy burns with spread 2 next to two others (burn_spread_test); log_sync
 #         logs the session's physics quirk fixes and enemy contacts on player hurtboxes
@@ -66,6 +73,8 @@ var physics_ticks: = 0
 var enemy_contacts: = 0
 # Enemy bullets (layer 16) that entered a player's hurtbox this wave.
 var enemy_bullet_hits: = 0
+# HIT_LOG=1: the wave scene whose players are watched.
+var hit_log_scene = null
 
 
 func _ready() -> void :
@@ -137,6 +146,7 @@ func pick_and_ready(lobby, nth: = 0) -> void :
 
 
 func _process(delta: float) -> void :
+	hit_log_watch()
 	if role == "":
 		return
 	if not started:
@@ -155,6 +165,8 @@ func _process(delta: float) -> void :
 	perf_sample(delta)
 	perf_curve(delta)
 	jitter_sample(delta)
+	client_walk()
+	push_test()
 	pick_upgrades(delta)
 	shop_actions(delta)
 	end_screen_actions(delta)
@@ -222,6 +234,34 @@ func perf_curve(delta: float) -> void :
 		timing = " enemy_scripts_us=%d weapons=%d targets_in_range=%d weapon_scan_us=%d" % [enemies_us, weapons, in_range, OS.get_ticks_usec() - start]
 	var sync = main.get_node_or_null("LanWaveSync")
 	print("[TEST] ", role, "_curve wave_t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 1), " enemies=", main._entity_spawner.enemies.size(), " bodies=", Performance.get_monitor(Performance.PHYSICS_2D_ACTIVE_OBJECTS), " pairs=", Performance.get_monitor(Performance.PHYSICS_2D_COLLISION_PAIRS), " physics_ms=", stepify(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, 0.1), " process_ms=", stepify(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, 0.1), " fps=", Engine.get_frames_per_second(), " removed_for_perf=", main._entity_spawner.enemies_removed_for_perf, timing)
+
+
+# HIT_LOG=1 (any role, also idle for manual tests): logs every enemy bullet or enemy entering a
+# player's hurtbox and every player HP change, with the wave time.
+func hit_log_watch() -> void :
+	if OS.get_environment("HIT_LOG") != "1":
+		return
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main == hit_log_scene:
+		return
+	hit_log_scene = main
+	for player in main._players:
+		var _e = player._hurtbox.connect("area_entered", self, "_on_hit_log_area", [player])
+		_e = player.connect("health_updated", self, "_on_hit_log_health")
+	print("[TEST] hit_log watching ", main._players.size(), " players, local=", main.get_node("LanWaveSync")._local_index if main.get_node_or_null("LanWaveSync") != null else 0)
+
+
+func _on_hit_log_area(area: Area2D, player) -> void :
+	var kind = "enemy" if area.get_parent() is Enemy else ("bullet" if area.collision_layer & Utils.ENEMY_PROJECTILES_BIT else "")
+	if kind == "":
+		return
+	var main = get_tree().current_scene
+	print("[TEST] hit_log t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 0.01), " ", kind, " entered hurtbox of player ", player.player_index, " from ", area.get_parent().filename.get_file(), " hurtbox_on=", not player._hurtbox.is_disabled(), " hp=", player.current_stats.health)
+
+
+func _on_hit_log_health(unit, current_health, max_health) -> void :
+	var main = get_tree().current_scene
+	print("[TEST] hit_log t=", stepify(main._wave_timer.wait_time - main._wave_timer.time_left, 0.01), " player ", unit.player_index, " hp ", current_health, "/", max_health)
 
 
 func _on_player_hurtbox_area_entered(area: Area2D) -> void :
@@ -301,6 +341,48 @@ func _physics_process(_delta: float) -> void :
 
 # Per physics tick (JITTER_LOG): how far up to 20 enemies moved since the last tick. Vanilla
 # moves them a steady amount per tick; a stall (0 while walking) or a jump shows as a change.
+# PUSH_TEST=1: at t=20-26 the client walks straight at the host player (as it sees it); the host
+# stands still and logs where it is twice a second (pushed = it moved).
+var push_log_t: = 0.0
+
+
+func push_test() -> void :
+	if OS.get_environment("PUSH_TEST") != "1":
+		return
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main._cleaning_up or main.get_node_or_null("LanWaveSync") == null:
+		return
+	var sync = main.get_node("LanWaveSync")
+	var me = main._players[sync._local_index]
+	var host = main._players[0]
+	var directions = {"button_move_right_7": Vector2.RIGHT, "button_move_left_7": Vector2.LEFT, "button_move_down_7": Vector2.DOWN, "button_move_up_7": Vector2.UP}
+	if role == "join":
+		var to_host = host.global_position - me.global_position
+		for action in directions:
+			if t >= 20.0 and t < 26.0 and to_host.length() > 1.0 and directions[action].dot(to_host.normalized()) > 0.38:
+				Input.action_press(action)
+			elif t >= 19.9 and t < 26.5:
+				Input.action_release(action)
+	if t >= 19.5 and t < 27.0 and t >= push_log_t:
+		push_log_t = t + 0.5
+		print("[TEST] push t=", stepify(t, 0.1), " host_pos=", host.global_position.round(), " client_pos=", main._players[1].global_position.round(), " distance=", stepify(host.global_position.distance_to(main._players[1].global_position), 1))
+
+
+# CLIENT_WALK=1 (join): in a wave the client's player walks, a new direction every second.
+func client_walk() -> void :
+	if OS.get_environment("CLIENT_WALK") != "1" or role != "join":
+		return
+	var main = get_tree().current_scene
+	var directions = ["button_move_right_7", "button_move_down_7", "button_move_left_7", "button_move_up_7"]
+	var in_wave = main != null and main.filename == MenuData.game_scene and not main._cleaning_up
+	var current = int(OS.get_ticks_msec() / 1000) % 4 if in_wave else - 1
+	for i in 4:
+		if i == current:
+			Input.action_press(directions[i])
+		else:
+			Input.action_release(directions[i])
+
+
 func jitter_tick() -> void :
 	if jitter.empty() or not jitter.has("tick_pos"):
 		return
@@ -326,10 +408,45 @@ func jitter_tick() -> void :
 			jitter.speed_changes.append(abs(step - last_step) / last_step)
 		jitter.last_step[id] = step
 	jitter.tick_pos = new_pos
+	var sync = main.get_node_or_null("LanWaveSync")
+	if sync != null and sync.is_host:
+		var now = OS.get_ticks_msec()
+		for index in sync._remote_states:
+			var state = sync._remote_states[index]
+			if not jitter.remote_last.has(index):
+				jitter.remote_last[index] = [state.pos, now]
+				continue
+			var last = jitter.remote_last[index]
+			if state.pos != last[0]:
+				jitter.remote_gaps.append(now - last[1])
+				jitter.remote_last[index] = [state.pos, now]
+				jitter.remote_ages.append(int(state.since * 1000.0))
+			elif state.move != Vector2.ZERO:
+				jitter.remote_stalls += 1
+			# Direction unchanged for 0.3 s: steps should be steady.
+			if state.move != jitter.remote_move.get(index, Vector2.ZERO):
+				jitter.remote_move[index] = state.move
+				jitter.remote_move_since[index] = now
+			var straight = now - jitter.remote_move_since.get(index, now) > 300
+			# What the host shows: the remote player's step this tick.
+			var shown = main._players[index].global_position
+			if jitter.remote_shown.has(index) and state.move != Vector2.ZERO:
+				var step = shown.distance_to(jitter.remote_shown[index][0])
+				var last_step = jitter.remote_shown[index][1]
+				if step < 0.05:
+					jitter.remote_shown_stalls += 1
+				if last_step > 0.5:
+					jitter.remote_step_changes.append(abs(step - last_step) / last_step)
+					if straight:
+						jitter.remote_straight_changes.append(abs(step - last_step) / last_step)
+				jitter.remote_shown[index] = [shown, step]
+			else:
+				jitter.remote_shown[index] = [shown, - 1.0]
 
 
 # JITTER_LOG: frame times, physics ticks per frame, enemy motion per tick (jitter_tick), and on
-# clients the snapshots' lateness, clock offset jumps and frames where the buffer ran dry.
+# clients the snapshots' lateness, clock offset jumps and frames where the buffer ran dry; on
+# the host how regularly the clients' reported positions change.
 func jitter_sample(_delta: float) -> void :
 	var main = get_tree().current_scene
 	if OS.get_environment("JITTER_LOG") != "1" or main == null or main.filename != MenuData.game_scene or main._cleaning_up:
@@ -339,7 +456,7 @@ func jitter_sample(_delta: float) -> void :
 	var sync = main.get_node_or_null("LanWaveSync")
 	var now = OS.get_ticks_usec()
 	if jitter.empty():
-		jitter = {"start": now, "last": now, "pos": {}, "frames": 0, "ticks": {}, "dt": [], "stalls": 0, "moving": 0, "speed_changes": [], "last_speed": {}, "offset": sync._clock_offset if sync != null else null, "offset_jumps": [], "starved": 0, "tick_pos": {}, "last_step": {}, "late": [], "last_time": sync._snapshots[- 1].time if sync != null and not sync._snapshots.empty() else - 1}
+		jitter = {"start": now, "last": now, "pos": {}, "frames": 0, "ticks": {}, "dt": [], "stalls": 0, "moving": 0, "speed_changes": [], "last_speed": {}, "offset": sync._clock_offset if sync != null else null, "offset_jumps": [], "starved": 0, "tick_pos": {}, "last_step": {}, "remote_last": {}, "remote_gaps": [], "remote_stalls": 0, "remote_shown": {}, "remote_shown_stalls": 0, "remote_step_changes": [], "remote_straight_changes": [], "remote_ages": [], "remote_move": {}, "remote_move_since": {}, "late": [], "last_time": sync._snapshots[- 1].time if sync != null and not sync._snapshots.empty() else - 1}
 		physics_ticks = 0
 		return
 	var dt = (now - jitter.last) / 1000000.0
@@ -372,7 +489,17 @@ func jitter_sample(_delta: float) -> void :
 		var late = jitter.late
 		late.sort()
 		var late_text = "-" if late.empty() else "%d/%d/%d" % [late[late.size() / 2], late[int(late.size() * 0.9)], late[- 1]]
-		print("[TEST] ", role, "_jitter late_ms_p50/p90/max=", late_text, " snaps=", late.size(), " frames=", jitter.frames, " fps=", stepify(jitter.frames / 2.0, 1), " dt_ms_median=", stepify(dts[dts.size() / 2], 0.1), " dt_ms_max=", stepify(dts[- 1], 0.1), " ticks_per_frame=", jitter.ticks, " tick_samples=", jitter.moving, " tick_stall_pct=", stepify(100.0 * jitter.stalls / max(1, jitter.moving), 0.1), " speed_change_median=", stepify(median, 0.01), " p90=", stepify(p90, 0.01), " offset_jumps_ms=", jitter.offset_jumps, " starved_frames=", jitter.starved, " interp_delay_ms=", stepify(jitter.get("delay", 0.0), 1))
+		var gaps = jitter.remote_gaps
+		gaps.sort()
+		var steps = jitter.remote_step_changes
+		steps.sort()
+		var straight = jitter.remote_straight_changes
+		straight.sort()
+		var ages = jitter.remote_ages
+		ages.sort()
+		var extra = "" if straight.empty() or ages.empty() else ", straight step_change p50/p90=%.2f/%.2f, state age_ms p50/p90/max=%d/%d/%d" % [straight[straight.size() / 2], straight[int(straight.size() * 0.9)], ages[ages.size() / 2], ages[int(ages.size() * 0.9)], ages[- 1]]
+		var remote_text = "-" if gaps.empty() else "%d updates, gap_ms p50/p90/max=%d/%d/%d, stalled_ticks=%d, shown: stalls=%d step_change p50/p90=%.2f/%.2f" % [gaps.size(), gaps[gaps.size() / 2], gaps[int(gaps.size() * 0.9)], gaps[- 1], jitter.remote_stalls, jitter.remote_shown_stalls, steps[steps.size() / 2] if not steps.empty() else 0.0, steps[int(steps.size() * 0.9)] if not steps.empty() else 0.0] + extra
+		print("[TEST] ", role, "_jitter remote_player=", remote_text, " late_ms_p50/p90/max=", late_text, " snaps=", late.size(), " frames=", jitter.frames, " fps=", stepify(jitter.frames / 2.0, 1), " dt_ms_median=", stepify(dts[dts.size() / 2], 0.1), " dt_ms_max=", stepify(dts[- 1], 0.1), " ticks_per_frame=", jitter.ticks, " tick_samples=", jitter.moving, " tick_stall_pct=", stepify(100.0 * jitter.stalls / max(1, jitter.moving), 0.1), " speed_change_median=", stepify(median, 0.01), " p90=", stepify(p90, 0.01), " offset_jumps_ms=", jitter.offset_jumps, " starved_frames=", jitter.starved, " interp_delay_ms=", stepify(jitter.get("delay", 0.0), 1))
 		jitter = {}
 
 
@@ -707,12 +834,18 @@ func _host_step() -> void :
 				boss.current_stats.health = 5000
 				boss.emit_signal("health_updated", boss, 5000, 5000)
 			burn_spread_test(get_tree().current_scene)
+			if OS.get_environment("STALE_DIE_ARGS") == "1":
+				# As vanilla leaves it after a player was killed by something since freed.
+				var gone = Node.new()
+				Utils.default_die_args.from = gone
+				gone.free()
 			contact_test(get_tree().current_scene)
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
 			var main = get_tree().current_scene
-			main._players[2].die()
+			# Fresh args: vanilla's Utils.default_die_args may hold a freed killer.
+			main._players[2].die(Entity.DieArgs.new())
 			var spawner = main._entity_spawner
 			if not spawner.neutrals.empty():
 				spawner.neutrals[0].die()
@@ -734,7 +867,7 @@ func _host_step() -> void :
 				# Everyone dies: the run is lost.
 				for p in main._players:
 					if not p.dead:
-						p.die()
+						p.die(Entity.DieArgs.new())
 			next_t = 24.0
 		11:
 			if waves_target() > 1:
