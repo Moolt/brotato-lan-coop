@@ -7,6 +7,7 @@ extends Reference
 
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 
+const MOD_ID: = NetProtocol.MOD_ID
 const MAX_PLAYERS: = NetProtocol.MAX_PLAYERS
 # Vanilla coop players; enemy HP grows slower beyond them (see apply_enemy_scaling).
 const VANILLA_MAX_PLAYERS: = 4

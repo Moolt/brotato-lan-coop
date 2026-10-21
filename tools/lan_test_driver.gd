@@ -49,6 +49,10 @@ extends Node
 #         logs the session's physics quirk fixes and enemy contacts on player hurtboxes
 #   (solo) START_WAVE, ENEMY_MULT as for host; a 20 s wave
 #   (host) WAVE_DURATION=s: the first wave lasts s seconds (default 20)
+#   (host) CHOICE_TIME=s: the choice time between waves (lobby_settings.choice_time)
+#   (host and join) IDLE_CHOICE=1: no Go in the shop (the choice time runs out); =2: no upgrade
+#         picks either; =3: as 2, and the client's choice time never ends (the host goes on
+#         without it). choice_watch logs and screenshots the countdown at 13, 8 and 3 s left
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -167,6 +171,7 @@ func _process(delta: float) -> void :
 	jitter_sample(delta)
 	client_walk()
 	push_test()
+	choice_watch()
 	pick_upgrades(delta)
 	shop_actions(delta)
 	end_screen_actions(delta)
@@ -776,6 +781,9 @@ func _host_step() -> void :
 				DebugService.starting_wave = int(OS.get_environment("START_WAVE"))
 			if OS.get_environment("ENEMY_MULT") != "":
 				DebugService.nb_enemies_mult = float(OS.get_environment("ENEMY_MULT"))
+			if OS.get_environment("CHOICE_TIME") != "":
+				net.lobby_settings.choice_time = int(OS.get_environment("CHOICE_TIME"))
+				net._broadcast_lobby_state()
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
@@ -870,7 +878,7 @@ func _host_step() -> void :
 						p.die(Entity.DieArgs.new())
 			next_t = 24.0
 		11:
-			if waves_target() > 1:
+			if waves_target() > 1 or OS.get_environment("IDLE_CHOICE") != "":
 				if not wait_for_wave(waves_target() + 1):
 					step -= 1
 					return
@@ -918,12 +926,45 @@ func solo_view_test() -> void :
 
 
 var pick_wait: = 0.0
+var choice_seconds: = - 1
+
+
+# Between waves: logs (and screenshots) what the choice countdown shows at 13, 8 and 3 s left.
+# IDLE_CHOICE=3 (join): the client's choice time never runs out.
+func choice_watch() -> void :
+	var net = get_node_or_null("/root/LanNet")
+	if net == null or not net.between_waves:
+		choice_seconds = - 1
+		return
+	if role == "join" and OS.get_environment("IDLE_CHOICE") == "3" and net.choice_deadline_msec != 0:
+		net.choice_deadline_msec = OS.get_ticks_msec() + 3600000
+	var time_left: float = net.get_choice_time_left()
+	var seconds: = int(ceil(time_left)) if time_left >= 0.0 else - 1
+	if seconds == choice_seconds:
+		return
+	choice_seconds = seconds
+	if seconds % 5 != 3:
+		return
+	var scene = get_tree().current_scene
+	var tag = role + "_choice_" + str(seconds)
+	if scene is BaseShop:
+		var go = scene._get_go_button(0)
+		var overlay = scene.get_node("LanShopWaitingOverlay")
+		print("[TEST] ", tag, " shop go='", go.text, "' go_color=", go.get("custom_colors/font_color"), " overlay=", overlay.visible, " back='", overlay._back_button.text, "' back_disabled=", overlay._back_button.disabled)
+	elif scene != null and scene.filename == MenuData.game_scene:
+		var label = scene._wave_timer_label
+		print("[TEST] ", tag, " upgrades label='", label.text, "' visible=", label.is_visible_in_tree(), " modulate=", label.modulate, " upgrades_ui=", scene._upgrades_ui.visible)
+	else:
+		print("[TEST] ", tag, " scene=", scene_name())
+	shot(tag)
 
 
 # Between waves: in the solo upgrades UI, picks the first upgrade or takes the crate's item.
 func pick_upgrades(delta: float) -> void :
 	var main = get_tree().current_scene
 	if main == null or main.filename != MenuData.game_scene or not main._upgrades_ui.visible:
+		return
+	if int(OS.get_environment("IDLE_CHOICE")) >= 2:
 		return
 	pick_wait += delta
 	if pick_wait < 1.0:
@@ -1030,6 +1071,8 @@ func shop_actions(delta: float) -> void :
 	if shop == null or not shop is BaseShop:
 		shop_step = 0
 		shop_wait = 0.0
+		return
+	if int(OS.get_environment("IDLE_CHOICE")) >= 1:
 		return
 	shop_wait += delta
 	var net = get_node("/root/LanNet")
@@ -1257,7 +1300,7 @@ func _client_step() -> void :
 					timer.start(timer.time_left + float(OS.get_environment("TIMER_LAG")))
 			next_t = 23.6
 		10:
-			if waves_target() > 1:
+			if waves_target() > 1 or OS.get_environment("IDLE_CHOICE") != "":
 				if not wait_for_wave(waves_target() + 1):
 					step -= 1
 					return

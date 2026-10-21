@@ -61,6 +61,8 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TEST_VOLUME=x` | master volume at x of the saved one (default 0.2), in every role including the idle manual-test windows |
 | `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`hurtbox_hits` line: enemy contacts and enemy bullets on player hurtboxes) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
+| `CHOICE_TIME=s` | host: the choice time between waves (`lobby_settings.choice_time`) |
+| `IDLE_CHOICE=1` / `=2` / `=3` | no Go in the shop (the choice time presses it) / no upgrade picks either / as 2, and the client's time never ends (the host goes on without it after the grace). Both wait for the next wave; `choice_watch` logs and screenshots the countdown at 13, 8 and 3 s left |
 | `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
 | `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |
@@ -99,6 +101,7 @@ Each takes about 1–2 min.
 | `ROUNDS=2 KILL_ALL=1` | stale wave-end state across runs |
 | `FAIL_ACK=1 WAVES=2` | next-wave digest mismatch doesn't freeze |
 | `TIMER_LAG=0.3` | no wave-timer ticking in the upgrade screen |
+| `CHOICE_TIME=20 IDLE_CHOICE=2`, `CHOICE_TIME=25 IDLE_CHOICE=1`, `CHOICE_TIME=15 IDLE_CHOICE=3` | choice time: random upgrades and crates, Go in the shop, the host going on without a stuck client |
 | `AIM_TEST=1 FAKES=5` | remote manual aim, off-screen arrows, skulls |
 | role `lobby` | lobby layout and previews |
 | role `solo` | vanilla solo play outside a session |

@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 16
+const PROTOCOL_VERSION: = 17
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -42,6 +42,12 @@ const DEFAULT_SCALING: = {
 	"enemy_cap_per_player": 0.25, 
 }
 const MAX_SCALING_VALUE: = 2.0
+
+# Seconds every player has between waves for level-ups, crates and the shop
+# (lobby_settings.choice_time, 0 = no limit); then the game picks and presses Go itself. The host
+# waits CHOICE_GRACE more seconds for late results and goes on without them.
+const DEFAULT_CHOICE_TIME: = 90
+const CHOICE_GRACE: = 10.0
 
 # Keys a client may change on its own lobby entry.
 const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready"]
@@ -143,6 +149,7 @@ static func default_lobby_settings() -> Dictionary:
 		"run_id": 0, 
 		"in_wave": false, 
 		"scaling": DEFAULT_SCALING.duplicate(), 
+		"choice_time": DEFAULT_CHOICE_TIME, 
 	}
 
 

@@ -1,11 +1,13 @@
 extends Control
 
 # Shown over the shop after Go in a LAN session, until everyone is done: who is still shopping,
-# and a button back to the shop (takes the Go back). Blocks the shop underneath.
+# and a button back to the shop (takes the Go back) with the choice time left. Blocks the shop
+# underneath.
 
 signal back_pressed()
 
 const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
+const ChoiceCountdown = preload("res://mods-unpacked/Moolt-Lan_Coop/game/choice_countdown.gd")
 
 const WIDTH: = 900.0
 
@@ -45,6 +47,13 @@ func open(names: Array) -> void :
 func set_names(names: Array) -> void :
 	var joined: = PoolStringArray(names).join(", ")
 	_names_label.text = tr("LAN_SHOP_STILL_SHOPPING").replace("{0}", joined) if not names.empty() else ""
+
+
+# The choice time left on the back button (-1: no limit); at 0 Go can't be taken back.
+func set_seconds_left(seconds: int) -> void :
+	_back_button.text = tr("LAN_SHOP_BACK") if seconds < 0 else "%s - %d" % [tr("LAN_SHOP_BACK"), seconds]
+	_back_button.disabled = seconds == 0
+	ChoiceCountdown.color_button(_back_button, seconds)
 
 
 func focus() -> void :

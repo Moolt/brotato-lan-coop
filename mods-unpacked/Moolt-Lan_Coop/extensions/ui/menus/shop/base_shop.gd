@@ -5,11 +5,17 @@ extends "res://ui/menus/shop/base_shop.gd"
 # solo run to the host (LanNet.send_shop_done) and shows who is still shopping over the shop.
 # "Back to the shop" (or cancel) takes the Go back. The host goes on once everyone is done.
 # Vanilla's once-per-wave Go parts (hourglass, elite rolls, the wave increment) run on the host.
+# The Go button counts down the choice time (game/choice_countdown.gd) and is pressed when it
+# runs out; from then on Go can't be taken back.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const ShopWaitingOverlay = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/shop_waiting_overlay.gd")
+const ChoiceCountdown = preload("res://mods-unpacked/Moolt-Lan_Coop/game/choice_countdown.gd")
 
 var _lan_overlay: Control = null
+# Go's text without the countdown, and with it as last set (vanilla may change the text).
+var _lan_go_text: = ""
+var _lan_go_text_shown: = ""
 
 
 # Runs after vanilla's _ready.
@@ -21,6 +27,10 @@ func _ready() -> void :
 	add_child_below_node($Content, _lan_overlay)
 	var _e = _lan_overlay.connect("back_pressed", self, "_lan_on_back_pressed")
 	_e = LanGame.get_lan_net().connect("shop_waiting_changed", self, "_lan_on_shop_waiting_changed")
+	var countdown = ChoiceCountdown.new()
+	add_child(countdown)
+	_e = countdown.connect("changed", self, "_lan_on_choice_countdown_changed")
+	_e = countdown.connect("overdue", self, "_lan_on_choice_overdue")
 	# shop.gd's _ready (after this one) shows the Endless button before wave 20. Endless is
 	# run-wide but each machine would set it alone, so it stays off in a session.
 	call_deferred("_lan_hide_endless_button")
@@ -61,6 +71,8 @@ func _on_GoButton_focus_exited(player_index: int) -> void :
 
 # Vanilla calls this for Go pressed again and for cancel while Go is pressed.
 func _clear_go_button_pressed(player_index: int) -> void :
+	if _lan_overlay != null and LanGame.get_lan_net().get_choice_time_left() == 0.0:
+		return
 	._clear_go_button_pressed(player_index)
 	if _lan_overlay != null and _lan_overlay.visible:
 		_lan_overlay.hide()
@@ -106,3 +118,24 @@ func _lan_on_back_pressed() -> void :
 
 func _lan_on_shop_waiting_changed() -> void :
 	_lan_overlay.set_names(LanGame.get_lan_net().shop_waiting_names)
+
+
+func _lan_on_choice_countdown_changed(seconds: int) -> void :
+	var go_button: Button = _get_go_button(0)
+	if go_button.text != _lan_go_text_shown:
+		_lan_go_text = go_button.text
+	go_button.text = _lan_go_text if seconds < 0 else "%s - %d" % [_lan_go_text, seconds]
+	_lan_go_text_shown = go_button.text
+	ChoiceCountdown.color_button(go_button, seconds)
+	_lan_overlay.set_seconds_left(seconds)
+
+
+# The choice time is up: Go, with whatever the player bought. Closes the pause menu first, so
+# the waiting overlay gets the focus.
+func _lan_on_choice_overdue() -> void :
+	if _player_pressed_go_button[0]:
+		return
+	if _pause_menu.get("_lan_open"):
+		_pause_menu.unpause()
+	ModLoaderLog.info("Choice time is up: Go", LanGame.MOD_ID)
+	_on_GoButton_pressed(0)

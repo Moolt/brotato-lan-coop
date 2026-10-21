@@ -28,12 +28,15 @@ extends "res://main.gd"
 # - At the end of a wave the host sends the run and the pending level-ups and crates to the
 #   clients (LanNet.send_wave_end_state). Every machine then picks its own upgrades in the
 #   vanilla solo UpgradesUI, with RunData as the local player's solo run (game/solo_view.gd),
-#   and goes on to the solo shop. At the run's end (lost or won; everyone dead ends the run, no
+#   and goes on to the solo shop. The choice time counts down in the wave timer's place; when it
+#   runs out, random upgrades are picked and crate items taken (game/choice_countdown.gd).
+#   At the run's end (lost or won; everyone dead ends the run, no
 #   retry screen) every machine shows the solo end screen for its own player.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
 const OffscreenArrows = preload("res://mods-unpacked/Moolt-Lan_Coop/game/offscreen_arrows.gd")
+const ChoiceCountdown = preload("res://mods-unpacked/Moolt-Lan_Coop/game/choice_countdown.gd")
 
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 const DEAD_ICON = preload("res://items/all/goat_skull/goat_skull_icon.png")
@@ -523,6 +526,7 @@ func _on_EndWaveTimer_timeout() -> void :
 		MusicManager.tween( - 8)
 		if lan_net.enter_solo_view():
 			_lan_set_up_solo_upgrades_ui()
+			_lan_start_choice_countdown()
 			var pending: Array = _lan_get_own_pending(lan_net)
 			if _upgrades_ui.show_options(pending[0], pending[1]):
 				var things_to_process_player_container = _things_to_process_player_containers[lan_net.local_player_index]
@@ -564,6 +568,39 @@ func _lan_hud_index(player_index: int) -> int:
 	if lan_net != null and lan_net.solo_view.active and player_index == 0:
 		return lan_net.local_player_index
 	return player_index
+
+
+# Between waves the choice time counts down until the scene changes.
+func _lan_start_choice_countdown() -> void :
+	var countdown = ChoiceCountdown.new()
+	add_child(countdown)
+	var _e = countdown.connect("changed", self, "_lan_on_choice_countdown_changed")
+	_e = countdown.connect("overdue", self, "_lan_choose_for_player")
+
+
+# The wave timer's label (hidden at the wave's end, done with its timer) shows the seconds left.
+func _lan_on_choice_countdown_changed(seconds: int) -> void :
+	_wave_timer_label.wave_timer = null
+	_wave_timer_label.visible = seconds >= 0
+	_wave_timer_label.text = str(seconds)
+	_wave_timer_label.modulate = ChoiceCountdown.get_color(seconds)
+
+
+# The choice time is up: picks a random upgrade or takes the crate's item. Called every frame;
+# the container ignores presses during its short button delay.
+func _lan_choose_for_player() -> void :
+	if not _upgrades_ui.visible or not LanGame.get_lan_net().solo_view.active:
+		return
+	var container = _upgrades_ui._player_container1
+	if container._button_pressed:
+		return
+	if container._upgrades_container.visible and not container._old_upgrades.empty():
+		var upgrade = Utils.get_rand_element(container._old_upgrades)
+		ModLoaderLog.info("Choice time is up: picked %s" % upgrade.my_id, LanGame.MOD_ID)
+		container._on_choose_button_pressed(upgrade)
+	elif container._items_container.visible:
+		ModLoaderLog.info("Choice time is up: took %s" % container._item_data.my_id, LanGame.MOD_ID)
+		container._on_TakeButton_pressed()
 
 
 # The solo UpgradesUI's _ready returned early, since the run was a coop run then. In the solo

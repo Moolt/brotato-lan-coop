@@ -92,6 +92,10 @@ var shop_done: = false
 var _shop_runs: = {}
 # Host: peers that quit the run (pause menu, in the wave or between waves); not waited for.
 var _left_run_peers: = {}
+# Between waves, when this machine's choice time ends (OS.get_ticks_msec), 0 without a limit.
+# It starts with the own solo view (lobby_settings.choice_time). At 0 the upgrade screen and the
+# shop choose for the player (game/choice_countdown.gd); the host goes on CHOICE_GRACE later.
+var choice_deadline_msec: = 0
 
 # The wave's LanWaveSync (net/wave_sync.gd) while main.tscn is loaded in a session, else null.
 # In-wave RPCs are forwarded to it.
@@ -133,6 +137,9 @@ func _process(_delta: float) -> void :
 		if now - _pending_hello[peer_id] > NetProtocol.HELLO_TIMEOUT * 1000:
 			_pending_hello.erase(peer_id)
 			_kick_peer(peer_id)
+	if between_waves and choice_deadline_msec != 0 and now > choice_deadline_msec + NetProtocol.CHOICE_GRACE * 1000:
+		ModLoaderLog.warning("Choice time is over, going on without %s" % PoolStringArray(shop_waiting_names).join(", "), NetProtocol.MOD_ID)
+		_on_all_shops_done()
 
 
 
@@ -372,11 +379,19 @@ func on_title_screen() -> void :
 	between_waves = false
 	shop_done = false
 	shop_waiting_names = []
+	choice_deadline_msec = 0
 	# The title screen resets RunData (the end screen's Exit already did), so there is no coop
 	# run to put back.
 	if solo_view.active:
 		solo_view.discard()
 		ModLoaderLog.info("Solo view ended on the title screen", NetProtocol.MOD_ID)
+
+
+# Seconds left to choose between waves; -1.0 without a limit or outside that phase.
+func get_choice_time_left() -> float:
+	if not between_waves or choice_deadline_msec == 0:
+		return - 1.0
+	return max(0.0, (choice_deadline_msec - OS.get_ticks_msec()) / 1000.0)
 
 
 # The local player's index in RunData right now: 0 in the solo view, else local_player_index.
@@ -393,6 +408,8 @@ func enter_solo_view(shopping: bool = true) -> bool:
 	if shopping:
 		between_waves = true
 		shop_done = false
+		var choice_time: = int(lobby_settings.get("choice_time", 0))
+		choice_deadline_msec = OS.get_ticks_msec() + choice_time * 1000 if choice_time > 0 else 0
 		_update_shop_waiting()
 	return true
 
@@ -624,7 +641,8 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 remote func _rpc_enter_wave(run_id) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
-	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or _is_in_wave_scene():
+	# Still in the last wave's upgrades (the host stopped waiting): that scene is over.
+	if typeof(run_id) != TYPE_INT or run_id != _received_run_id or (_is_in_wave_scene() and not get_tree().current_scene.get("_end_wave_timer_timedout")):
 		return
 	# A mismatch at Start keeps the client out (the lobby shows it); during a run the host
 	# starts the next wave anyway (_enter_wave_if_synced), with its run.
@@ -919,6 +937,7 @@ func _reset_between_waves() -> void :
 	shop_done = false
 	shop_waiting_names = []
 	_shop_runs = {}
+	choice_deadline_msec = 0
 	run_over = false
 
 
