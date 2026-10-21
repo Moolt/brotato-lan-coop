@@ -48,6 +48,8 @@ const PREVIEW_HEADER_HEIGHT: = 64.0
 const PREVIEW_DETAILS_MIN_HEIGHT: = 100.0
 const ROW_ICON_SIZE: = Vector2(40, 40)
 const SELECTED_MARKER_NAME: = "LanSelectedMarker"
+const SELECTED_FILL_NAME: = "LanSelectedFill"
+const SELECTED_FILL_ALPHA: = 0.45
 
 var _net: Node = null
 var _page_column: VBoxContainer
@@ -455,23 +457,32 @@ func _mark_selected(grid: Control, item_id: String, color: Color) -> Control:
 		var is_selected: bool = not item_id.empty() and not element.is_special and element.item != null and element.item.my_id == item_id
 		var marker = element.get_node_or_null(SELECTED_MARKER_NAME)
 		if is_selected and marker == null:
-			element.add_child(_new_selected_marker(color))
+			# The fill behind the icon, the border over everything (the element's frame too).
+			var fill: = _new_marker_panel(SELECTED_FILL_NAME, Color(color.r, color.g, color.b, SELECTED_FILL_ALPHA), Color.transparent)
+			element.add_child(fill)
+			element.move_child(fill, 0)
+			element.add_child(_new_marker_panel(SELECTED_MARKER_NAME, Color.transparent, color))
 		elif not is_selected and marker != null:
-			element.remove_child(marker)
-			marker.queue_free()
+			for node_name in [SELECTED_MARKER_NAME, SELECTED_FILL_NAME]:
+				var node = element.get_node_or_null(node_name)
+				if node != null:
+					element.remove_child(node)
+					node.queue_free()
 		if is_selected:
 			marked = element
 	return marked
 
 
-func _new_selected_marker(color: Color) -> Control:
+# As vanilla's coop selection: a half transparent background and a border in the player's colour.
+func _new_marker_panel(node_name: String, fill: Color, border: Color) -> Control:
 	var style: = StyleBoxFlat.new()
-	style.draw_center = false
-	style.border_color = color
-	style.set_border_width_all(5)
+	style.bg_color = fill
+	style.draw_center = fill.a > 0.0
+	style.border_color = border
+	style.set_border_width_all(5 if border.a > 0.0 else 0)
 	style.set_corner_radius_all(6)
 	var marker: = Panel.new()
-	marker.name = SELECTED_MARKER_NAME
+	marker.name = node_name
 	marker.mouse_filter = MOUSE_FILTER_IGNORE
 	marker.add_stylebox_override("panel", style)
 	marker.set_anchors_and_margins_preset(PRESET_WIDE)

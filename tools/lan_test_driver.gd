@@ -1473,7 +1473,10 @@ func _lobby_step() -> void :
 		3:
 			var lobby = m.get_node("LanLobby")
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-			lobby._on_CharacterGrid_element_hovered(first_element(lobby._character_grid, 4))
+			# Mage: has starting items whatever is unlocked (the 5th character changes with unlocks).
+			for e in lobby._character_grid.get_children():
+				if e.item != null and e.item.my_id == "character_mage":
+					lobby._on_CharacterGrid_element_hovered(e)
 			next_t = t + 0.5
 		4:
 			shot("lobby_character_hovered")
