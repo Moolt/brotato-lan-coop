@@ -1,7 +1,7 @@
 extends Control
 
 # The lobby's run settings, opened with its Settings button and shown over the lobby: one row
-# per setting (label, dropdown) in groups. Only the host opens it and changes them
+# per setting (label, dropdown). Only the host opens it and changes them
 # (LanNet.set_lobby_settings, applied at once); during a run they are read-only. Back or
 # ui_cancel (handled by the lobby) closes the page.
 
@@ -12,12 +12,11 @@ const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
-const GROUP_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+const INFO_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
 
 const WIDTH: = 860.0
 const OPTION_SIZE: = Vector2(440, 52)
-const GROUP_COLOR: = Color(1, 0.85, 0.45)
 
 var _net: Node = null
 var _zone_option: OptionButton
@@ -37,17 +36,17 @@ func _init() -> void :
 	background.mouse_filter = Control.MOUSE_FILTER_STOP
 	background.color = Color(0.06, 0.06, 0.06, 0.96)
 	column.add_constant_override("separation", 8)
+	var title_gap: = Control.new()
+	title_gap.rect_min_size = Vector2(0, 16)
+	column.add_child(title_gap)
 
-	_add_group(column, "LAN_SETTINGS_RUN")
 	_zone_option = _add_row(column, "LAN_SETTING_ZONE", "zone")
 	_difficulty_option = _add_row(column, "LAN_SETTING_DANGER", "difficulty")
-	_add_group(column, "LAN_SETTINGS_BETWEEN_WAVES")
 	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
-	_add_group(column, "LAN_SETTINGS_SCALING")
 	_scaling_option = _add_row(column, "LAN_SETTING_SCALING", "scaling_preset")
 	# What the preset adds per extra player, from the knobs the clients get.
 	_scaling_info = Label.new()
-	_scaling_info.add_font_override("font", GROUP_FONT)
+	_scaling_info.add_font_override("font", INFO_FONT)
 	_scaling_info.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
 	_scaling_info.autowrap = true
 	column.add_child(_scaling_info)
@@ -168,16 +167,6 @@ func _get_options() -> Array:
 
 static func _percent(value: float) -> String:
 	return str(int(round(value * 100)))
-
-
-func _add_group(column: VBoxContainer, text_key: String) -> void :
-	var label: = Label.new()
-	label.text = tr(text_key).to_upper()
-	label.add_font_override("font", GROUP_FONT)
-	label.add_color_override("font_color", GROUP_COLOR)
-	label.rect_min_size = Vector2(0, 40)
-	label.valign = Label.VALIGN_BOTTOM
-	column.add_child(label)
 
 
 # A label and a dropdown whose item ids are the setting's values.
