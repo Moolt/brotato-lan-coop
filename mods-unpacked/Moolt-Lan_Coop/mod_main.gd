@@ -34,6 +34,8 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/coop_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/debug_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/run_data.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/challenge_service.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/pet/jellyshield/jellyshield.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/utils.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/zone_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/shop/base_shop.gd"))

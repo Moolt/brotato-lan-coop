@@ -1,7 +1,8 @@
 extends "res://singletons/run_data.gd"
 
 # Grows the per-player arrays to 12 slots (see LanGame), also after the functions that reassign
-# them with 4 slots.
+# them with 4 slots. In a LAN session a won run credits only the own character
+# (game/session_progress.gd).
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
@@ -28,6 +29,18 @@ func reset_run_caches() -> void :
 func resume_from_state(state: Dictionary) -> void :
 	.resume_from_state(state)
 	_lan_grow_player_arrays()
+
+
+# Vanilla credits every player's character (one save in couch coop). In a session each machine
+# credits its own: the run is the own player's solo run meanwhile, still recorded as coop.
+func apply_run_won() -> void :
+	var lan_net = LanGame.get_lan_net()
+	if lan_net == null or not lan_net.active or lan_net.solo_view.active or not lan_net.enter_solo_view(false):
+		.apply_run_won()
+		return
+	is_coop_run = true
+	.apply_run_won()
+	lan_net.leave_solo_view()
 
 
 func _lan_grow_player_arrays() -> void :

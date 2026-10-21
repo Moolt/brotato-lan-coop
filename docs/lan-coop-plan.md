@@ -21,7 +21,8 @@ These hold for all further work; changing one is a design change, note it here.
 - **Each machine moves its own player.** Rendering the own player from 20 Hz snapshots would add 60–120 ms of input delay, and removing that later would need client-side prediction. A client faking its position doesn't matter in LAN co-op. Consequences: the host sees a client's position 1–5 ms late (over WiFi with power saving its states come in bursts; the host dead-reckons in between, so only direction changes show late), a client sees enemies 100–300 ms behind (interpolation, adaptive to the snapshots' lateness), so a last-moment dodge can occasionally count differently. Speed, HP, death, gold and XP still come from the host.
 - **Between waves every machine runs the vanilla *solo* upgrade UI, shop and end screen** on a 1-player view of `RunData` (the solo view) and sends its `PlayerRunData` back; the host merges. The coop UIs are hardcoded to 4 slots and one screen.
 - **Runs travel as JSON through vanilla's save loader** and are checked with a digest (`RunBuilder`). At Start a mismatch keeps everyone in the lobby; between waves the host's run wins.
-- **Everything unlocked during a session** on every peer (item pools match), saves blocked, own progress and "Continue" run restored on leave.
+- **Everything unlocked during a session** on every peer (item pools match), saves blocked, own unlocks and "Continue" run restored on leave.
+- **What a session counts for** (2026-10-21): a won run credits only the own character; between waves everything is the own player's; challenges and lifetime counters earned in a wave count for the whole team (the host decides and forwards them). Rewards are kept, and the own progress is saved after each run and when the session ends.
 - **4-slot arrays grow to 12 always**, not only in a session (vanilla never reads beyond the player count).
 - **Everyone dead ends the run** in a session (no retry screen yet, see [Lobby settings](#lobby-settings)).
 - **Never edit vanilla files**; only script extensions. **No `push_error` or script errors from mod code** (the crash reporter disables mods on the next launch).
@@ -102,10 +103,11 @@ What the driver and manual tests haven't covered yet ([testing.md](testing.md)).
 
 ### Known limitations
 Accepted for now; tick one if it gets fixed, or promote it to a todo if it shows up in play.
-- [ ] Entities spawned before `LanWaveSync` exists (jellyshields in `Player.init`) aren't synced; each machine keeps its own.
-- [ ] `GroupOfBullet` bullet-hell patterns (`BulletHell_2` / `_3`) aren't synced; vanilla never picks them today.
-- [ ] Weapon attack events that arrive while the client's copy is still busy are skipped.
-- [ ] Progress from LAN runs: `RunData.apply_run_won` credits the character challenges and difficulty records of every player's character on every machine, and challenges completed in a session may be dropped when the own unlock lists are restored. Needs a decision (see [Features](#features)).
+- [x] Jellyshields (spawned in `Player.init`, before `LanWaveSync` exists) aren't synced; each machine keeps its own. Fixed 2026-10-21: their orbit angle follows the wave timer, so they stand at the same place everywhere (driver: angle within 0.01 rad of the wave time on host and client).
+- [x] Weapon attack events that arrive while the client's copy is still busy were skipped. Fixed 2026-10-21: the latest one waits and plays once the swing is over.
+- [x] Progress from LAN runs credited every player's character on every machine, and rewards of challenges completed in a session were dropped when the own unlock lists came back. Fixed 2026-10-21 (see [Features](#features)).
+- [x] The jellyshield challenge (`player.gd` `check_chal_jellyshield`) only fires while the host hasn't completed it itself, so clients miss it once the host has it. The only in-wave challenge with that guard. (Not fixed but accepted as unproblematic)
+- [x] A run's progress is saved when it ends (title screen) or with the session; closing the game in the middle of a run loses that run's progress, as vanilla would lose an unsaved run. (Not fixed but accepted as unproblematic)
 
 ### Lobby settings
 A **Settings** area in the lobby for run options: the host changes them, clients see them read-only (today's "Zone, Danger N" summary grows into it). Each one lives in `lobby_settings` (defaults in `NetProtocol.default_lobby_settings`), reaches the clients with `_broadcast_lobby_state`, is validated in `_apply_lobby_settings` and remembered in `lan_coop.cfg` like `last_zone`. Settings that change a run can't change while one is in progress.
@@ -123,7 +125,7 @@ New mechanics, settings and modes (Step 9). Each needs a design decision first. 
 - [ ] **Mod config** in the manifest `config_schema` (ModLoader's mod settings): the scaling knobs (now `lan_coop.cfg` `[scaling]`), the port, and defaults for the [lobby settings](#lobby-settings).
 - [x] **Upgrade countdown.** One choice time for the whole between-wave phase (level-ups, crates, shop), 90 s from each machine's solo view: shown in the wave timer's place and on Go, red for the last 10 s; at 0 the machine picks random upgrades, takes crate items and presses Go. The host goes on 10 s later without missing results.
 - [ ] **Rejoin after a lost connection** (not after death). Today a disconnect kills the player and it stays dead in later waves. Instead: keep the player idle or protected for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run and drop it into the running wave or the between-wave phase. Quitting to the lobby and rejoining with the next wave already works.
-- [ ] **What LAN runs count for** (see [Known limitations](#known-limitations)): credit only the own character on each machine, or nothing.
+- [x] **What LAN runs count for:** the own character on each machine; in-wave challenges and counters for the team (design decision, 2026-10-21).
 - [ ] **Game modes:**
   - [ ] Teams: players split into teams in the lobby, each sharing materials, compared by a score at the end (kills, waves survived, damage).
   - [ ] Last man standing: the run goes on while players die off; the last one alive wins. Needs decisions on spectating, how waves scale as players drop out, and whether players can hurt each other.

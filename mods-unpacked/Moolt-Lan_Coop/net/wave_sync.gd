@@ -14,7 +14,8 @@ extends Node
 #     pets) gets a net id. Spawns, births (the spawn markers) and deaths go out as reliable
 #     events, collected per physics frame. Spawn markers have ids too: vanilla moves an enemy's
 #     marker elsewhere when a player stands on it, and the host sends the new position.
-#   - Weapon attacks (player, weapon index, rotation, distance, melee attack type) and
+#   - Weapon attacks (player, weapon index, rotation, distance, melee attack type; one that
+#     arrives while the client's copy still swings waits until the swing is over) and
 #     projectiles (spawn: scene, position, velocity, rotation, speed and range, wave motion and
 #     bullet-hell direction; stop) are events too. Projectiles inside a GroupOfBullet aren't
 #     synced (no bullet-hell pattern in use spawns groups).
@@ -172,6 +173,8 @@ var _item_scales: = {}
 # are pooled, so each one keeps its current id in the "lan_birth_id" meta and older ids that
 # still point at it are ignored.
 var _births: = {}
+# Client: weapon -> the attack event that came while it was still attacking (the latest one).
+var _pending_weapon_events: = {}
 var _birth_positions: = {}
 var _next_birth_id: = 0
 var _next_item_id: = 0
@@ -207,6 +210,7 @@ func _ready() -> void :
 	is_host = _net.is_host
 	_local_index = _net.local_player_index
 	_net.wave_sync = self
+	_net.on_wave_started()
 
 	_add_waiting_label()
 	if is_host:
@@ -272,6 +276,7 @@ func _physics_process(delta: float) -> void :
 	else:
 		_send_own_state()
 		_update_puppets(delta)
+		_play_pending_weapon_events()
 
 
 
@@ -988,7 +993,10 @@ func _client_weapon_shot(event: Array) -> void :
 	if not is_instance_valid(player) or player.dead or event[2] < 0 or event[2] >= player.current_weapons.size():
 		return
 	var weapon = player.current_weapons[event[2]]
-	if not is_instance_valid(weapon) or weapon._is_shooting:
+	if not is_instance_valid(weapon):
+		return
+	if weapon._is_shooting:
+		_pending_weapon_events[weapon] = event
 		return
 	weapon.rotation = event[3]
 	if weapon is MeleeWeapon and event[5] != RANGED_ATTACK:
@@ -996,6 +1004,19 @@ func _client_weapon_shot(event: Array) -> void :
 		weapon._shooting_behavior.shoot(event[4])
 	else:
 		_client_ranged_recoil(weapon)
+
+
+# Attacks that came during a swing play once it is over.
+func _play_pending_weapon_events() -> void :
+	if _pending_weapon_events.empty():
+		return
+	for weapon in _pending_weapon_events.keys():
+		if is_instance_valid(weapon) and weapon._is_shooting:
+			continue
+		var event: Array = _pending_weapon_events[weapon]
+		var _erased = _pending_weapon_events.erase(weapon)
+		if is_instance_valid(weapon):
+			_client_weapon_shot(event)
 
 
 # The visible part of RangedWeaponShootingBehavior.shoot, without the projectiles.

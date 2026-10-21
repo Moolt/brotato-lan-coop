@@ -168,6 +168,8 @@ func _process(delta: float) -> void :
 		started = menus() != null
 		if started and get_node_or_null("/root/LanNet") != null:
 			var _e = get_node("/root/LanNet").connect("wave_end_ready", self, "solo_view_test")
+			_e = get_node("/root/LanNet").connect("wave_end_ready", self, "log_progress", [role + "_wave_end"])
+			_e = get_node("/root/LanNet").connect("session_ended", self, "progress_after_session")
 			_e = get_node("/root/LanNet").connect("run_sync_changed", self, "fail_ack_test")
 		return
 	t += delta
@@ -861,6 +863,7 @@ func _host_step() -> void :
 				Utils.default_die_args.from = gone
 				gone.free()
 			contact_test(get_tree().current_scene)
+			progress_test(get_tree().current_scene)
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
@@ -916,6 +919,90 @@ func _host_step() -> void :
 
 # Right after the wave-end state (the host's scene changes next): enter and leave the solo view,
 # check the solo invariants in between and that the run is unchanged afterwards.
+# What the session counts for (game/session_progress.gd), at t=16 in the first wave: the host
+# completes a challenge with an item reward it doesn't have yet (forwarded to the clients); the
+# client tries one on its own (ignored in a wave). Both add a jellyshield to their player and log
+# its angle against the wave time 2 s later.
+var progress_reward_chal = null
+var progress_client_chal = null
+
+
+func progress_test(main) -> void :
+	var net = get_node("/root/LanNet")
+	if main == null or main.filename != MenuData.game_scene or progress_reward_chal != null:
+		return
+	log_progress(role + "_wave_start")
+	var own_items: Array = net._own_unlocks.get("items_unlocked", [])
+	for chal in ChallengeService.challenges:
+		if ChallengeService.is_challenge_completed(chal.my_id_hash) or not chal.reward is ItemData:
+			continue
+		if own_items.has(Keys.generate_hash(chal.reward.my_id)):
+			continue
+		if progress_reward_chal == null:
+			progress_reward_chal = chal
+		elif progress_client_chal == null:
+			progress_client_chal = chal
+			break
+	if role == "host" and progress_reward_chal != null:
+		ChallengeService.complete_challenge(progress_reward_chal.my_id_hash)
+		print("[TEST] host_progress completed=", progress_reward_chal.my_id, " reward=", progress_reward_chal.reward.my_id, " done_here=", ChallengeService.is_challenge_completed(progress_reward_chal.my_id_hash))
+	elif role != "host" and progress_client_chal != null:
+		# The host's pick is the client's first one as well (same fresh profile); its own try
+		# uses the second.
+		ChallengeService.complete_challenge(progress_client_chal.my_id_hash)
+		print("[TEST] client_progress own_try=", progress_client_chal.my_id, " done_here=", ChallengeService.is_challenge_completed(progress_client_chal.my_id_hash), " (expected false)")
+	var player = main._players[net.local_player_index]
+	var args = EntitySpawner.SpawnEntityArgs.new(player.global_position, - 1)
+	var jellyshield = main._entity_spawner.spawn_entity(player.jellyshield_scene, args)
+	jellyshield.init_trajectory(0, 1, player)
+	yield(get_tree().create_timer(2.0), "timeout")
+	if is_instance_valid(jellyshield) and is_instance_valid(main):
+		var timer = main._wave_timer
+		var expected = (timer.wait_time - timer.time_left) * jellyshield.rotation_speed
+		print("[TEST] ", role, "_jellyshield angle=", stepify(jellyshield._angle, 0.01), " from_wave_time=", stepify(expected, 0.01), " time_left=", stepify(timer.time_left, 0.01))
+
+
+func log_progress(tag: String) -> void :
+	var killed: = 0
+	for key in ProgressData.killed_enemies:
+		killed += ProgressData.killed_enemies[key]
+	var characters = []
+	for entry in get_node("/root/LanNet").players:
+		var character = ItemService.get_element_safe(ItemService.characters, entry.character_id)
+		if character != null:
+			var chal_hash = Keys.generate_hash("chal_" + character.name.to_lower().replace("character_", ""))
+			characters.append("%s:%s" % [entry.character_id, ChallengeService.is_challenge_completed(chal_hash)])
+	var new_challenges = []
+	for chal_id in ProgressData.challenges_completed:
+		if not get_node("/root/LanNet").progress._start_challenges.has(chal_id):
+			var chal = ChallengeService.get_chal(chal_id)
+			new_challenges.append(chal.my_id if chal != null else chal_id)
+	print("[TEST] ", tag, " character_challenges=", characters, " new_in_session=", new_challenges)
+	print("[TEST] ", tag, " counters enemies_killed=", ProgressData.data.get("enemies_killed"), " materials=", ProgressData.data.get("materials_collected"), " trees=", ProgressData.data.get("trees_killed"), " steps=", ProgressData.data.get("steps_taken"), " encyclopedia_kills=", killed, " challenges=", ProgressData.challenges_completed.size())
+
+
+# After the session: every challenge completed in it, and whether its reward is in the own
+# unlock lists (restored by then).
+func progress_after_session(_reason) -> void :
+	var net = get_node("/root/LanNet")
+	var NetProtocol = load("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
+	var rewards = []
+	for chal_id in ProgressData.challenges_completed:
+		if net.progress._start_challenges.has(chal_id):
+			continue
+		var chal = ChallengeService.get_chal(chal_id)
+		if chal == null or chal.reward == null:
+			continue
+		var reward_id = chal.reward.get("my_id")
+		var unlocked = false
+		for key in NetProtocol.UNLOCK_KEYS:
+			if ProgressData.get(key).has(Keys.generate_hash(str(reward_id))):
+				unlocked = true
+		rewards.append("%s->%s:%s" % [chal.my_id, reward_id, unlocked])
+	print("[TEST] ", role, "_progress_after_session rewards=", rewards, " saves_blocked=", ProgressData.lan_coop_saves_blocked)
+	log_progress(role + "_after_session")
+
+
 func solo_view_test() -> void :
 	var net = get_node("/root/LanNet")
 	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
@@ -1040,6 +1127,7 @@ func end_screen_actions(delta: float) -> void :
 	end_wait += delta
 	var tag = role + "_end_screen"
 	if end_step == 0 and end_wait >= 1.5:
+		log_progress(tag)
 		var own = RunData.players_data[0]
 		print("[TEST] ", tag, " scene=", scene.filename, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " won=", RunData.run_won, " wave=", RunData.current_wave, " title='", scene._title.text, "' character=", own.current_character.my_id, " gold=", own.gold, " weapons=", own.weapons.size(), " buttons restart=", scene._restart_button.visible, " new_run=", scene._new_run_button.visible, " exit=", scene._exit_button.visible, " exit_focus=", scene._exit_button.has_focus())
 		shot(tag)
@@ -1262,6 +1350,7 @@ func _client_step() -> void :
 			main._pause_menu.pause(local_index)
 			start_pos = main._players[local_index].global_position
 			Input.action_press("button_move_down_7")
+			progress_test(main)
 			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			next_t = 17.0
 		7:

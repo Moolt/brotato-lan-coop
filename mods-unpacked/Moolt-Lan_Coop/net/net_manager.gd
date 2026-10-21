@@ -22,6 +22,7 @@ const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.g
 const RunBuilder = preload("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const SoloView = preload("res://mods-unpacked/Moolt-Lan_Coop/game/solo_view.gd")
+const SessionProgress = preload("res://mods-unpacked/Moolt-Lan_Coop/game/session_progress.gd")
 
 const HOST_PEER_ID: = 1
 # The local player's CoopService device in a session (_fill_coop_players).
@@ -75,6 +76,10 @@ var _incoming_wave_end: = {}
 var _wave_end_acks: = {}
 # Between waves RunData holds only the local player (game/solo_view.gd).
 var solo_view = SoloView.new()
+# What the session counts for on this machine's save (game/session_progress.gd).
+var progress = SessionProgress.new()
+# Host: challenges forwarded to the clients in the current wave.
+var _forwarded_challenges: = {}
 
 # Between waves (from entering the solo view at wave end until the next wave or the lobby),
 # every player shops on its own machine. Go sends the own solo run (RunBuilder.serialize_run)
@@ -172,6 +177,7 @@ func host(port: int = - 1) -> int:
 	lobby_settings.scaling = config.scaling.duplicate()
 	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset})
 	_apply_multiplayer_unlocks()
+	progress.start()
 	last_end_reason = ""
 	_set_saves_blocked(true)
 	_set_solo_mouse(true)
@@ -313,6 +319,8 @@ func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Arr
 	if not is_host:
 		return
 	var pending: = RunBuilder.pack_pending(upgrades_to_process, consumables_to_process)
+	# What the wave added to the lifetime counters; clients take it over (team counts).
+	var counters: Dictionary = progress.get_wave_delta()
 	run_state = RunBuilder.serialize_run()
 	var _applied = RunBuilder.apply_run(run_state)
 	var digest: = RunBuilder.digest()
@@ -322,7 +330,7 @@ func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Arr
 	ModLoaderLog.info("Wave %d over, sending the run: %s, pending %s" % [RunData.current_wave, to_json(RunBuilder.summarize()), to_json(pending)], NetProtocol.MOD_ID)
 	for entry in _get_connected_clients():
 		# The run the clients hold: a disconnect meanwhile reset lobby_settings.run_id.
-		rpc_id(entry.peer_id, "_rpc_wave_end_state", _run_id_counter, RunData.current_wave, run_state, digest, pending)
+		rpc_id(entry.peer_id, "_rpc_wave_end_state", _run_id_counter, RunData.current_wave, run_state, digest, pending, counters)
 	emit_signal("wave_end_ready")
 
 
@@ -389,6 +397,25 @@ func on_title_screen() -> void :
 	if solo_view.active:
 		solo_view.discard()
 		ModLoaderLog.info("Solo view ended on the title screen", NetProtocol.MOD_ID)
+	if active and joined:
+		_save_own_progress(true)
+
+
+# Called by LanWaveSync when a wave scene starts (both roles).
+func on_wave_started() -> void :
+	progress.wave_started()
+	_forwarded_challenges = {}
+
+
+# Host: a challenge completed in a wave counts for the team (challenge_service.gd extension);
+# each one goes to the clients once per wave.
+func forward_challenge(chal_id: int) -> void :
+	if not is_host or _forwarded_challenges.has(chal_id):
+		return
+	_forwarded_challenges[chal_id] = true
+	for entry in _get_connected_clients():
+		if not _left_run_peers.has(entry.peer_id):
+			rpc_id(entry.peer_id, "_rpc_challenge", chal_id)
 
 
 # Seconds left to choose between waves; -1.0 without a limit or outside that phase.
@@ -536,6 +563,7 @@ remote func _rpc_welcome(player_index) -> void :
 	joined = true
 	local_player_index = int(player_index)
 	_apply_multiplayer_unlocks()
+	progress.start()
 	ModLoaderLog.info("Joined lobby as player %d" % local_player_index, NetProtocol.MOD_ID)
 	emit_signal("joined_lobby")
 
@@ -576,15 +604,22 @@ remote func _rpc_shop_waiting(names) -> void :
 	emit_signal("shop_waiting_changed")
 
 
+# Host -> client: a challenge completed in the wave (counts for the team).
+remote func _rpc_challenge(chal_id) -> void :
+	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(chal_id) != TYPE_INT:
+		return
+	ChallengeService.lan_complete_forwarded(chal_id)
+
+
 # Host -> client: the run after the wave (see send_wave_end_state).
-remote func _rpc_wave_end_state(run_id, wave, state, digest, pending) -> void :
+remote func _rpc_wave_end_state(run_id, wave, state, digest, pending, counters) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
-	if typeof(run_id) != TYPE_INT or typeof(wave) != TYPE_INT or typeof(state) != TYPE_STRING or typeof(digest) != TYPE_STRING or typeof(pending) != TYPE_ARRAY:
+	if typeof(run_id) != TYPE_INT or typeof(wave) != TYPE_INT or typeof(state) != TYPE_STRING or typeof(digest) != TYPE_STRING or typeof(pending) != TYPE_ARRAY or typeof(counters) != TYPE_DICTIONARY:
 		return
 	if run_id != _received_run_id:
 		return
-	_incoming_wave_end = {"wave": wave, "state": state, "digest": digest, "pending": pending}
+	_incoming_wave_end = {"wave": wave, "state": state, "digest": digest, "pending": pending, "counters": counters}
 	set_process(true)
 
 
@@ -873,6 +908,9 @@ func _apply_wave_end_if_ready() -> void :
 		return
 	var incoming: = _incoming_wave_end
 	_incoming_wave_end = {}
+	# The wave's lifetime counters are the host's (team counts); then the counted challenges.
+	progress.apply_wave_delta(incoming.counters)
+	ChallengeService.lan_check_counted_challenges()
 	# Applying would replace the solo run with the coop run. A state for this wave can't come
 	# after the solo view started (main waits for it), so this one is stale.
 	if solo_view.active:
@@ -1055,6 +1093,20 @@ func _restore_own_unlocks() -> void :
 	_own_unlocks = {}
 
 
+# Writes what the session counted for (game/session_progress.gd) with the own unlock lists, plus
+# the rewards of the challenges completed meanwhile, and the own saved run. In a session the
+# lists hold everything again afterwards (stay = true).
+func _save_own_progress(stay: bool) -> void :
+	_restore_own_unlocks()
+	progress.apply_rewards()
+	_set_saves_blocked(false)
+	ProgressData.save()
+	ModLoaderLog.info("Saved the own progress (%d challenges completed)" % ProgressData.challenges_completed.size(), NetProtocol.MOD_ID)
+	if stay:
+		_set_saves_blocked(true)
+		_apply_multiplayer_unlocks()
+
+
 # Vanilla's InputService hides the mouse cursor on every input in a coop run with more than one
 # player (couch coop shares one mouse). In a session every machine has a single player, so
 # InputService's _input is off and _input below applies its solo rule instead: mouse input shows
@@ -1096,8 +1148,11 @@ func _end_session(reason: String) -> void :
 	get_tree().network_peer = null
 	_peer = null
 
-	_restore_own_unlocks()
-	_set_saves_blocked(false)
+	if joined:
+		_save_own_progress(false)
+	else:
+		_restore_own_unlocks()
+		_set_saves_blocked(false)
 	_set_solo_mouse(false)
 	if _run_data_replaced:
 		# A synced run replaced RunData; don't leave it behind for the menus.
