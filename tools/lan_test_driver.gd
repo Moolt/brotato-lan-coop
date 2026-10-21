@@ -25,7 +25,9 @@ extends Node
 #         session and both play it again, n runs in all
 #   solo: builds a 1-player run without a session and plays a vanilla wave
 #   lobby: hosts, picks and readies, then screenshots the lobby page while a character and a
-#         weapon are hovered and with nothing hovered, and quits (lobby layout)
+#         weapon are hovered and with nothing hovered, opens the settings page, sets the choice
+#         time to 60, closes it with ui_cancel, and quits (lobby layout)
+#   (join) in the lobby the settings page opens read-only once
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
 #   (any role) PERF_LOG=1: once a second in a wave, enemies, physics bodies/pairs, physics and
@@ -140,6 +142,19 @@ func first_element(grid, nth: = 0):
 				return e
 			nth -= 1
 	return null
+
+
+# Client in the lobby: the settings page opens read-only, then closes.
+func client_settings_check(lobby) -> void :
+	lobby._settings_button.emit_signal("pressed")
+	var page = lobby._settings_page
+	var focus = get_viewport().gui_get_focus_owner()
+	print("[TEST] client_settings_page visible=", page.visible, " disabled=", page._choice_time_option.disabled, " focus=", focus.get_path() if focus != null else "-", " summary='", lobby._settings_label.text, "'")
+	shot("client_settings_page")
+	yield(get_tree().create_timer(0.5), "timeout")
+	page._back_button.emit_signal("pressed")
+	focus = get_viewport().gui_get_focus_owner()
+	print("[TEST] client_settings_closed visible=", page.visible, " focus=", focus.get_path() if focus != null else "-")
 
 
 func pick_and_ready(lobby, nth: = 0) -> void :
@@ -1231,6 +1246,7 @@ func _client_step() -> void :
 			next_t = t + 1.5
 		3:
 			pick_and_ready(m.get_node("LanLobby"), 1)
+			var _e = get_tree().create_timer(1.0).connect("timeout", self, "client_settings_check", [m.get_node("LanLobby")])
 			next_t = 14.0
 		4:
 			aim_test_setup()
@@ -1423,4 +1439,31 @@ func _lobby_step() -> void :
 		10:
 			var lobby = m.get_node("LanLobby")
 			print("[TEST] lobby after ready focus: character=", lobby._focused_character, " preview=", lobby._starting_items_character.my_id if lobby._starting_items_character != null else "-", " popup=", lobby._starting_item_popup.visible)
+			# Settings page: open, change the choice time, close with ui_cancel.
+			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+			lobby._settings_button.emit_signal("pressed")
+			next_t = t + 0.5
+		11:
+			var page = m.get_node("LanLobby")._settings_page
+			print("[TEST] lobby_settings_page visible=", page.visible, " focus=", get_viewport().gui_get_focus_owner().get_path(), " disabled=", page._zone_option.disabled, " zone_left=", page._zone_option.focus_neighbour_left, " back_down=", page._back_button.focus_neighbour_bottom)
+			shot("lobby_settings_page")
+			var index = page._choice_time_option.get_item_index(60)
+			page._choice_time_option.select(index)
+			page._on_option_item_selected(index, page._choice_time_option, "choice_time")
+			next_t = t + 0.5
+		12:
+			var lobby = m.get_node("LanLobby")
+			print("[TEST] lobby_settings_changed choice_time=", get_node("/root/LanNet").lobby_settings.choice_time, " saved=", get_node("/root/LanNet").config.last_choice_time, " summary='", lobby._settings_label.text, "'")
+			for pressed in [true, false]:
+				var event = InputEventAction.new()
+				event.action = "ui_cancel"
+				event.pressed = pressed
+				Input.parse_input_event(event)
+			next_t = t + 0.5
+		13:
+			var lobby = m.get_node("LanLobby")
+			print("[TEST] lobby_settings_closed page=", lobby._settings_page.visible, " lobby=", lobby.visible, " session=", get_node("/root/LanNet").active, " focus=", get_viewport().gui_get_focus_owner().get_path())
+			shot("lobby_settings_summary")
+			# The shared test config keeps the default for later runs.
+			get_node("/root/LanNet").set_lobby_settings({"choice_time": 90})
 			get_tree().quit()

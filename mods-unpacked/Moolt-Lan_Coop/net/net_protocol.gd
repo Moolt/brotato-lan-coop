@@ -47,6 +47,8 @@ const MAX_SCALING_VALUE: = 2.0
 # (lobby_settings.choice_time, 0 = no limit); then the game picks and presses Go itself. The host
 # waits CHOICE_GRACE more seconds for late results and goes on without them.
 const DEFAULT_CHOICE_TIME: = 90
+# The choices the host has in the lobby's settings page.
+const CHOICE_TIMES: = [0, 45, 60, 90, 120]
 const CHOICE_GRACE: = 10.0
 
 # Keys a client may change on its own lobby entry.

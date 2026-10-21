@@ -96,7 +96,7 @@ What the driver and manual tests haven't covered yet ([testing.md](testing.md)).
 - [ ] More than two real players (the driver's fake players are never sent anything).
 - [ ] Pets (same data-ref path as structures, which are tested).
 - [ ] The 15 s client load timeout (clients on one PC load within 0.1 s; on two machines too: 0.2–0.3 s).
-- [ ] Driver: its end steps assume the lobby by t=55, but after wave 1 and the shop it is in wave 2, so the host's `net.leave()` runs mid-wave. `_end_session("")` resets RunData without changing the scene, and with 12 players a fake player's weapon then errors in vanilla `get_player_effects` (reported under the mod's extension path). Not reachable in play (only menus call `leave()`); have the driver quit instead of leaving when it is still in a wave.
+- [ ] Driver: its end steps assume the lobby by t=55, but after wave 1 and the shop it is in wave 2, so the host's `net.leave()` runs mid-wave. `_end_session("")` resets RunData without changing the scene, and a weapon of a player beyond the reset run then errors in vanilla `get_player_effects` (reported under the mod's extension path; seen with 12 players, and intermittently with 3 in the default run). Not reachable in play (only menus call `leave()`); have the driver quit instead of leaving when it is still in a wave.
 - [ ] Keyboard-only and gamepad-only on host and client, through lobby, wave, upgrades, shop and end screen.
 
 ### Known limitations
@@ -109,8 +109,8 @@ Accepted for now; tick one if it gets fixed, or promote it to a todo if it shows
 ### Lobby settings
 A **Settings** area in the lobby for run options: the host changes them, clients see them read-only (today's "Zone, Danger N" summary grows into it). Each one lives in `lobby_settings` (defaults in `NetProtocol.default_lobby_settings`), reaches the clients with `_broadcast_lobby_state`, is validated in `_apply_lobby_settings` and remembered in `lan_coop.cfg` like `last_zone`. Settings that change a run can't change while one is in progress.
 - [x] **Zone** and **Danger** (`OptionButton`s, host only).
-- [ ] **Settings area layout:** room for the options below without crowding the character and weapon grids (a panel under the player list, or a settings page opened from the lobby).
-- [ ] **Choice time** between waves: Off / 45 / 60 / 90 / 120 s, default 90. `lobby_settings.choice_time` is already sent and read by `enter_solo_view` (0 = off); only the host's control and the validation are missing.
+- [x] **Settings area layout:** a summary line and a Settings button under the player list; the page (`ui/settings_page.gd`) opens over the lobby, read-only for clients.
+- [x] **Choice time** between waves: No limit / 45 / 60 / 90 / 120 s, default 90.
 - [ ] **Material sharing.** Vanilla coop splits every picked-up material round-robin over all players (1 material and 1 XP per unit, `main.gd` `on_gold_picked_up`, also the mod's copy for > 4 players); only the picker's own pickup effects apply. The option keeps materials and XP with the picker.
 - [ ] **Crate sharing.** Vanilla's own option (`ProgressData.settings.share_coop_loot`, default on) comes from each machine's settings; in a session the host's value should count for everyone.
 - [ ] **Endless runs.** The shop's Endless button at wave 19 is hidden in a session: `is_endless_run` is run-wide and the merge only takes per-player data, so the host decides it up front.

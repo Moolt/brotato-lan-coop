@@ -1,0 +1,171 @@
+extends Control
+
+# The lobby's run settings, opened with its Settings button and shown over the lobby: one row
+# per setting (label, dropdown) in groups. The host changes them (LanNet.set_lobby_settings,
+# applied at once); clients and a host with a run in progress see them read-only. Back or
+# ui_cancel (handled by the lobby) closes the page.
+
+signal closed()
+
+const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
+const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
+const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
+
+const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
+const GROUP_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
+
+const WIDTH: = 860.0
+const OPTION_SIZE: = Vector2(440, 52)
+const GROUP_COLOR: = Color(1, 0.85, 0.45)
+
+var _net: Node = null
+var _zone_option: OptionButton
+var _difficulty_option: OptionButton
+var _choice_time_option: OptionButton
+var _back_button: Button
+
+
+func _init() -> void :
+	name = "LanSettingsPage"
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	var column: = UiKit.build_page(self, WIDTH, "LAN_SETTINGS")
+	# Clicks must not reach the lobby underneath, and its busy grids would show through.
+	var background: ColorRect = get_child(0)
+	background.mouse_filter = Control.MOUSE_FILTER_STOP
+	background.color = Color(0.06, 0.06, 0.06, 0.96)
+	column.add_constant_override("separation", 8)
+
+	_add_group(column, "LAN_SETTINGS_RUN")
+	_zone_option = _add_row(column, "LAN_SETTING_ZONE", "zone")
+	_difficulty_option = _add_row(column, "LAN_SETTING_DANGER", "difficulty")
+	_add_group(column, "LAN_SETTINGS_BETWEEN_WAVES")
+	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
+
+	var spacer: = Control.new()
+	spacer.rect_min_size = Vector2(0, 12)
+	column.add_child(spacer)
+	_back_button = UiKit.new_back_button()
+	var _e = _back_button.connect("pressed", self, "close")
+	column.add_child(_back_button)
+	visible = false
+
+
+func open(net: Node) -> void :
+	_net = net
+	_fill_options()
+	refresh()
+	show()
+	if _zone_option.disabled:
+		_back_button.grab_focus()
+	else:
+		_zone_option.grab_focus()
+
+
+func close() -> void :
+	if not visible:
+		return
+	hide()
+	emit_signal("closed")
+
+
+# Shows the current lobby settings; editable for the host outside a run.
+func refresh() -> void :
+	if _net == null:
+		return
+	var settings: Dictionary = _net.lobby_settings
+	var editable: bool = _net.is_host and not _net.run_in_progress
+	for option in [_zone_option, _difficulty_option, _choice_time_option]:
+		option.disabled = not editable
+		option.focus_mode = Control.FOCUS_ALL if editable else Control.FOCUS_NONE
+	# select() doesn't emit item_selected, so this never loops back.
+	_zone_option.select(_zone_option.get_item_index(settings.get("zone", 0)))
+	_difficulty_option.select(_difficulty_option.get_item_index(settings.get("difficulty", 0)))
+	_choice_time_option.select(_choice_time_option.get_item_index(settings.get("choice_time", 0)))
+	_chain_focus()
+
+
+# An open dropdown takes ui_cancel itself (the lobby checks this before closing the page).
+func is_popup_open() -> bool:
+	for option in [_zone_option, _difficulty_option, _choice_time_option]:
+		if option.get_popup().visible:
+			return true
+	return false
+
+
+# "<zone> · <danger>", then the settings that differ from their default (lobby summary line).
+static func get_summary(settings: Dictionary) -> String:
+	var zone: = LobbyRules.get_zone(settings.get("zone", 0))
+	var difficulty: = LobbyRules.get_difficulty(settings.get("difficulty", 0))
+	var parts: = [TranslationServer.translate(zone.name) if zone != null else "?", difficulty.get_name_text() if difficulty != null else "?"]
+	var choice_time: = int(settings.get("choice_time", NetProtocol.DEFAULT_CHOICE_TIME))
+	if choice_time == 0:
+		parts.append(TranslationServer.translate("LAN_SUMMARY_NO_CHOICE_TIME"))
+	elif choice_time != NetProtocol.DEFAULT_CHOICE_TIME:
+		parts.append(TranslationServer.translate("LAN_SUMMARY_CHOICE_TIME").replace("{0}", str(choice_time)))
+	return PoolStringArray(parts).join(" · ")
+
+
+# The lobby's controls stay visible under the page, so focus moves only between the page's own
+# controls, top to bottom.
+func _chain_focus() -> void :
+	var controls: = []
+	for control in [_zone_option, _difficulty_option, _choice_time_option, _back_button]:
+		if control.focus_mode != Control.FOCUS_NONE:
+			controls.append(control)
+	for i in controls.size():
+		var control: Control = controls[i]
+		var previous: NodePath = control.get_path_to(controls[max(i - 1, 0)])
+		var next: NodePath = control.get_path_to(controls[min(i + 1, controls.size() - 1)])
+		control.focus_neighbour_top = previous
+		control.focus_previous = previous
+		control.focus_neighbour_bottom = next
+		control.focus_next = next
+		control.focus_neighbour_left = NodePath(".")
+		control.focus_neighbour_right = NodePath(".")
+
+
+func _fill_options() -> void :
+	_zone_option.clear()
+	for zone in ZoneService.zones:
+		_zone_option.add_item(tr(zone.name), zone.my_id)
+	_difficulty_option.clear()
+	for difficulty in ItemService.difficulties:
+		_difficulty_option.add_item(difficulty.get_name_text(), difficulty.value)
+	_choice_time_option.clear()
+	for seconds in NetProtocol.CHOICE_TIMES:
+		_choice_time_option.add_item(tr("LAN_CHOICE_TIME_OFF") if seconds == 0 else tr("LAN_CHOICE_TIME_SECONDS").replace("{0}", str(seconds)), seconds)
+
+
+func _add_group(column: VBoxContainer, text_key: String) -> void :
+	var label: = Label.new()
+	label.text = tr(text_key).to_upper()
+	label.add_font_override("font", GROUP_FONT)
+	label.add_color_override("font_color", GROUP_COLOR)
+	label.rect_min_size = Vector2(0, 40)
+	label.valign = Label.VALIGN_BOTTOM
+	column.add_child(label)
+
+
+# A label and a dropdown whose item ids are the setting's values.
+func _add_row(column: VBoxContainer, text_key: String, setting: String) -> OptionButton:
+	var row: = HBoxContainer.new()
+	row.add_constant_override("separation", 16)
+	column.add_child(row)
+	var label: = Label.new()
+	label.text = text_key
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.valign = Label.VALIGN_CENTER
+	label.add_font_override("font", ROW_FONT)
+	row.add_child(label)
+	var option: = OptionButton.new()
+	option.theme = OPTION_THEME
+	option.rect_min_size = OPTION_SIZE
+	var _e = option.connect("item_selected", self, "_on_option_item_selected", [option, setting])
+	row.add_child(option)
+	return option
+
+
+func _on_option_item_selected(index: int, option: OptionButton, setting: String) -> void :
+	if _net != null:
+		_net.set_lobby_settings({setting: option.get_item_id(index)})

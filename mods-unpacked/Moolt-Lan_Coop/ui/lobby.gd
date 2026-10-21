@@ -1,8 +1,9 @@
 extends Control
 
 # Title screen page shown while in a LAN session.
-# Left: every player (colour, character, name, weapon, ready), the run settings (host: zone and
-# difficulty pickers, clients: a summary), Leave and the host's Start. Right: the local player's
+# Left: every player (colour, character, name, weapon, ready), a summary of the run settings
+# with the Settings button (ui/settings_page.gd over the lobby: the host edits, clients look),
+# Leave and the host's Start. Right: the local player's
 # character and starting weapon grids side by side, each with its preview below, and the Ready
 # button; the grids grow so the previews and Ready end level with Start. The grids reuse
 # vanilla's Inventory (inventory.tscn). Both previews are vanilla's small item panel
@@ -18,6 +19,7 @@ extends Control
 const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
+const SettingsPage = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/settings_page.gd")
 
 const INVENTORY_SCENE = preload("res://ui/menus/shop/inventory.tscn")
 const CHARACTER_PANEL_SCENE = preload("res://ui/menus/ingame/character_panel_ui.tscn")
@@ -25,7 +27,6 @@ const ITEM_PANEL_SCENE = preload("res://ui/menus/ingame/item_panel_ui.tscn")
 const ITEM_POPUP_SCENE = preload("res://ui/menus/shop/item_popup.tscn")
 const RANDOM_ICON = preload("res://items/global/random_icon.png")
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
-const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
 
 const WIDTH: = 1800.0
 const LEFT_WIDTH: = 620.0
@@ -48,9 +49,9 @@ var _address_label: Label
 var _count_label: Label
 var _player_list: VBoxContainer
 var _leave_button: Button
-var _zone_option: OptionButton
-var _difficulty_option: OptionButton
 var _settings_label: Label
+var _settings_button: Button
+var _settings_page: Control
 var _hint_label: Label
 var _start_button: Button
 var _character_scroll: ScrollContainer
@@ -82,7 +83,8 @@ var _mouse_visible: = false
 var _weapon_grid_character_id: = ""
 # Where to move focus after the host confirmed the next pick: "", "weapons" or "ready".
 var _focus_on_update: = ""
-# ui_cancel closes an open dropdown on press; only a press with no dropdown open may leave.
+# ui_cancel closes an open dropdown on press; only a press with no dropdown open may close the
+# settings page or leave.
 var _cancel_armed: = false
 
 
@@ -96,7 +98,7 @@ func _ready() -> void :
 
 func init() -> void :
 	_update_address()
-	_fill_setting_options()
+	_settings_page.hide()
 	_fill_character_grid()
 	_weapon_grid_character_id = "-"
 	_refresh()
@@ -112,12 +114,15 @@ func _input(event: InputEvent) -> void :
 	if event is InputEventMouseMotion:
 		_clear_hover_outside()
 	if event.is_action_pressed("ui_cancel"):
-		_cancel_armed = not (_zone_option.get_popup().visible or _difficulty_option.get_popup().visible)
+		_cancel_armed = not (_settings_page.visible and _settings_page.is_popup_open())
 	elif event.is_action_released("ui_cancel") and _cancel_armed:
 		_cancel_armed = false
 		# Stop the page that becomes visible from handling the same event.
 		get_tree().set_input_as_handled()
-		_on_LeaveButton_pressed()
+		if _settings_page.visible:
+			_settings_page.close()
+		else:
+			_on_LeaveButton_pressed()
 
 
 
@@ -154,20 +159,21 @@ func _build_ui() -> void :
 	_player_list.add_constant_override("separation", 4)
 	player_scroll.add_child(_player_list)
 
-	# Run settings: pickers for the host, a summary line for clients.
+	# Run settings: a summary and the button to the settings page (wraps to two lines if long).
 	var settings_row: = HBoxContainer.new()
 	settings_row.add_constant_override("separation", 16)
 	left.add_child(settings_row)
-	_zone_option = _new_option_button()
-	settings_row.add_child(_zone_option)
-	var _e = _zone_option.connect("item_selected", self, "_on_ZoneOption_item_selected")
-	_difficulty_option = _new_option_button()
-	settings_row.add_child(_difficulty_option)
-	_e = _difficulty_option.connect("item_selected", self, "_on_DifficultyOption_item_selected")
 	_settings_label = Label.new()
 	_settings_label.rect_min_size = Vector2(0, 56)
+	_settings_label.size_flags_horizontal = SIZE_EXPAND_FILL
 	_settings_label.valign = Label.VALIGN_CENTER
+	_settings_label.autowrap = true
+	_settings_label.max_lines_visible = 2
+	_settings_label.add_font_override("font", ROW_FONT)
 	settings_row.add_child(_settings_label)
+	_settings_button = UiKit.new_button("LAN_SETTINGS", Vector2(200, 56))
+	var _e = _settings_button.connect("pressed", self, "_on_SettingsButton_pressed")
+	settings_row.add_child(_settings_button)
 
 	_hint_label = Label.new()
 	_hint_label.add_font_override("font", ROW_FONT)
@@ -262,10 +268,13 @@ func _build_ui() -> void :
 	_e = _ready_button.connect("pressed", self, "_on_ReadyButton_pressed")
 	weapon_column.add_child(_ready_button)
 
-	# Last child, so it draws over the page.
+	# Last children, so they draw over the page.
 	_starting_item_popup = ITEM_POPUP_SCENE.instance()
 	add_child(_starting_item_popup)
 	_starting_item_popup.hide()
+	_settings_page = SettingsPage.new()
+	add_child(_settings_page)
+	_e = _settings_page.connect("closed", self, "_on_SettingsPage_closed")
 
 
 func _new_column(parent: Control) -> VBoxContainer:
@@ -297,14 +306,6 @@ func _new_preview_panel(parent: Control, min_size: Vector2) -> Control:
 	panel.hide()
 	holder.add_child(panel)
 	return panel
-
-
-func _new_option_button() -> OptionButton:
-	var option: = OptionButton.new()
-	option.theme = OPTION_THEME
-	option.rect_min_size = Vector2(0, 56)
-	option.size_flags_horizontal = SIZE_EXPAND_FILL
-	return option
 
 
 func _new_inventory(columns: int) -> GridContainer:
@@ -346,16 +347,6 @@ func _fill_weapon_grid(character: CharacterData) -> void :
 
 
 
-func _fill_setting_options() -> void :
-	_zone_option.clear()
-	for zone in ZoneService.zones:
-		_zone_option.add_item(tr(zone.name), zone.my_id)
-	_difficulty_option.clear()
-	for difficulty in ItemService.difficulties:
-		_difficulty_option.add_item(difficulty.get_name_text(), difficulty.value)
-
-
-
 # Content
 
 func _refresh() -> void :
@@ -391,23 +382,10 @@ func _refresh() -> void :
 
 func _refresh_settings() -> void :
 	var is_host: bool = _net.is_host
-	_zone_option.visible = is_host
-	_difficulty_option.visible = is_host
-	_settings_label.visible = not is_host
 	_start_button.visible = is_host
-
-	var zone_id: int = _net.lobby_settings.get("zone", 0)
-	var difficulty_value: int = _net.lobby_settings.get("difficulty", 0)
-	if is_host:
-		# select() doesn't emit item_selected, so this never loops back.
-		_zone_option.select(_zone_option.get_item_index(zone_id))
-		_difficulty_option.select(_difficulty_option.get_item_index(difficulty_value))
-	else:
-		var zone: = LobbyRules.get_zone(zone_id)
-		var difficulty: = LobbyRules.get_difficulty(difficulty_value)
-		_settings_label.text = tr("LAN_SETTINGS_SUMMARY") \
-				.replace("{0}", tr(zone.name) if zone != null else "?") \
-				.replace("{1}", difficulty.get_name_text() if difficulty != null else "?")
+	_settings_label.text = SettingsPage.get_summary(_net.lobby_settings)
+	if _settings_page.visible:
+		_settings_page.refresh()
 
 	var all_ready: bool = _net.are_all_ready()
 	if is_host:
@@ -752,12 +730,12 @@ func _on_WeaponGrid_element_pressed(element) -> void :
 	_net.set_local_player_info({"weapon_id": choice_id})
 
 
-func _on_ZoneOption_item_selected(index: int) -> void :
-	_net.set_lobby_settings({"zone": _zone_option.get_item_id(index)})
+func _on_SettingsButton_pressed() -> void :
+	_settings_page.open(_net)
 
 
-func _on_DifficultyOption_item_selected(index: int) -> void :
-	_net.set_lobby_settings({"difficulty": _difficulty_option.get_item_id(index)})
+func _on_SettingsPage_closed() -> void :
+	_settings_button.grab_focus()
 
 
 # Builds the run and syncs it to every client. Once all of them hold it, LanNet loads the wave

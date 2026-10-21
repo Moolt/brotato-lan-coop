@@ -34,7 +34,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 |---|---|
 | `host` / `join` | the two sides of a session |
 | `solo` | `RunBuilder.build_run` with one entry, `set_coop_run(false)`, `change_scene(MenuData.game_scene)`: vanilla solo play still works without a session |
-| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus |
+| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 (summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 again. The `join` role opens the page read-only once in the lobby |
 | `quit` | quits as soon as the title screen loads (parse-error check) |
 | none | idle, for manual tests |
 
@@ -103,7 +103,7 @@ Each takes about 1–2 min.
 | `TIMER_LAG=0.3` | no wave-timer ticking in the upgrade screen |
 | `CHOICE_TIME=20 IDLE_CHOICE=2`, `CHOICE_TIME=25 IDLE_CHOICE=1`, `CHOICE_TIME=15 IDLE_CHOICE=3` | choice time: random upgrades and crates, Go in the shop, the host going on without a stuck client |
 | `AIM_TEST=1 FAKES=5` | remote manual aim, off-screen arrows, skulls |
-| role `lobby` | lobby layout and previews |
+| role `lobby` | lobby layout, previews and the settings page |
 | role `solo` | vanilla solo play outside a session |
 
 ## Log check

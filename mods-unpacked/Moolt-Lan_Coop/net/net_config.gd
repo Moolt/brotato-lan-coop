@@ -1,7 +1,7 @@
 extends Reference
 
 # Persistent per-machine settings in user://lan_coop.cfg (last name, last IP, port,
-# the zone and difficulty last picked as host) and, in its own section, the arena and enemy
+# the zone, difficulty and choice time last picked as host) and, in its own section, the arena and enemy
 # scaling knobs used when hosting (NetProtocol.DEFAULT_SCALING).
 
 const CONFIG_PATH: = "user://lan_coop.cfg"
@@ -22,6 +22,7 @@ var last_ip: = "127.0.0.1"
 var port: = NetProtocol.DEFAULT_PORT
 var last_zone: = 0
 var last_difficulty: = 0
+var last_choice_time: = NetProtocol.DEFAULT_CHOICE_TIME
 var scaling: = NetProtocol.DEFAULT_SCALING.duplicate()
 
 
@@ -33,6 +34,7 @@ func load_config() -> void :
 		port = int(file.get_value(SECTION, "port", port))
 		last_zone = int(file.get_value(SECTION, "last_zone", last_zone))
 		last_difficulty = int(file.get_value(SECTION, "last_difficulty", last_difficulty))
+		last_choice_time = int(file.get_value(SECTION, "last_choice_time", last_choice_time))
 		for key in scaling:
 			scaling[key] = clamp(float(file.get_value(SCALING_SECTION, key, scaling[key])), 0.0, NetProtocol.MAX_SCALING_VALUE)
 
@@ -54,6 +56,7 @@ func save_config() -> void :
 	file.set_value(SECTION, "port", port)
 	file.set_value(SECTION, "last_zone", last_zone)
 	file.set_value(SECTION, "last_difficulty", last_difficulty)
+	file.set_value(SECTION, "last_choice_time", last_choice_time)
 	for key in scaling:
 		file.set_value(SCALING_SECTION, key, scaling[key])
 	var _err = file.save(CONFIG_PATH)
