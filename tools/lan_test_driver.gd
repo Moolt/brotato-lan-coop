@@ -27,7 +27,7 @@ extends Node
 #   lobby: hosts, picks and readies, then screenshots the lobby page while a character and a
 #         weapon are hovered and with nothing hovered, opens the settings page, sets the choice
 #         time to 60, closes it with ui_cancel, and quits (lobby layout)
-#   (join) in the lobby the settings page opens read-only once
+#   (join) in the lobby: logs the settings summary and that there is no Settings button
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
 #   (any role) PERF_LOG=1: once a second in a wave, enemies, physics bodies/pairs, physics and
@@ -144,17 +144,10 @@ func first_element(grid, nth: = 0):
 	return null
 
 
-# Client in the lobby: the settings page opens read-only, then closes.
+# Client in the lobby: only the settings summary, no Settings button.
 func client_settings_check(lobby) -> void :
-	lobby._settings_button.emit_signal("pressed")
-	var page = lobby._settings_page
-	var focus = get_viewport().gui_get_focus_owner()
-	print("[TEST] client_settings_page visible=", page.visible, " disabled=", page._choice_time_option.disabled, " focus=", focus.get_path() if focus != null else "-", " summary='", lobby._settings_label.text, "'")
-	shot("client_settings_page")
-	yield(get_tree().create_timer(0.5), "timeout")
-	page._back_button.emit_signal("pressed")
-	focus = get_viewport().gui_get_focus_owner()
-	print("[TEST] client_settings_closed visible=", page.visible, " focus=", focus.get_path() if focus != null else "-")
+	print("[TEST] client_settings button=", lobby._settings_button.visible, " hint='", lobby._hint_label.text, "' hint_visible=", lobby._hint_label.visible, " summary='", lobby._settings_label.text, "'")
+	shot("client_lobby")
 
 
 func pick_and_ready(lobby, nth: = 0) -> void :

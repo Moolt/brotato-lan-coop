@@ -1,9 +1,11 @@
 extends Control
 
 # Title screen page shown while in a LAN session.
-# Left: every player (colour, character, name, weapon, ready), a summary of the run settings
-# with the Settings button (ui/settings_page.gd over the lobby: the host edits, clients look),
-# Leave and the host's Start. Right: the local player's
+# The page takes the screen's height, so Leave, Start and Ready sit at the bottom and the player
+# list and both grids get the rest. Left: every player (colour, character, name, weapon,
+# ready), the host's Settings button (ui/settings_page.gd over the lobby), a summary of the run
+# settings, a status line only when something is going on (run sync, a wave in progress, run
+# over), Leave and the host's Start. Right: the local player's
 # character and starting weapon grids side by side, each with its preview below, and the Ready
 # button; the grids grow so the previews and Ready end level with Start. The grids reuse
 # vanilla's Inventory (inventory.tscn). Both previews are vanilla's small item panel
@@ -29,6 +31,9 @@ const RANDOM_ICON = preload("res://items/global/random_icon.png")
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
 
 const WIDTH: = 1800.0
+# Space above the title and below the buttons.
+const PAGE_MARGIN: = 40.0
+const PLAYER_LIST_MIN_HEIGHT: = 200.0
 const LEFT_WIDTH: = 620.0
 const CHARACTER_COLUMN_WIDTH: = 760.0
 const GRID_MIN_HEIGHT: = 150.0
@@ -45,6 +50,7 @@ const ROW_ICON_SIZE: = Vector2(40, 40)
 const SELECTED_MARKER_NAME: = "LanSelectedMarker"
 
 var _net: Node = null
+var _page_column: VBoxContainer
 var _address_label: Label
 var _count_label: Label
 var _player_list: VBoxContainer
@@ -91,8 +97,10 @@ var _cancel_armed: = false
 func _ready() -> void :
 	_net = get_node_or_null("/root/LanNet")
 	_build_ui()
+	_fit_to_screen()
+	var _e = get_viewport().connect("size_changed", self, "_fit_to_screen")
 	if _net != null:
-		var _e = _net.connect("lobby_changed", self, "_on_LanNet_lobby_changed")
+		_e = _net.connect("lobby_changed", self, "_on_LanNet_lobby_changed")
 		_e = _net.connect("run_sync_changed", self, "_on_LanNet_run_sync_changed")
 
 
@@ -129,10 +137,11 @@ func _input(event: InputEvent) -> void :
 # UI construction
 
 func _build_ui() -> void :
-	var column: = UiKit.build_page(self, WIDTH, "LAN_LOBBY")
+	_page_column = UiKit.build_page(self, WIDTH, "LAN_LOBBY")
 	var columns: = HBoxContainer.new()
+	columns.size_flags_vertical = SIZE_EXPAND_FILL
 	columns.add_constant_override("separation", 40)
-	column.add_child(columns)
+	_page_column.add_child(columns)
 
 	# Left: players
 	var left: = VBoxContainer.new()
@@ -147,11 +156,12 @@ func _build_ui() -> void :
 	_count_label = Label.new()
 	left.add_child(_count_label)
 
-	# Fits 12 rows; scrolls if rows ever get taller.
+	# Takes the height the rest of the left side leaves (12 rows fit on 1080 px); scrolls if not.
 	var panel: = PanelContainer.new()
+	panel.size_flags_vertical = SIZE_EXPAND_FILL
 	left.add_child(panel)
 	var player_scroll: = ScrollContainer.new()
-	player_scroll.rect_min_size = Vector2(0, 540)
+	player_scroll.rect_min_size = Vector2(0, PLAYER_LIST_MIN_HEIGHT)
 	player_scroll.scroll_horizontal_enabled = false
 	panel.add_child(player_scroll)
 	_player_list = VBoxContainer.new()
@@ -159,21 +169,16 @@ func _build_ui() -> void :
 	_player_list.add_constant_override("separation", 4)
 	player_scroll.add_child(_player_list)
 
-	# Run settings: a summary and the button to the settings page (wraps to two lines if long).
-	var settings_row: = HBoxContainer.new()
-	settings_row.add_constant_override("separation", 16)
-	left.add_child(settings_row)
+	_settings_button = UiKit.new_button("LAN_SETTINGS", Vector2(0, 64))
+	var _e = _settings_button.connect("pressed", self, "_on_SettingsButton_pressed")
+	left.add_child(_settings_button)
+
+	# Run settings summary (wraps to two lines if long).
 	_settings_label = Label.new()
-	_settings_label.rect_min_size = Vector2(0, 56)
-	_settings_label.size_flags_horizontal = SIZE_EXPAND_FILL
-	_settings_label.valign = Label.VALIGN_CENTER
 	_settings_label.autowrap = true
 	_settings_label.max_lines_visible = 2
 	_settings_label.add_font_override("font", ROW_FONT)
-	settings_row.add_child(_settings_label)
-	_settings_button = UiKit.new_button("LAN_SETTINGS", Vector2(200, 56))
-	var _e = _settings_button.connect("pressed", self, "_on_SettingsButton_pressed")
-	settings_row.add_child(_settings_button)
+	left.add_child(_settings_label)
 
 	_hint_label = Label.new()
 	_hint_label.add_font_override("font", ROW_FONT)
@@ -192,8 +197,8 @@ func _build_ui() -> void :
 	buttons.add_child(_start_button)
 
 	# Right: the local player's picks, two columns. Character: grid, preview. Weapon: grid,
-	# preview, Ready. The grids take the height the left side leaves, so the previews and Ready
-	# end level with Start.
+	# preview, Ready. The grids take the height the previews leave, so the previews and Ready
+	# end level with Leave and Start at the bottom.
 	var right: = HBoxContainer.new()
 	right.size_flags_horizontal = SIZE_EXPAND_FILL
 	right.add_constant_override("separation", 30)
@@ -275,6 +280,11 @@ func _build_ui() -> void :
 	_settings_page = SettingsPage.new()
 	add_child(_settings_page)
 	_e = _settings_page.connect("closed", self, "_on_SettingsPage_closed")
+
+
+# The page's column from below the top margin to above the bottom one (the page centres it).
+func _fit_to_screen() -> void :
+	_page_column.rect_min_size.y = get_viewport_rect().size.y - 2 * PAGE_MARGIN
 
 
 func _new_column(parent: Control) -> VBoxContainer:
@@ -383,6 +393,9 @@ func _refresh() -> void :
 func _refresh_settings() -> void :
 	var is_host: bool = _net.is_host
 	_start_button.visible = is_host
+	_settings_button.visible = is_host
+	if not is_host:
+		_settings_page.close()
 	_settings_label.text = SettingsPage.get_summary(_net.lobby_settings)
 	if _settings_page.visible:
 		_settings_page.refresh()
@@ -407,12 +420,10 @@ func _refresh_settings() -> void :
 	elif sync.state == "failed":
 		_hint_label.text = tr("LAN_RUN_FAILED").replace("{0}", names) if is_host else tr("LAN_RUN_FAILED_CLIENT")
 		_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_ERROR)
-	elif not all_ready:
-		_hint_label.text = "LAN_HINT_WAITING"
-	elif is_host:
-		_hint_label.text = "LAN_HINT_HOST_CAN_START"
 	else:
-		_hint_label.text = "LAN_HINT_CLIENT_WAIT_START"
+		# Waiting for picks or for Start: the player list and Start already show it.
+		_hint_label.text = ""
+	_hint_label.visible = not _hint_label.text.empty()
 
 
 # Marks the picked character and weapon, and makes "left" from the weapon grid's first column
