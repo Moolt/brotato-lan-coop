@@ -23,7 +23,7 @@ These hold for all further work; changing one is a design change, note it here.
 - **Runs travel as JSON through vanilla's save loader** and are checked with a digest (`RunBuilder`). At Start a mismatch keeps everyone in the lobby; between waves the host's run wins.
 - **Everything unlocked during a session** on every peer (item pools match), saves blocked, own progress and "Continue" run restored on leave.
 - **4-slot arrays grow to 12 always**, not only in a session (vanilla never reads beyond the player count).
-- **Everyone dead ends the run** in a session (no retry screen yet, see [Features](#features)).
+- **Everyone dead ends the run** in a session (no retry screen yet, see [Lobby settings](#lobby-settings)).
 - **Never edit vanilla files**; only script extensions. **No `push_error` or script errors from mod code** (the crash reporter disables mods on the next launch).
 
 ## Progress
@@ -36,7 +36,7 @@ These hold for all further work; changing one is a design change, note it here.
 - [x] **Step 6: In-wave sync.** Players, entities, combat visuals, loot, pause, dropouts, run end (6a–6f).
 - [x] **Step 7: Between waves.** Wave-end state, solo view, solo upgrades and shop, host merge, end screens (7a–7f).
 - [ ] **Step 8: Polish** (in progress). Done: 8a in-wave visuals and aim, 8b lobby layout. Open: [Polish](#polish), [Performance](#performance), [Tests](#tests).
-- [ ] **Step 9: Feature additions.** [Features](#features).
+- [ ] **Step 9: Feature additions.** [Lobby settings](#lobby-settings), [Features](#features).
 
 Milestones:
 - [x] 1 docs, 2 connect, 3 synced start, 4 full wave, 5 between waves
@@ -106,15 +106,22 @@ Accepted for now; tick one if it gets fixed, or promote it to a todo if it shows
 - [ ] Weapon attack events that arrive while the client's copy is still busy are skipped.
 - [ ] Progress from LAN runs: `RunData.apply_run_won` credits the character challenges and difficulty records of every player's character on every machine, and challenges completed in a session may be dropped when the own unlock lists are restored. Needs a decision (see [Features](#features)).
 
+### Lobby settings
+A **Settings** area in the lobby for run options: the host changes them, clients see them read-only (today's "Zone, Danger N" summary grows into it). Each one lives in `lobby_settings` (defaults in `NetProtocol.default_lobby_settings`), reaches the clients with `_broadcast_lobby_state`, is validated in `_apply_lobby_settings` and remembered in `lan_coop.cfg` like `last_zone`. Settings that change a run can't change while one is in progress.
+- [x] **Zone** and **Danger** (`OptionButton`s, host only).
+- [ ] **Settings area layout:** room for the options below without crowding the character and weapon grids (a panel under the player list, or a settings page opened from the lobby).
+- [ ] **Choice time** between waves: Off / 45 / 60 / 90 / 120 s, default 90. `lobby_settings.choice_time` is already sent and read by `enter_solo_view` (0 = off); only the host's control and the validation are missing.
+- [ ] **Material sharing.** Vanilla coop splits every picked-up material round-robin over all players (1 material and 1 XP per unit, `main.gd` `on_gold_picked_up`, also the mod's copy for > 4 players); only the picker's own pickup effects apply. The option keeps materials and XP with the picker.
+- [ ] **Crate sharing.** Vanilla's own option (`ProgressData.settings.share_coop_loot`, default on) comes from each machine's settings; in a session the host's value should count for everyone.
+- [ ] **Endless runs.** The shop's Endless button at wave 19 is hidden in a session: `is_endless_run` is run-wide and the merge only takes per-player data, so the host decides it up front.
+- [ ] **Retry wave.** Vanilla's retry screen (`retry_wave` option) restarts the wave from `start_wave_state`; a session skips it. With the option on, the host offers the retry and sends the start-of-wave run to everyone.
+- [ ] **Enemy and arena scaling** (the knobs in `lan_coop.cfg` `[scaling]`, already sent in `lobby_settings.scaling`): a few presets (e.g. Easy / Normal / Hard for more players) instead of editing the file.
+
 ### Features
-New mechanics, settings and modes (Step 9). Each needs a design decision first.
-- [ ] **Mod config** in the manifest `config_schema` (ModLoader's mod settings): the scaling knobs (now `lan_coop.cfg` `[scaling]`), the port, and the host settings below.
-- [ ] **Material sharing option.** Vanilla coop splits every picked-up material round-robin over all players (1 material and 1 XP per unit, `main.gd` `on_gold_picked_up`, also the mod's copy for > 4 players); only the picker's own pickup effects apply. A host lobby setting (synced like the scaling knobs) could keep materials and XP with the picker. Crates have vanilla's own option (`share_coop_loot`).
+New mechanics, settings and modes (Step 9). Each needs a design decision first. Run options the host picks go into [Lobby settings](#lobby-settings).
+- [ ] **Mod config** in the manifest `config_schema` (ModLoader's mod settings): the scaling knobs (now `lan_coop.cfg` `[scaling]`), the port, and defaults for the [lobby settings](#lobby-settings).
 - [x] **Upgrade countdown.** One choice time for the whole between-wave phase (level-ups, crates, shop), 90 s from each machine's solo view: shown in the wave timer's place and on Go, red for the last 10 s; at 0 the machine picks random upgrades, takes crate items and presses Go. The host goes on 10 s later without missing results.
-- [ ] **Choice time as a lobby setting** (Off / 45 / 60 / 90 / 120 s): `lobby_settings.choice_time` is already sent to the clients and read by `enter_solo_view`; only the host's control and `_apply_lobby_settings` validation are missing.
 - [ ] **Rejoin after a lost connection** (not after death). Today a disconnect kills the player and it stays dead in later waves. Instead: keep the player idle or protected for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run and drop it into the running wave or the between-wave phase. Quitting to the lobby and rejoining with the next wave already works.
-- [ ] **Retry in a session.** Vanilla's retry screen (`retry_wave` option) restarts the wave from `start_wave_state`; a session skips it. The host could offer the retry and send the start-of-wave run to everyone.
-- [ ] **Endless runs** as a host lobby setting (the shop's Endless button at wave 19 is hidden in a session: `is_endless_run` is run-wide, the merge only takes per-player data).
 - [ ] **What LAN runs count for** (see [Known limitations](#known-limitations)): credit only the own character on each machine, or nothing.
 - [ ] **Game modes:**
   - [ ] Teams: players split into teams in the lobby, each sharing materials, compared by a score at the end (kills, waves survived, damage).
