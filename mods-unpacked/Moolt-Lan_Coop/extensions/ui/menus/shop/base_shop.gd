@@ -5,8 +5,8 @@ extends "res://ui/menus/shop/base_shop.gd"
 # solo run to the host (LanNet.send_shop_done) and shows who is still shopping over the shop.
 # "Back to the shop" (or cancel) takes the Go back. The host goes on once everyone is done.
 # Vanilla's once-per-wave Go parts (hourglass, elite rolls, the wave increment) run on the host.
-# The Go button counts down the choice time (game/choice_countdown.gd) and is pressed when it
-# runs out; from then on Go can't be taken back.
+# With a choice time Go reads "Ready (42)" (game/choice_countdown.gd) and is pressed when the
+# time runs out; from then on Go can't be taken back.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const ShopWaitingOverlay = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/shop_waiting_overlay.gd")
@@ -124,7 +124,7 @@ func _lan_on_choice_countdown_changed(seconds: int) -> void :
 	var go_button: Button = _get_go_button(0)
 	if go_button.text != _lan_go_text_shown:
 		_lan_go_text = go_button.text
-	go_button.text = _lan_go_text if seconds < 0 else "%s - %d" % [_lan_go_text, seconds]
+	go_button.text = _lan_go_text if seconds < 0 else "%s (%d)" % [tr("LAN_SHOP_READY"), seconds]
 	_lan_go_text_shown = go_button.text
 	ChoiceCountdown.color_button(go_button, seconds)
 	_lan_overlay.set_seconds_left(seconds)

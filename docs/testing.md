@@ -62,7 +62,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`hurtbox_hits` line: enemy contacts and enemy bullets on player hurtboxes) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
 | `CHOICE_TIME=s` | host: the choice time between waves (`lobby_settings.choice_time`) |
-| `IDLE_CHOICE=1` / `=2` / `=3` | no Go in the shop (the choice time presses it) / no upgrade picks either / as 2, and the client's time never ends (the host goes on without it after the grace). Both wait for the next wave; `choice_watch` logs and screenshots the countdown at 13, 8 and 3 s left |
+| `IDLE_CHOICE=1` / `=2` / `=3` | no Go in the shop (the choice time presses it; the host presses Go at 13 s left, for the waiting overlay's countdown) / no upgrade picks either / as 2, and the client's time never ends (the host goes on without it after the grace). Both wait for the next wave; `choice_watch` logs and screenshots the countdown at 13, 8 and 3 s left |
 | `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
 | `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |

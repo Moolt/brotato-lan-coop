@@ -51,7 +51,7 @@ func set_names(names: Array) -> void :
 
 # The choice time left on the back button (-1: no limit); at 0 Go can't be taken back.
 func set_seconds_left(seconds: int) -> void :
-	_back_button.text = tr("LAN_SHOP_BACK") if seconds < 0 else "%s - %d" % [tr("LAN_SHOP_BACK"), seconds]
+	_back_button.text = tr("LAN_SHOP_BACK") if seconds < 0 else "%s (%d)" % [tr("LAN_SHOP_BACK"), seconds]
 	_back_button.disabled = seconds == 0
 	ChoiceCountdown.color_button(_back_button, seconds)
 

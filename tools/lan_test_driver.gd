@@ -50,7 +50,8 @@ extends Node
 #   (solo) START_WAVE, ENEMY_MULT as for host; a 20 s wave
 #   (host) WAVE_DURATION=s: the first wave lasts s seconds (default 20)
 #   (host) CHOICE_TIME=s: the choice time between waves (lobby_settings.choice_time)
-#   (host and join) IDLE_CHOICE=1: no Go in the shop (the choice time runs out); =2: no upgrade
+#   (host and join) IDLE_CHOICE=1: no Go in the shop (the choice time runs out; the host presses
+#         Go at 13 s left, so its waiting overlay counts down); =2: no upgrade
 #         picks either; =3: as 2, and the client's choice time never ends (the host goes on
 #         without it). choice_watch logs and screenshots the countdown at 13, 8 and 3 s left
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
@@ -950,6 +951,9 @@ func choice_watch() -> void :
 	if scene is BaseShop:
 		var go = scene._get_go_button(0)
 		var overlay = scene.get_node("LanShopWaitingOverlay")
+		if role == "host" and seconds == 13 and OS.get_environment("IDLE_CHOICE") == "1":
+			# The waiting overlay's countdown in the next screenshots.
+			scene._on_GoButton_pressed(0)
 		print("[TEST] ", tag, " shop go='", go.text, "' go_color=", go.get("custom_colors/font_color"), " overlay=", overlay.visible, " back='", overlay._back_button.text, "' back_disabled=", overlay._back_button.disabled)
 	elif scene != null and scene.filename == MenuData.game_scene:
 		var label = scene._wave_timer_label

@@ -578,8 +578,11 @@ func _lan_start_choice_countdown() -> void :
 	_e = countdown.connect("overdue", self, "_lan_choose_for_player")
 
 
-# The wave timer's label (hidden at the wave's end, done with its timer) shows the seconds left.
+# The wave timer's label (hidden at the wave's end, done with its timer) shows the seconds left,
+# below "Next wave in" in the wave number's place.
 func _lan_on_choice_countdown_changed(seconds: int) -> void :
+	if seconds >= 0:
+		_current_wave_label.text = tr("LAN_NEXT_WAVE_IN").to_upper()
 	_wave_timer_label.wave_timer = null
 	_wave_timer_label.visible = seconds >= 0
 	_wave_timer_label.text = str(seconds)
