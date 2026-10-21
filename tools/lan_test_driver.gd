@@ -52,6 +52,8 @@ extends Node
 #   (solo) START_WAVE, ENEMY_MULT as for host; a 20 s wave
 #   (host) WAVE_DURATION=s: the first wave lasts s seconds (default 20)
 #   (host) CHOICE_TIME=s: the choice time between waves (lobby_settings.choice_time)
+#   (host) SCALING_PRESET=n: the enemy scaling preset (0 relaxed, 1 normal, 2 tough); remembered
+#         in the test config like a lobby pick
 #   (host and join) IDLE_CHOICE=1: no Go in the shop (the choice time runs out; the host presses
 #         Go at 13 s left, so its waiting overlay counts down); =2: no upgrade
 #         picks either; =3: as 2, and the client's choice time never ends (the host goes on
@@ -793,6 +795,8 @@ func _host_step() -> void :
 			if OS.get_environment("CHOICE_TIME") != "":
 				net.lobby_settings.choice_time = int(OS.get_environment("CHOICE_TIME"))
 				net._broadcast_lobby_state()
+			if OS.get_environment("SCALING_PRESET") != "":
+				net.set_lobby_settings({"scaling_preset": int(OS.get_environment("SCALING_PRESET"))})
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
@@ -1443,10 +1447,15 @@ func _lobby_step() -> void :
 			var index = page._choice_time_option.get_item_index(60)
 			page._choice_time_option.select(index)
 			page._on_option_item_selected(index, page._choice_time_option, "choice_time")
+			index = page._scaling_option.get_item_index(2)
+			page._scaling_option.select(index)
+			page._on_option_item_selected(index, page._scaling_option, "scaling_preset")
 			next_t = t + 0.5
 		12:
 			var lobby = m.get_node("LanLobby")
-			print("[TEST] lobby_settings_changed choice_time=", get_node("/root/LanNet").lobby_settings.choice_time, " saved=", get_node("/root/LanNet").config.last_choice_time, " summary='", lobby._settings_label.text, "'")
+			var net = get_node("/root/LanNet")
+			print("[TEST] lobby_settings_changed choice_time=", net.lobby_settings.choice_time, " saved=", net.config.last_choice_time, " preset=", net.lobby_settings.scaling_preset, " saved=", net.config.last_scaling_preset, " scaling=", net.lobby_settings.scaling, " config_scaling=", net.config.scaling, " info='", lobby._settings_page._scaling_info.text, "' summary='", lobby._settings_label.text, "'")
+			shot("lobby_settings_tough")
 			for pressed in [true, false]:
 				var event = InputEventAction.new()
 				event.action = "ui_cancel"
@@ -1458,5 +1467,6 @@ func _lobby_step() -> void :
 			print("[TEST] lobby_settings_closed page=", lobby._settings_page.visible, " lobby=", lobby.visible, " session=", get_node("/root/LanNet").active, " focus=", get_viewport().gui_get_focus_owner().get_path())
 			shot("lobby_settings_summary")
 			# The shared test config keeps the default for later runs.
-			get_node("/root/LanNet").set_lobby_settings({"choice_time": 90})
+			get_node("/root/LanNet").set_lobby_settings({"choice_time": 90, "scaling_preset": 1})
+			print("[TEST] lobby_settings_restored scaling=", get_node("/root/LanNet").lobby_settings.scaling)
 			get_tree().quit()

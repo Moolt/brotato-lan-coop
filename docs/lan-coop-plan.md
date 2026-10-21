@@ -116,7 +116,7 @@ A **Settings** area in the lobby for run options: the host changes them, clients
 - [ ] **Crate sharing.** Vanilla's own option (`ProgressData.settings.share_coop_loot`, default on) comes from each machine's settings; in a session the host's value should count for everyone.
 - [ ] **Endless runs.** The shop's Endless button at wave 19 is hidden in a session: `is_endless_run` is run-wide and the merge only takes per-player data, so the host decides it up front.
 - [ ] **Retry wave.** Vanilla's retry screen (`retry_wave` option) restarts the wave from `start_wave_state`; a session skips it. With the option on, the host offers the retry and sends the start-of-wave run to everyone.
-- [ ] **Enemy and arena scaling** (the knobs in `lan_coop.cfg` `[scaling]`, already sent in `lobby_settings.scaling`): a few presets (e.g. Easy / Normal / Hard for more players) instead of editing the file.
+- [x] **Enemy scaling preset** (More players → Enemy scaling): Relaxed / Normal / Tough multiply the config's per-player enemy count, HP and damage knobs by 0.6 / 1 / 1.5; arena and enemy cap stay. The page shows the resulting percentages. Fine-tuning still goes through `lan_coop.cfg` `[scaling]` (Normal = the file's values).
 
 ### Features
 New mechanics, settings and modes (Step 9). Each needs a design decision first. Run options the host picks go into [Lobby settings](#lobby-settings).

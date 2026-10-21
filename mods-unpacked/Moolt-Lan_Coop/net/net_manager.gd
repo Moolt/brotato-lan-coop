@@ -170,7 +170,7 @@ func host(port: int = - 1) -> int:
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
 	lobby_settings.scaling = config.scaling.duplicate()
-	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time})
+	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset})
 	_apply_multiplayer_unlocks()
 	last_end_reason = ""
 	_set_saves_blocked(true)
@@ -242,8 +242,8 @@ func set_local_player_info(changes: Dictionary) -> void :
 		rpc_id(HOST_PEER_ID, "_rpc_update_player", changes)
 
 
-# Host only, not during a run: zone, difficulty, choice time. Invalid values are ignored; valid
-# ones are remembered.
+# Host only, not during a run: zone, difficulty, choice time, scaling preset. Invalid values are
+# ignored; valid ones are remembered.
 func set_lobby_settings(changes: Dictionary) -> void :
 	if not is_host or run_in_progress:
 		return
@@ -251,6 +251,7 @@ func set_lobby_settings(changes: Dictionary) -> void :
 		config.last_zone = lobby_settings.zone
 		config.last_difficulty = lobby_settings.difficulty
 		config.last_choice_time = lobby_settings.choice_time
+		config.last_scaling_preset = lobby_settings.scaling_preset
 		config.save_config()
 		_broadcast_lobby_state()
 
@@ -827,6 +828,13 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 		changed = true
 	if changes.has("choice_time") and int(changes.choice_time) in NetProtocol.CHOICE_TIMES and lobby_settings.choice_time != int(changes.choice_time):
 		lobby_settings.choice_time = int(changes.choice_time)
+		changed = true
+	if changes.has("scaling_preset") and int(changes.scaling_preset) >= 0 and int(changes.scaling_preset) < NetProtocol.SCALING_PRESET_FACTORS.size() and lobby_settings.scaling_preset != int(changes.scaling_preset):
+		lobby_settings.scaling_preset = int(changes.scaling_preset)
+		# The clients read the resulting knobs (LanGame.get_scaling), not the preset.
+		var factor: float = NetProtocol.SCALING_PRESET_FACTORS[lobby_settings.scaling_preset]
+		for key in NetProtocol.SCALED_BY_PRESET:
+			lobby_settings.scaling[key] = config.scaling[key] * factor
 		changed = true
 	return changed
 

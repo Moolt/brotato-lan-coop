@@ -42,6 +42,20 @@ const DEFAULT_SCALING: = {
 	"enemy_cap_per_player": 0.25, 
 }
 const MAX_SCALING_VALUE: = 2.0
+# Enemy scaling presets on the lobby's settings page (lobby_settings.scaling_preset is the
+# index): factors on the config's per-player enemy knobs (SCALED_BY_PRESET); the arena and the
+# enemy cap stay. Normal is the config as it is.
+const SCALING_PRESET_RELAXED: = 0
+const SCALING_PRESET_NORMAL: = 1
+const SCALING_PRESET_TOUGH: = 2
+const SCALING_PRESET_FACTORS: = [0.6, 1.0, 1.5]
+const SCALING_PRESET_KEYS: = ["LAN_SCALING_RELAXED", "LAN_SCALING_NORMAL", "LAN_SCALING_TOUGH"]
+const SCALED_BY_PRESET: = [
+	"enemy_count_per_player", 
+	"enemy_health_per_player", 
+	"enemy_health_per_player_beyond_4", 
+	"enemy_damage_per_player", 
+]
 
 # Seconds every player has between waves for level-ups, crates and the shop
 # (lobby_settings.choice_time, 0 = no limit); then the game picks and presses Go itself. The host
@@ -152,6 +166,7 @@ static func default_lobby_settings() -> Dictionary:
 		"in_wave": false, 
 		"scaling": DEFAULT_SCALING.duplicate(), 
 		"choice_time": DEFAULT_CHOICE_TIME, 
+		"scaling_preset": SCALING_PRESET_NORMAL, 
 	}
 
 

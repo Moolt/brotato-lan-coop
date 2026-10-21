@@ -34,7 +34,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 |---|---|
 | `host` / `join` | the two sides of a session |
 | `solo` | `RunBuilder.build_run` with one entry, `set_coop_run(false)`, `change_scene(MenuData.game_scene)`: vanilla solo play still works without a session |
-| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 (summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 again. The `join` role logs and screenshots its lobby (summary, no Settings button) |
+| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 and the scaling to Tough (knobs, info line, summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 and Normal again. The `join` role logs and screenshots its lobby (summary, no Settings button) |
 | `quit` | quits as soon as the title screen loads (parse-error check) |
 | none | idle, for manual tests |
 
@@ -62,6 +62,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `MORTAL=1` | host: players can be hit; at t=16 an enemy is placed on the host player (`hurtbox_hits` line: enemy contacts and enemy bullets on player hurtboxes) |
 | `WAVE_DURATION=s` | host: the first wave lasts s seconds (default 20) |
 | `CHOICE_TIME=s` | host: the choice time between waves (`lobby_settings.choice_time`) |
+| `SCALING_PRESET=n` | host: the enemy scaling preset (0 relaxed, 1 normal, 2 tough), through `set_lobby_settings`, so the test config remembers it: run `SCALING_PRESET=1` once afterwards. `log_sync`'s `coop` line shows the knobs on both sides |
 | `IDLE_CHOICE=1` / `=2` / `=3` | no Go in the shop (the choice time presses it; the host presses Go at 13 s left, for the waiting overlay's countdown) / no upgrade picks either / as 2, and the client's time never ends (the host goes on without it after the grace). Both wait for the next wave; `choice_watch` logs and screenshots the countdown at 13, 8 and 3 s left |
 | `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |

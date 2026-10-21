@@ -1,8 +1,8 @@
 extends Control
 
 # The lobby's run settings, opened with its Settings button and shown over the lobby: one row
-# per setting (label, dropdown) in groups. The host changes them (LanNet.set_lobby_settings,
-# applied at once); clients and a host with a run in progress see them read-only. Back or
+# per setting (label, dropdown) in groups. Only the host opens it and changes them
+# (LanNet.set_lobby_settings, applied at once); during a run they are read-only. Back or
 # ui_cancel (handled by the lobby) closes the page.
 
 signal closed()
@@ -23,6 +23,8 @@ var _net: Node = null
 var _zone_option: OptionButton
 var _difficulty_option: OptionButton
 var _choice_time_option: OptionButton
+var _scaling_option: OptionButton
+var _scaling_info: Label
 var _back_button: Button
 
 
@@ -41,6 +43,14 @@ func _init() -> void :
 	_difficulty_option = _add_row(column, "LAN_SETTING_DANGER", "difficulty")
 	_add_group(column, "LAN_SETTINGS_BETWEEN_WAVES")
 	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
+	_add_group(column, "LAN_SETTINGS_SCALING")
+	_scaling_option = _add_row(column, "LAN_SETTING_SCALING", "scaling_preset")
+	# What the preset adds per extra player, from the knobs the clients get.
+	_scaling_info = Label.new()
+	_scaling_info.add_font_override("font", GROUP_FONT)
+	_scaling_info.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	_scaling_info.autowrap = true
+	column.add_child(_scaling_info)
 
 	var spacer: = Control.new()
 	spacer.rect_min_size = Vector2(0, 12)
@@ -75,19 +85,26 @@ func refresh() -> void :
 		return
 	var settings: Dictionary = _net.lobby_settings
 	var editable: bool = _net.is_host and not _net.run_in_progress
-	for option in [_zone_option, _difficulty_option, _choice_time_option]:
+	for option in _get_options():
 		option.disabled = not editable
 		option.focus_mode = Control.FOCUS_ALL if editable else Control.FOCUS_NONE
 	# select() doesn't emit item_selected, so this never loops back.
 	_zone_option.select(_zone_option.get_item_index(settings.get("zone", 0)))
 	_difficulty_option.select(_difficulty_option.get_item_index(settings.get("difficulty", 0)))
 	_choice_time_option.select(_choice_time_option.get_item_index(settings.get("choice_time", 0)))
+	_scaling_option.select(_scaling_option.get_item_index(settings.get("scaling_preset", NetProtocol.SCALING_PRESET_NORMAL)))
+	var scaling: Dictionary = settings.get("scaling", NetProtocol.DEFAULT_SCALING)
+	_scaling_info.text = tr("LAN_SCALING_INFO") \
+			.replace("{0}", _percent(scaling.get("enemy_count_per_player", 0.0))) \
+			.replace("{1}", _percent(scaling.get("enemy_health_per_player", 0.0))) \
+			.replace("{2}", _percent(scaling.get("enemy_damage_per_player", 0.0))) \
+			.replace("{3}", _percent(scaling.get("enemy_health_per_player_beyond_4", 0.0)))
 	_chain_focus()
 
 
 # An open dropdown takes ui_cancel itself (the lobby checks this before closing the page).
 func is_popup_open() -> bool:
-	for option in [_zone_option, _difficulty_option, _choice_time_option]:
+	for option in _get_options():
 		if option.get_popup().visible:
 			return true
 	return false
@@ -103,6 +120,11 @@ static func get_summary(settings: Dictionary) -> String:
 		parts.append(TranslationServer.translate("LAN_SUMMARY_NO_CHOICE_TIME"))
 	elif choice_time != NetProtocol.DEFAULT_CHOICE_TIME:
 		parts.append(TranslationServer.translate("LAN_SUMMARY_CHOICE_TIME").replace("{0}", str(choice_time)))
+	match int(settings.get("scaling_preset", NetProtocol.SCALING_PRESET_NORMAL)):
+		NetProtocol.SCALING_PRESET_RELAXED:
+			parts.append(TranslationServer.translate("LAN_SUMMARY_SCALING_RELAXED"))
+		NetProtocol.SCALING_PRESET_TOUGH:
+			parts.append(TranslationServer.translate("LAN_SUMMARY_SCALING_TOUGH"))
 	return PoolStringArray(parts).join(" · ")
 
 
@@ -110,7 +132,7 @@ static func get_summary(settings: Dictionary) -> String:
 # controls, top to bottom.
 func _chain_focus() -> void :
 	var controls: = []
-	for control in [_zone_option, _difficulty_option, _choice_time_option, _back_button]:
+	for control in _get_options() + [_back_button]:
 		if control.focus_mode != Control.FOCUS_NONE:
 			controls.append(control)
 	for i in controls.size():
@@ -135,6 +157,17 @@ func _fill_options() -> void :
 	_choice_time_option.clear()
 	for seconds in NetProtocol.CHOICE_TIMES:
 		_choice_time_option.add_item(tr("LAN_CHOICE_TIME_OFF") if seconds == 0 else tr("LAN_CHOICE_TIME_SECONDS").replace("{0}", str(seconds)), seconds)
+	_scaling_option.clear()
+	for preset in NetProtocol.SCALING_PRESET_KEYS.size():
+		_scaling_option.add_item(tr(NetProtocol.SCALING_PRESET_KEYS[preset]), preset)
+
+
+func _get_options() -> Array:
+	return [_zone_option, _difficulty_option, _choice_time_option, _scaling_option]
+
+
+static func _percent(value: float) -> String:
+	return str(int(round(value * 100)))
 
 
 func _add_group(column: VBoxContainer, text_key: String) -> void :
