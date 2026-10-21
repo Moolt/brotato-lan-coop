@@ -31,7 +31,7 @@
 - The file must live inside `res://mods-unpacked/<mod dir>/`, because the mod id is derived from the path.
 - How it works: `child_script.take_over_path(vanilla_path)`. Every **new** instance or `load` of the vanilla path then gets the subclass; nodes that already exist keep the old script.
 - Extensions are applied after all mod `_init`s, sorted by inheritance depth.
-- Vanilla `class_name` children of an extended script are reloaded, so `TitleScreenMenus` picks up a `Menus` extension.
+- Vanilla `class_name` children of an extended script are reloaded, so `TitleScreenMenus` picks up a `Menus` extension. Only direct children: grandchildren (`BulletHellProjectile` < `EnemyProjectile` < `Projectile`) keep the old member layout, and the extension's variables can't be read on them. The mod reloads those itself (`LanGame.reload_stale_subclasses`).
 - **Autoloads listed before ModLoader cannot be extended:** CrashReporter, BugReporter, Platform, Keys. Later ones can: Utils, RunData, CoopService, ZoneService, and the rest.
 - **Godot 3 runs engine callbacks at every inheritance level:** `_init`, `_ready`, `_process`, `_physics_process`, `_input`, `_enter_tree`. An override **does not** replace the vanilla callback, and both run. To stop a vanilla callback, call `set_process(false)` / `set_physics_process(false)` / `set_process_input(false)`, or override the regular methods it calls.
 - Regular methods are true overrides. Call the parent with `.method(args)`.
