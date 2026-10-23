@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 18
+const PROTOCOL_VERSION: = 19
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -15,6 +15,10 @@ const MAX_CLIENTS: = MAX_PLAYERS - 1
 const MAX_NAME_LENGTH: = 16
 const HELLO_TIMEOUT: = 5.0
 const KICK_DELAY: = 0.5
+# A client that lost the connection during a run tries to rejoin its old slot every
+# RECONNECT_INTERVAL seconds (after each failed attempt) for RECONNECT_TIME seconds.
+const RECONNECT_TIME: = 60.0
+const RECONNECT_INTERVAL: = 2.0
 
 # Reject / disconnect reasons. They double as translation keys (see net_translations.gd).
 const REJECT_VERSION: = "LAN_REJECT_VERSION"
@@ -25,6 +29,8 @@ const REJECT_IN_PROGRESS: = "LAN_REJECT_IN_PROGRESS"
 const REJECT_BAD_HELLO: = "LAN_REJECT_BAD_HELLO"
 const MSG_HOST_LEFT: = "LAN_MSG_HOST_LEFT"
 const MSG_CONNECTION_FAILED: = "LAN_MSG_CONNECTION_FAILED"
+const MSG_RECONNECTING: = "LAN_MSG_RECONNECTING"
+const MSG_RECONNECT_FAILED: = "LAN_MSG_RECONNECT_FAILED"
 const MSG_SERVER_FAILED: = "LAN_MSG_SERVER_FAILED"
 const MSG_INVALID_IP: = "LAN_MSG_INVALID_IP"
 const MSG_INVALID_PORT: = "LAN_MSG_INVALID_PORT"
@@ -91,13 +97,16 @@ static func get_sorted_dlc_ids() -> Array:
 	return ids
 
 
-static func build_hello(player_name: String) -> Dictionary:
+# rejoin_token: what the host gave this machine at its last welcome (0 = none). During a run the
+# host gives the player with that token its old slot back.
+static func build_hello(player_name: String, rejoin_token: int) -> Dictionary:
 	return {
 		"protocol_version": PROTOCOL_VERSION, 
 		"mod_version": get_mod_version(), 
 		"game_version": ProgressData.VERSION, 
 		"dlcs": get_sorted_dlc_ids(), 
 		"name": player_name, 
+		"rejoin_token": rejoin_token, 
 	}
 
 
@@ -105,10 +114,10 @@ static func build_hello(player_name: String) -> Dictionary:
 static func validate_hello(hello) -> String:
 	if typeof(hello) != TYPE_DICTIONARY:
 		return REJECT_BAD_HELLO
-	for key in ["protocol_version", "mod_version", "game_version", "dlcs", "name"]:
+	for key in ["protocol_version", "mod_version", "game_version", "dlcs", "name", "rejoin_token"]:
 		if not hello.has(key):
 			return REJECT_BAD_HELLO
-	if typeof(hello.dlcs) != TYPE_ARRAY or typeof(hello.name) != TYPE_STRING:
+	if typeof(hello.dlcs) != TYPE_ARRAY or typeof(hello.name) != TYPE_STRING or typeof(hello.rejoin_token) != TYPE_INT:
 		return REJECT_BAD_HELLO
 	if hello.protocol_version != PROTOCOL_VERSION or hello.mod_version != get_mod_version():
 		return REJECT_VERSION

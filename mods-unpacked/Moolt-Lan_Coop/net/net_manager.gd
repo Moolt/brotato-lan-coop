@@ -50,11 +50,21 @@ var _peer: NetworkedMultiplayerENet = null
 var _pending_hello: = {}
 var _own_unlocks: = {}
 
+# Rejoin after a lost connection. The host gives every client a random token at its welcome
+# (_rejoin_tokens: peer_id -> token); the client keeps it in its config. A client that loses
+# the connection during a run, without the host's _rpc_bye, retries the host until
+# _reconnect_until_msec (NetProtocol.RECONNECT_TIME); the host gives a hello with a known token
+# its old slot back (_rejoin), and the player plays again from the next wave.
+var _rejoin_tokens: = {}
+var _reconnect_until_msec: = 0
+var _host_closed: = false
+
 # Run sync (Start). The host builds the run, sends it with its digest, and clients ack whether
 # their copy matches. lobby_settings.run_id names the current run (0 = none); any lobby change
 # resets it, so a stale run is never started. run_state (JSON text, see RunBuilder) is kept
 # for loading the wave later.
 var run_state: = ""
+var _run_digest: = ""
 var _run_id_counter: = 0
 var _received_run_id: = 0
 var _received_run_ok: = false
@@ -231,6 +241,15 @@ func leave() -> void :
 	_end_session("")
 
 
+# Client: retrying the host after a lost connection (see _reconnect_until_msec).
+func is_reconnecting() -> bool:
+	return _reconnect_until_msec != 0
+
+
+func cancel_reconnect() -> void :
+	_reconnect_until_msec = 0
+
+
 func set_player_name(new_name: String) -> void :
 	config.player_name = NetProtocol.sanitize_name(new_name)
 	config.save_config()
@@ -298,7 +317,7 @@ func _send_run(what: String) -> void :
 	_run_data_replaced = true
 	run_state = RunBuilder.serialize_run()
 	var _applied = RunBuilder.apply_run(run_state)
-	var digest: = RunBuilder.digest()
+	_run_digest = RunBuilder.digest()
 	_run_id_counter += 1
 	lobby_settings.run_id = _run_id_counter
 	_run_acks = {}
@@ -306,7 +325,7 @@ func _send_run(what: String) -> void :
 	ModLoaderLog.info("Run %d %s: %s" % [_run_id_counter, what, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)
 
 	for entry in _get_connected_clients():
-		rpc_id(entry.peer_id, "_rpc_run_state", _run_id_counter, run_state, digest)
+		rpc_id(entry.peer_id, "_rpc_run_state", _run_id_counter, run_state, _run_digest)
 	_broadcast_lobby_state(true)
 	emit_signal("run_sync_changed")
 	_enter_wave_if_synced()
@@ -498,16 +517,50 @@ func _on_network_peer_disconnected(peer_id: int) -> void :
 
 
 func _on_connected_to_server() -> void :
-	rpc_id(HOST_PEER_ID, "_rpc_hello", NetProtocol.build_hello(config.player_name))
+	rpc_id(HOST_PEER_ID, "_rpc_hello", NetProtocol.build_hello(config.player_name, config.rejoin_token))
 
 
 # ENet closes the peer itself right after emitting these, so clean up deferred.
 func _on_connection_failed() -> void :
-	call_deferred("_end_session", NetProtocol.MSG_CONNECTION_FAILED)
+	if is_reconnecting():
+		_reconnect_or_give_up()
+	else:
+		call_deferred("_end_session", NetProtocol.MSG_CONNECTION_FAILED)
 
 
+# Lost during a run without the host's goodbye: the connection broke, so try to rejoin.
 func _on_server_disconnected() -> void :
-	call_deferred("_end_session", NetProtocol.MSG_HOST_LEFT)
+	if joined and lobby_settings.get("in_wave", false) and not _host_closed:
+		ModLoaderLog.info("Lost the connection to the host, reconnecting", NetProtocol.MOD_ID)
+		_reconnect_until_msec = OS.get_ticks_msec() + int(NetProtocol.RECONNECT_TIME * 1000)
+	if is_reconnecting() and not _host_closed:
+		_reconnect_or_give_up()
+	else:
+		cancel_reconnect()
+		call_deferred("_end_session", NetProtocol.MSG_HOST_LEFT)
+
+
+func _reconnect_or_give_up() -> void :
+	if OS.get_ticks_msec() < _reconnect_until_msec:
+		call_deferred("_end_session", NetProtocol.MSG_RECONNECTING)
+		_try_reconnect_later()
+	else:
+		ModLoaderLog.info("Could not reconnect to the host", NetProtocol.MOD_ID)
+		cancel_reconnect()
+		call_deferred("_end_session", NetProtocol.MSG_RECONNECT_FAILED)
+
+
+func _try_reconnect_later() -> void :
+	var _e = get_tree().create_timer(NetProtocol.RECONNECT_INTERVAL).connect("timeout", self, "_try_reconnect")
+
+
+func _try_reconnect() -> void :
+	# Cancelled (Back on the join page), or another session started meanwhile.
+	if not is_reconnecting() or active:
+		return
+	if join(config.last_ip, config.port) != OK:
+		cancel_reconnect()
+		emit_signal("session_ended", last_end_reason)
 
 
 
@@ -523,6 +576,10 @@ remote func _rpc_hello(hello) -> void :
 
 	var reason: = NetProtocol.validate_hello(hello)
 	if reason.empty() and run_in_progress:
+		var old_entry = _get_player_by_rejoin_token(hello.rejoin_token)
+		if old_entry != null:
+			_rejoin(old_entry, sender)
+			return
 		reason = NetProtocol.REJECT_IN_PROGRESS
 	if reason.empty() and players.size() >= NetProtocol.MAX_PLAYERS:
 		reason = NetProtocol.REJECT_FULL
@@ -539,9 +596,52 @@ remote func _rpc_hello(hello) -> void :
 	var player_name: = NetProtocol.make_unique_name(NetProtocol.sanitize_name(hello.name), taken_names)
 	var entry: = NetProtocol.new_player_entry(sender, players.size(), player_name)
 	players.append(entry)
+	_rejoin_tokens[sender] = _new_rejoin_token()
 	ModLoaderLog.info("%s joined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
-	rpc_id(sender, "_rpc_welcome", entry.player_index)
+	rpc_id(sender, "_rpc_welcome", entry.player_index, _rejoin_tokens[sender])
 	_broadcast_lobby_state()
+
+
+# Host, during a run: the player of entry is back on a new connection (peer_id). Like a player
+# who quit to the lobby, it waits there and plays again from the next wave.
+func _rejoin(entry: Dictionary, peer_id: int) -> void :
+	var old_peer_id: int = entry.peer_id
+	var token: int = _rejoin_tokens[old_peer_id]
+	var _erased = _rejoin_tokens.erase(old_peer_id)
+	_rejoin_tokens[peer_id] = token
+	entry.peer_id = peer_id
+	entry.connected = true
+	# Not waited for in this wave or this shop phase.
+	_left_run_peers[peer_id] = true
+	# The old connection may not have timed out here yet: drop it, and the player's copy with it.
+	if get_tree().get_network_connected_peers().has(old_peer_id):
+		_peer.disconnect_peer(old_peer_id)
+		if wave_sync != null:
+			wave_sync.on_player_left(entry.player_index, old_peer_id)
+	ModLoaderLog.info("%s rejoined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
+	rpc_id(peer_id, "_rpc_welcome", entry.player_index, token)
+	_broadcast_lobby_state(true)
+	# The next wave's run is waiting for acks.
+	if _start_requested:
+		rpc_id(peer_id, "_rpc_run_state", _run_id_counter, run_state, _run_digest)
+	_update_shop_waiting()
+	emit_signal("run_sync_changed")
+
+
+# Host: the entry whose client got this token at its welcome, 0 = none.
+func _get_player_by_rejoin_token(token: int):
+	if token == 0:
+		return null
+	for peer_id in _rejoin_tokens:
+		if _rejoin_tokens[peer_id] == token:
+			return _get_player_by_peer(peer_id)
+	return null
+
+
+func _new_rejoin_token() -> int:
+	var rng: = RandomNumberGenerator.new()
+	rng.randomize()
+	return rng.randi_range(1, 0x7FFFFFFF)
 
 
 remote func _rpc_update_player(changes) -> void :
@@ -557,11 +657,14 @@ remote func _rpc_update_player(changes) -> void :
 
 # RPCs: host -> client
 
-remote func _rpc_welcome(player_index) -> void :
-	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+remote func _rpc_welcome(player_index, rejoin_token) -> void :
+	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(rejoin_token) != TYPE_INT:
 		return
 	joined = true
 	local_player_index = int(player_index)
+	cancel_reconnect()
+	config.rejoin_token = rejoin_token
+	config.save_config()
 	_apply_multiplayer_unlocks()
 	progress.start()
 	ModLoaderLog.info("Joined lobby as player %d" % local_player_index, NetProtocol.MOD_ID)
@@ -571,7 +674,14 @@ remote func _rpc_welcome(player_index) -> void :
 remote func _rpc_rejected(reason) -> void :
 	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
 		return
+	cancel_reconnect()
 	call_deferred("_end_session", str(reason))
+
+
+# The host is closing the session: a disconnect that follows isn't a lost connection.
+remote func _rpc_bye() -> void :
+	if is_client and get_tree().get_rpc_sender_id() == HOST_PEER_ID:
+		_host_closed = true
 
 
 remote func _rpc_run_state(run_id, state, digest) -> void :
@@ -1134,6 +1244,18 @@ func _input(event: InputEvent) -> void :
 	_update_local_input_type()
 
 
+# Host: tells the clients that the session is closing, so they don't try to rejoin. Also when
+# the game is closed mid-run (the host can't end the session in a run otherwise).
+func _send_bye() -> void :
+	if is_host and _peer != null:
+		for peer_id in get_tree().get_network_connected_peers():
+			rpc_id(peer_id, "_rpc_bye")
+
+
+func _exit_tree() -> void :
+	_send_bye()
+
+
 func _set_saves_blocked(value: bool) -> void :
 	ProgressData.set("lan_coop_saves_blocked", value)
 
@@ -1144,6 +1266,7 @@ func _end_session(reason: String) -> void :
 	var was_in_game: = run_in_progress or (is_client and joined)
 
 	if _peer != null and _peer.get_connection_status() != NetworkedMultiplayerPeer.CONNECTION_DISCONNECTED:
+		_send_bye()
 		_peer.close_connection()
 	get_tree().network_peer = null
 	_peer = null
@@ -1159,6 +1282,9 @@ func _end_session(reason: String) -> void :
 		RunData.reset()
 		_run_data_replaced = false
 	run_state = ""
+	_run_digest = ""
+	_rejoin_tokens = {}
+	_host_closed = false
 	_received_run_id = 0
 	_received_run_ok = false
 	_run_acks = {}

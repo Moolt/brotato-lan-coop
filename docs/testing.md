@@ -22,7 +22,8 @@ How to run and check the mod: a throwaway game copy, the test driver (`tools/lan
 Godot/Godot_v3.7-dev1_x11.64 --path <scratch>/game --resolution 1280x720 --position 0,0 -- <role>
 ```
 - Second instance at `--position 1280,0`. Start `host` with `nohup ... &`, wait 1 s, start `join` the same way, then `wait`; stdout goes to `host.log` / `join.log`. The driver quits each instance at the end of its script.
-- Both instances share `user://lan_coop.cfg` (names, port 24999 in that profile).
+- Both instances share `user://lan_coop.cfg` (names, port 24999 in that profile, the client's rejoin token; the host's config saves can overwrite the token on disk, so a rejoin after a client restart can't be tested on one machine).
+- A second test copy alongside (e.g. another worktree's): give it its own `custom_user_dir_name` in its `project.godot` and its own port in that dir's `lan_coop.cfg`. Discovery uses one fixed port, so the other copy's games show up on the Join page (as incompatible when the protocol differs).
 - Add `-vvv` to see `ModLoaderLog` output.
 - **Runner script:** keep a small script in the scratchpad (e.g. `run2.sh`) that checks `game/project.godot` exists, exports `SHOT_DIR`, starts `host` and 1 s later `join` with `nohup`, and `wait`s. Call it by absolute path.
 
@@ -49,6 +50,9 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `START_WAVE=n` | the run starts at wave n (20: run won) |
 | `CLIENT_QUITS=1` / `=2` | the client quits the wave from its pause menu and changes its character in the lobby (ignored) / its process exits mid-wave |
 | `SHOP_QUIT=1` | the client quits from the shop |
+| `CLIENT_QUITS=3` / `=4` | at t=18 in the wave the client's connection breaks without a goodbye (`drop_connection`) and it rejoins: unnoticed by the host (the old ENet peer is kept unpolled, so the rejoin takes over a slot that still looks connected) / with the host seeing the disconnect first |
+| `SHOP_QUIT=2` | the client's connection breaks silently in the shop; it rejoins and the host goes on without waiting |
+| `HOST_QUITS=1` | the host closes its game at t=18 in the wave; the client must end with "host left" (goodbye), not reconnect |
 | `FAIL_ACK=1` | the next wave's run counts as a digest mismatch on both sides |
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |
 | `FAKE_SAVED_RUN=1` | a stand-in "Continue" run in memory before the session (never saved) |
@@ -99,6 +103,7 @@ Each takes about 1–2 min.
 | `CLIENT_QUITS=1 WAVES=2` | quit to lobby mid-wave, back in next wave, lobby changes ignored |
 | `CLIENT_QUITS=2 WAVES=2` | client process dies mid-wave |
 | `SHOP_QUIT=1` | client quits from the shop |
+| `CLIENT_QUITS=3 WAVES=2`, `CLIENT_QUITS=4 WAVES=2`, `SHOP_QUIT=2 WAVES=2`, `HOST_QUITS=1` | rejoin after a lost connection (host log: "rejoined as player 1"; the client's player is alive in wave 2), the host's goodbye |
 | `START_WAVE=20 FAKE_SAVED_RUN=1` | run won; own "Continue" run untouched |
 | `ROUNDS=2 KILL_ALL=1` | stale wave-end state across runs |
 | `FAIL_ACK=1 WAVES=2` | next-wave digest mismatch doesn't freeze |

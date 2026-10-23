@@ -2,7 +2,8 @@ extends Reference
 
 # Persistent per-machine settings in user://lan_coop.cfg (last name, last IP, port,
 # the zone, difficulty, choice time and scaling preset last picked as host) and, in its own section, the arena and enemy
-# scaling knobs used when hosting (NetProtocol.DEFAULT_SCALING).
+# scaling knobs used when hosting (NetProtocol.DEFAULT_SCALING). rejoin_token is what the last
+# host gave this machine (NetProtocol.build_hello); saved, so a restarted game can rejoin a run.
 
 const CONFIG_PATH: = "user://lan_coop.cfg"
 const SECTION: = "lan_coop"
@@ -25,6 +26,7 @@ var last_difficulty: = 0
 var last_choice_time: = NetProtocol.DEFAULT_CHOICE_TIME
 var last_scaling_preset: = NetProtocol.SCALING_PRESET_NORMAL
 var scaling: = NetProtocol.DEFAULT_SCALING.duplicate()
+var rejoin_token: = 0
 
 
 func load_config() -> void :
@@ -37,6 +39,7 @@ func load_config() -> void :
 		last_difficulty = int(file.get_value(SECTION, "last_difficulty", last_difficulty))
 		last_choice_time = int(file.get_value(SECTION, "last_choice_time", last_choice_time))
 		last_scaling_preset = int(file.get_value(SECTION, "last_scaling_preset", last_scaling_preset))
+		rejoin_token = int(file.get_value(SECTION, "rejoin_token", rejoin_token))
 		for key in scaling:
 			scaling[key] = clamp(float(file.get_value(SCALING_SECTION, key, scaling[key])), 0.0, NetProtocol.MAX_SCALING_VALUE)
 
@@ -60,6 +63,7 @@ func save_config() -> void :
 	file.set_value(SECTION, "last_difficulty", last_difficulty)
 	file.set_value(SECTION, "last_choice_time", last_choice_time)
 	file.set_value(SECTION, "last_scaling_preset", last_scaling_preset)
+	file.set_value(SECTION, "rejoin_token", rejoin_token)
 	for key in scaling:
 		file.set_value(SCALING_SECTION, key, scaling[key])
 	var _err = file.save(CONFIG_PATH)

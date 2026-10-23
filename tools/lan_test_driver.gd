@@ -11,7 +11,9 @@ extends Node
 #         and the clients' acks, leaves
 #   join: joins the first discovered game, picks and readies, enters the wave with the host,
 #         moves right, opens its pause menu and checks it stands still, then (with
-#         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, or stays and
+#         CLIENT_QUITS=1) quits the wave, (with CLIENT_QUITS=2) closes the game, (with
+#         CLIENT_QUITS=3) loses the connection unnoticed by the host and rejoins, (with
+#         CLIENT_QUITS=4) loses it with the host noticing and rejoins, or stays and
 #         logs the host's run verdict, follows the host back to the lobby and logs the
 #         wave-end state it received
 #   (host and join) WAVES=n: n waves with upgrades and shop in between, then both check the
@@ -46,6 +48,7 @@ extends Node
 #   (any role, also none) TEST_VOLUME=x: master volume at x (default 0.2) of the saved one
 #   (host) STALE_DIE_ARGS=1: at t=16 Utils.default_die_args.from is a freed node, as vanilla
 #         leaves it (with CLIENT_QUITS=2: the host kills the left client's player)
+#   (host) HOST_QUITS=1: closes the game mid-wave (t=18); the client ends the session, no rejoin
 #   (host) MORTAL=1: players can be hit; at t=16 an enemy is placed on the host player
 #   (host) at t=16 an enemy burns with spread 2 next to two others (burn_spread_test); log_sync
 #         logs the session's physics quirk fixes and enemy contacts on player hurtboxes
@@ -116,6 +119,24 @@ func menus():
 	return s.find_node("Menus", true, false)
 
 
+# Test-only: the connection breaks as if the cable was pulled (no goodbye). tell_host = false
+# keeps the old ENet peer alive but unpolled, so the host only notices when the client rejoins
+# (or at ENet's timeout); true closes it, so the host sees the disconnect first.
+var dropped_peer = null
+
+
+func drop_connection(tell_host: bool) -> void :
+	var net = get_node("/root/LanNet")
+	dropped_peer = get_tree().network_peer
+	if tell_host:
+		dropped_peer.close_connection()
+	else:
+		net._peer = null
+	get_tree().network_peer = null
+	print("[TEST] ", role, " dropped the connection at t=", stepify(t, 0.1), " tell_host=", tell_host, " scene=", scene_name())
+	net._on_server_disconnected()
+
+
 func log_lobby(tag: String) -> void :
 	shot(tag)
 	var net = get_node("/root/LanNet")
@@ -124,7 +145,7 @@ func log_lobby(tag: String) -> void :
 		print("[TEST] ", tag, " scene=", scene_name(), " run_in_progress=", net.run_in_progress, " settings=", net.lobby_settings)
 		return
 	var lobby = m.get_node("LanLobby")
-	print("[TEST] ", tag, " page=", m._current_page.name, " run_in_progress=", net.run_in_progress, " settings=", net.lobby_settings, " players=", net.players.size(), " coop_players=", CoopService.connected_players)
+	print("[TEST] ", tag, " page=", m._current_page.name, " joined=", net.joined, " index=", net.local_player_index, " reconnecting=", net.is_reconnecting(), " run_in_progress=", net.run_in_progress, " settings=", net.lobby_settings, " players=", net.players.size(), " coop_players=", CoopService.connected_players)
 	print("[TEST] ", tag, " hint='", tr(lobby._hint_label.text), "' start_disabled=", lobby._start_button.disabled)
 
 
@@ -867,6 +888,11 @@ func _host_step() -> void :
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
+			if OS.get_environment("HOST_QUITS") == "1":
+				# The game is closed mid-run: the client must see the host's goodbye, not reconnect.
+				print("[TEST] host closing the game at t=", stepify(t, 0.1))
+				get_tree().quit()
+				return
 			var main = get_tree().current_scene
 			# Fresh args: vanilla's Utils.default_die_args may hold a freed killer.
 			main._players[2].die(Entity.DieArgs.new())
@@ -1189,6 +1215,11 @@ func shop_actions(delta: float) -> void :
 		shop_step = 3
 		var _e = get_tree().change_scene(MenuData.title_screen_scene)
 		return
+	if shop_step == 0 and shop_wait >= delay and role != "host" and OS.get_environment("SHOP_QUIT") == "2":
+		# The connection breaks in the shop; the client rejoins and the host doesn't wait for it.
+		shop_step = 3
+		drop_connection(false)
+		return
 	if shop_step == 0 and shop_wait >= delay:
 		var container = shop._get_shop_items_container(0)
 		var own = RunData.players_data[0]
@@ -1308,7 +1339,7 @@ func log_run_states(tag: String) -> void :
 
 func _client_step() -> void :
 	var m = menus()
-	var quits = OS.get_environment("CLIENT_QUITS") == "1"
+	var quits = OS.get_environment("CLIENT_QUITS") in ["1", "3", "4"]
 	match step:
 		0:
 			next_t = 4.0
@@ -1386,7 +1417,10 @@ func _client_step() -> void :
 				# The process ends mid-wave (crash, closed window): the host sees a disconnect.
 				get_tree().quit()
 				return
-			if quits:
+			if OS.get_environment("CLIENT_QUITS") in ["3", "4"]:
+				# Back in the lobby by step 9 (the first attempt is 2 s later).
+				drop_connection(OS.get_environment("CLIENT_QUITS") == "4")
+			elif quits:
 				# Quit the wave (like the pause menu's Quit): the host's copy of this player dies.
 				var _e = get_tree().change_scene(MenuData.title_screen_scene)
 			else:

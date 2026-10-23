@@ -3,6 +3,7 @@ extends Control
 # Title screen page for joining: games found on the LAN (LanNet.discovery), plus a manual
 # "ip" / "ip:port" field as a fallback for networks where broadcasts don't arrive.
 # Pressing a found game or Connect joins; lobby_requested fires once the host accepted.
+# While LanNet reconnects after a lost connection, the page shows it as connecting; Back cancels.
 
 signal back_button_pressed
 signal lobby_requested
@@ -43,7 +44,7 @@ func init() -> void :
 	_address_edit.text = _net.config.last_ip
 	if _net.config.port != NetProtocol.DEFAULT_PORT:
 		_address_edit.text += ":" + str(_net.config.port)
-	_set_connecting(_net.active and not _net.joined)
+	_set_connecting((_net.active and not _net.joined) or _net.is_reconnecting())
 	if not _connecting:
 		show_status("")
 	_net.discovery.start_listening()
@@ -240,6 +241,7 @@ func _on_ConnectButton_pressed() -> void :
 func _on_BackButton_pressed() -> void :
 	if _net != null and _connecting:
 		_set_connecting(false)
+		_net.cancel_reconnect()
 		_net.leave()
 	if is_instance_valid(focus_before_created):
 		focus_before_created.grab_focus()
@@ -262,7 +264,11 @@ func _on_LanNet_joined_lobby() -> void :
 func _on_LanNet_session_ended(reason: String) -> void :
 	if not visible or not _connecting:
 		return
+	_net.last_end_reason = ""
+	# A reconnect attempt failed; LanNet tries again.
+	if _net.is_reconnecting():
+		show_status(reason)
+		return
 	_set_connecting(false)
 	show_status(reason, not reason.empty())
-	_net.last_end_reason = ""
 	_connect_button.grab_focus()

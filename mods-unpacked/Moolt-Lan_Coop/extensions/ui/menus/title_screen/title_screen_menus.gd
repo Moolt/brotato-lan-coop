@@ -83,7 +83,7 @@ func _restore_lan_page() -> void :
 	elif not _lan_net.last_end_reason.empty():
 		switch(_main_menu, _multiplayer_menu)
 		switch(_multiplayer_menu, _join_menu)
-		_join_menu.show_status(_lan_net.last_end_reason, true)
+		_join_menu.show_status(_lan_net.last_end_reason, not _lan_net.is_reconnecting())
 		_lan_net.last_end_reason = ""
 	elif _lan_net.active:
 		# Still connecting (cannot normally happen on a fresh title screen): start over.
@@ -116,5 +116,5 @@ func _on_LanNet_session_ended(reason: String) -> void :
 		return
 	switch(_lobby, _lobby_back_page)
 	if not reason.empty():
-		_lobby_back_page.show_status(reason, true)
+		_lobby_back_page.show_status(reason, not _lan_net.is_reconnecting())
 		_lan_net.last_end_reason = ""

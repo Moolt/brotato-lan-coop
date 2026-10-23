@@ -1,9 +1,10 @@
 extends Node
 
 # /root/LanNet/Discovery: finds games on the local network without typing an IP.
-# Host: while a lobby is open (hosting, no run in progress), broadcasts a small UDP beacon
-# every second to DISCOVERY_PORT. Client: while the join page is open, listens on that port
-# and keeps a list of the games heard from in the last GAME_TIMEOUT seconds.
+# Host: while hosting (also during a run, so a restarted client finds the game to rejoin it),
+# broadcasts a small UDP beacon every second to DISCOVERY_PORT. Client: while the join page is
+# open, listens on that port and keeps a list of the games heard from in the last GAME_TIMEOUT
+# seconds.
 
 signal games_changed()
 
@@ -66,7 +67,7 @@ func _sort_by_name(a: Dictionary, b: Dictionary) -> bool:
 
 func _process_beacon(delta: float) -> void :
 	var net = get_parent()
-	if not net.is_host or net.run_in_progress:
+	if not net.is_host:
 		if _beacon_peer != null:
 			_beacon_peer.close()
 			_beacon_peer = null
