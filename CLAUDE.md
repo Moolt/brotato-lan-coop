@@ -25,6 +25,7 @@ Two repos side by side. `brotato-lan-coop/` (public, this file lives there) hold
 | Every hardcoded 4-player array / P1–P4 node | [docs/brotato/hardcoded-4-players.md](docs/brotato/hardcoded-4-players.md) |
 | ModLoader 6.3.0 API, extension rules, pitfalls | [docs/brotato/modding.md](docs/brotato/modding.md) |
 | The mod itself: LanNet, lobby, scaling, LanWaveSync events/snapshot, between-wave flow (solo view, shop, merge), extension list, pitfalls | [docs/lan-coop-mod.md](docs/lan-coop-mod.md) |
+| Game modes beyond co-op: ideas, effort, how to keep them isolated, order | [docs/lan-coop-modes.md](docs/lan-coop-modes.md) |
 | Testing: throwaway game copy, test driver roles and options, regression set, log check | [docs/testing.md](docs/testing.md) |
 
 Line numbers in the docs are approximate. Grep for the function name to find the exact line.

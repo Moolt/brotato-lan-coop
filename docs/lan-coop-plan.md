@@ -126,6 +126,4 @@ New mechanics, settings and modes (Step 9). Each needs a design decision first. 
 - [x] **Upgrade countdown.** One choice time for the whole between-wave phase (level-ups, crates, shop), 90 s from each machine's solo view: shown in the wave timer's place and on Go, red for the last 10 s; at 0 the machine picks random upgrades, takes crate items and presses Go. The host goes on 10 s later without missing results.
 - [ ] **Rejoin after a lost connection** (not after death). Today a disconnect kills the player and it stays dead in later waves. Instead: keep the player idle or protected for a grace period, let the same machine reconnect into its old slot (match by name or a session token from the hello), send it the current run and drop it into the running wave or the between-wave phase. Quitting to the lobby and rejoining with the next wave already works.
 - [x] **What LAN runs count for:** the own character on each machine; in-wave challenges and counters for the team (design decision, 2026-10-21).
-- [ ] **Game modes:**
-  - [ ] Teams: players split into teams in the lobby, each sharing materials, compared by a score at the end (kills, waves survived, damage).
-  - [ ] Last man standing: the run goes on while players die off; the last one alive wins. Needs decisions on spectating, how waves scale as players drop out, and whether players can hurt each other.
+- [ ] **Game modes:** ideas, effort, architecture (mode objects, no mode checks in shared code) and order in [lan-coop-modes.md](lan-coop-modes.md).
