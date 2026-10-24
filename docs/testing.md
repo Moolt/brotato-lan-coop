@@ -72,6 +72,11 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `PERF_LOG=1` | once a second in a wave: enemies, physics bodies/pairs, physics and process time, FPS, enemies culled by the cap (`removed_for_perf`) (`*_curve` lines) |
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
 | `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |
+| `JOIN_ADDR=ip:port`, `PLAYER_NAME=s`, `PICK=n` | join: join that address instead of the first discovered game (e.g. through `tools/netsim.py`), the client's name, its nth character |
+| `EXPECT=n` | host: wait (up to t=120) until n players are in the lobby and ready before Start; the later steps keep their timing relative to Start, and the host's and client's first wave step wait until 3 s into the wave |
+| `TARGET_FPS=n` | any role: `Engine.target_fps`, enforced every frame (the game sets its own limit after startup). For many instances on one PC |
+
+`WAVES=n` counts from the run's first wave, so it combines with `START_WAVE`. When the host's end steps are still in a wave (`WAVES=n` ends in wave n+1), it quits instead of calling `net.leave()`.
 
 ### Helpers and checks
 - Between waves, every frame: `pick_upgrades` (first upgrade, or take the crate item on the host and recycle it on the client; logs the picked stat per player), `shop_actions` (buy one item, lock another, Go; the client goes Back and Go again; the host is last), `end_screen_actions` (log the end screen, Exit: the client first).
@@ -123,6 +128,12 @@ Each takes about 1–2 min.
 ## Two machines
 Host here, join on the second PC (same layout, its own test copy from `tools/make_test_copy.sh`, the driver copied over with `scp`). Start the client over `ssh` with `DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.*)` (GNOME Wayland session), pass the test options in that environment too, and start the host 1 s later; discovery finds the host across the LAN. Run `ping` alongside for RTT. Interface byte counters are useless for bandwidth when the other PC syncs files in the background; work it out from `snapshot_bytes` × 20 Hz.
 
+## Many real players
+`tools/run12.sh` (with `SCRATCH=<scratchpad>`) runs the host and `ND` clients (default 6) on this PC and `NN` (default 5) on the second PC, every client in its own user dir (`XDG_DATA_HOME`) and joining by `JOIN_ADDR` through `tools/netsim.py`, a UDP proxy with one port and link profile per client: `lan`, `wifi` (2–8 ms, 0.3 % loss, occasional 20–60 ms holds), `wifips` (power saving: a 50–170 ms hold about every second, 1 % loss), `bad` (15–45 ms, 3 % loss, 80–250 ms holds, 1 % reorder). Packets of a flow stay in order, so jitter arrives as bursts like on WiFi. Clients walk (`CLIENT_WALK=1`) and log `JITTER_LOG`; pass `PERF_LOG=1`, `WAVES=n`, `HOST_EXTRA="START_WAVE=18 WAVE_DURATION=60"`, `CLIENT_ENV=TARGET_FPS=60`. Results of 2026-10-24 are in [lan-coop-plan.md](lan-coop-plan.md#performance).
+- **Host performance needs the host alone on its PC.** Six client instances on the host's PC (even capped at 60 FPS) push the host's physics ticks past 16.7 ms and into catch-up (2–8 ticks per frame, 5–45 FPS). With the clients elsewhere (`ND=0`, fakes for the other slots: `HOST_EXTRA="FAKES=6 EXPECT=12"`) the same wave runs at ~200 FPS. Measure the host with `ND=0`; use `ND>0` for sync and flow checks.
+- Cap the clients with `CLIENT_ENV=TARGET_FPS=60`; uncapped instances run at several hundred FPS and starve each other and the host.
+- The second PC (laptop, RTX 3060 Mobile) crashed in the NVIDIA GL driver (SIGABRT) with 10 instances open; 5 run fine. Before a run, check that no instance of an earlier run is left there.
+
 ## Manual test by the user
 Two windows, `--resolution 1280x720 --position 0,0` and `--position 1280,0`, no role argument (the driver stays idle), started with `nohup` and logging to files. Check the logs afterwards.
 
@@ -131,6 +142,8 @@ Two windows, `--resolution 1280x720 --position 0,0` and `--position 1280,0`, no 
 - Stopping instances: list the PIDs in one command (`ps -eo pid,args | grep "[G]odot_v3.7-dev1_x11.64 --path game"`) and kill them in a separate one. In the same command line as the game's invocation the pattern matches the shell itself, which then kills itself. Don't `pkill -f` with such a pattern either.
 - `rm` of a glob after a `cd` in the same command is refused by Claude Code's safety check (the whole command doesn't run). Screenshots overwrite by name, so there is no need to clear them.
 - Instances on one PC: a second join-page listener can't bind the discovery port (the page says so; manual join works), and clients load within 0.1 s, so load timeouts can't be hit.
+- A kill command whose `grep`/`pkill -f` pattern contains a script name (e.g. `run12.sh`) also matches the shell running it, which then dies before the rest of the command (e.g. the `ssh` to the second PC) runs. Collect PIDs first, kill in a separate command, on each machine.
+- If a player leaves the lobby while Start waits for the run acks, the built run is dropped (every lobby change makes it stale) and the host has to press Start again; the driver doesn't.
 
 ## Acceptance checks (per area)
 - **Lobby:** names, characters and ready flags show on every instance; Start is disabled until all players are ready.

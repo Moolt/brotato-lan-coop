@@ -61,6 +61,12 @@ extends Node
 #         Go at 13 s left, so its waiting overlay counts down); =2: no upgrade
 #         picks either; =3: as 2, and the client's choice time never ends (the host goes on
 #         without it). choice_watch logs and screenshots the countdown at 13, 8 and 3 s left
+#   (join) JOIN_ADDR=ip:port: joins that address instead of the first discovered game (e.g. through
+#         a delay/jitter proxy); PLAYER_NAME=s: the client's name; PICK=n: its nth character
+#   (host) EXPECT=n: waits (up to t=120) for n players, all ready, before Start; later steps keep
+#         their timing relative to the Start
+#   (host and join) WAVES=n counts from the run's first wave, so it combines with START_WAVE
+#   (any role) TARGET_FPS=n: Engine.target_fps (many instances on one PC)
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -87,6 +93,9 @@ var enemy_contacts: = 0
 var enemy_bullet_hits: = 0
 # HIT_LOG=1: the wave scene whose players are watched.
 var hit_log_scene = null
+# The run's first wave (WAVES=n counts from it, also with START_WAVE).
+var first_wave: = 0
+var waited_for_wave: = false
 
 
 func _ready() -> void :
@@ -174,14 +183,31 @@ func client_settings_check(lobby) -> void :
 
 
 func pick_and_ready(lobby, nth: = 0) -> void :
-	lobby._on_CharacterGrid_element_pressed(first_element(lobby._character_grid, nth))
-	yield(get_tree().create_timer(0.3), "timeout")
-	lobby._on_WeaponGrid_element_pressed(first_element(lobby._weapon_grid))
-	yield(get_tree().create_timer(0.3), "timeout")
+	var character = first_element(lobby._character_grid, nth)
+	lobby._on_CharacterGrid_element_pressed(character)
+	# The weapon grid follows the host's lobby state, which takes a round trip (slow links).
+	var net = get_node("/root/LanNet")
+	for _i in 25:
+		yield(get_tree().create_timer(0.2), "timeout")
+		if net.get_local_player() != null and net.get_local_player().character_id == character.item.my_id:
+			break
+	yield(get_tree().create_timer(0.2), "timeout")
+	# Characters with a fixed weapon have no weapon to pick.
+	var weapon = first_element(lobby._weapon_grid)
+	if weapon != null:
+		lobby._on_WeaponGrid_element_pressed(weapon)
+		for _i in 25:
+			yield(get_tree().create_timer(0.2), "timeout")
+			if net.get_local_player().weapon_id == weapon.item.my_id:
+				break
 	lobby._on_ReadyButton_pressed()
 
 
 func _process(delta: float) -> void :
+	# TARGET_FPS=n: frame cap, e.g. for many instances on one PC (real players' PCs render on their
+	# own). Every frame: the game applies its own FPS setting after startup.
+	if OS.get_environment("TARGET_FPS") != "" and Engine.target_fps != int(OS.get_environment("TARGET_FPS")):
+		Engine.target_fps = int(OS.get_environment("TARGET_FPS"))
 	hit_log_watch()
 	if role == "":
 		return
@@ -808,6 +834,22 @@ func _host_step() -> void :
 				net._broadcast_lobby_state()
 			next_t = 10.0
 		4:
+			var expect = int(OS.get_environment("EXPECT"))
+			if expect > 0 and t < 120.0:
+				var ready = 0
+				for entry in net.players:
+					if entry.ready:
+						ready += 1
+				if ready < expect or net.players.size() < expect:
+					if int(t) % 5 == 0 and fmod(t, 1.0) < 0.26:
+						print("[TEST] host waiting for players: ", net.players.size(), " joined, ", ready, " ready of ", expect, " t=", stepify(t, 0.1))
+					step -= 1
+					next_t = t + 0.25
+					return
+			if expect > 0:
+				print("[TEST] host starting with ", net.players.size(), " players at t=", stepify(t, 0.1))
+				# The later steps' times are relative to the usual Start at t=10.
+				t = 10.0
 			log_lobby("host_before_start")
 			DebugService.invulnerable = OS.get_environment("MORTAL") != "1"
 			DebugService.custom_wave_duration = int(OS.get_environment("WAVE_DURATION")) if OS.get_environment("WAVE_DURATION") != "" else 20
@@ -823,6 +865,18 @@ func _host_step() -> void :
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
+			# 3 s into the wave (with EXPECT, slow clients can take a while to load).
+			var wave = get_tree().current_scene
+			if wave == null or wave.filename != MenuData.game_scene or wave._wave_timer.wait_time - wave._wave_timer.time_left < 3.0:
+				if t < 200.0:
+					step -= 1
+					next_t = t + 0.1
+					waited_for_wave = true
+					return
+			if waited_for_wave:
+				t = 13.0
+			if first_wave == 0:
+				first_wave = RunData.current_wave
 			aim_test_setup()
 			log_sync("host_w13")
 			Input.action_press("button_move_left_7")
@@ -912,6 +966,10 @@ func _host_step() -> void :
 		10:
 			log_sync("host_w23")
 			var main = get_tree().current_scene
+			if main.filename != MenuData.game_scene:
+				# The run is already lost (MORTAL=1).
+				next_t = 24.0
+				return
 			main._pause_menu.unpause()
 			if OS.get_environment("KILL_ALL") == "1":
 				# Everyone dies: the run is lost.
@@ -937,6 +995,12 @@ func _host_step() -> void :
 				step = 1
 				t = 8.5
 				next_t = 9.0
+				return
+			if scene_name() == MenuData.game_scene:
+				# Still in a wave (WAVES=n ends in wave n+1): leave() would reset RunData under the
+				# running wave; quit as closing the game would.
+				print("[TEST] host quitting in the wave")
+				get_tree().quit()
 				return
 			net.leave()
 			log_saved_run("host_after_session")
@@ -1265,7 +1329,9 @@ func waves_target() -> int:
 # True 3 s into wave n; otherwise checks again in half a second.
 func wait_for_wave(n: int) -> bool:
 	var main = get_tree().current_scene
-	if main != null and main.filename == MenuData.game_scene and RunData.current_wave == n and main._wave_timer.time_left > 0 and main._wave_timer.time_left < main._wave_timer.wait_time - 3.0:
+	# A live LanWaveSync: a client still in the last wave's upgrade screen has the new run's wave
+	# number before its new wave scene loads.
+	if main != null and main.filename == MenuData.game_scene and get_node("/root/LanNet").wave_sync != null and not main._cleaning_up and RunData.current_wave == n + max(first_wave, 1) - 1 and main._wave_timer.time_left > 0 and main._wave_timer.time_left < main._wave_timer.wait_time - 3.0:
 		return true
 	next_t = t + 0.5
 	return false
@@ -1345,11 +1411,19 @@ func _client_step() -> void :
 			next_t = 4.0
 		1:
 			m._main_menu.left_container.get_node("LanMultiplayerButton").emit_signal("pressed")
-			m.get_node("LanMultiplayerMenu")._name_edit.text = "ClientPlayer"
-			m.get_node("LanMultiplayerMenu")._on_NameEdit_text_changed("ClientPlayer")
+			var client_name = OS.get_environment("PLAYER_NAME") if OS.get_environment("PLAYER_NAME") != "" else "ClientPlayer"
+			m.get_node("LanMultiplayerMenu")._name_edit.text = client_name
+			m.get_node("LanMultiplayerMenu")._on_NameEdit_text_changed(client_name)
 			m.get_node("LanMultiplayerMenu")._join_button.emit_signal("pressed")
 			next_t = t + 1.5
 		2:
+			if OS.get_environment("JOIN_ADDR") != "":
+				var join_menu = m.get_node("LanJoinMenu")
+				join_menu._address_edit.text = OS.get_environment("JOIN_ADDR")
+				join_menu._on_ConnectButton_pressed()
+				print("[TEST] join by address ", OS.get_environment("JOIN_ADDR"), " at t=", stepify(t, 0.1))
+				next_t = t + 2.5
+				return
 			# Over WiFi with power saving, broadcast beacons can take a few seconds to arrive.
 			var row = m.get_node("LanJoinMenu")._first_row()
 			if row == null and t < 10.0:
@@ -1361,10 +1435,33 @@ func _client_step() -> void :
 				row.emit_signal("pressed")
 			next_t = t + 1.5
 		3:
-			pick_and_ready(m.get_node("LanLobby"), 1)
+			if m == null or not m.get_node("LanLobby").visible:
+				# Still connecting (a slow link or a busy host).
+				if t < 60.0:
+					step -= 1
+					next_t = t + 0.5
+					return
+			pick_and_ready(m.get_node("LanLobby"), int(OS.get_environment("PICK")) if OS.get_environment("PICK") != "" else 1)
 			var _e = get_tree().create_timer(1.0).connect("timeout", self, "client_settings_check", [m.get_node("LanLobby")])
 			next_t = 14.0
 		4:
+			# 3.5 s into the wave (the host may start later than usual, e.g. with EXPECT).
+			var wave = get_tree().current_scene
+			if not get_node("/root/LanNet").active:
+				# The host ended the session before a wave (e.g. the lobby role).
+				print("[TEST] client: session over before a wave, quitting")
+				get_tree().quit()
+				return
+			if wave == null or wave.filename != MenuData.game_scene or wave._wave_timer.wait_time - wave._wave_timer.time_left < 3.5:
+				if t < 180.0:
+					step -= 1
+					next_t = t + 0.1
+					waited_for_wave = true
+					return
+			if waited_for_wave:
+				t = 14.0
+			if first_wave == 0:
+				first_wave = RunData.current_wave
 			aim_test_setup()
 			log_sync("client_w14")
 			Input.action_press("button_move_right_7")
