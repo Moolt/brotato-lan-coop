@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 20
+const PROTOCOL_VERSION: = 21
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -72,7 +72,14 @@ const CHOICE_TIMES: = [0, 45, 60, 90, 120]
 const CHOICE_GRACE: = 10.0
 
 # Keys a client may change on its own lobby entry.
-const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready"]
+const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready", "team"]
+# Teams of the modes that have them (lobby entry "team").
+const TEAM_COUNT: = 2
+
+# The game mode (lobby_settings.mode, an id of modes/mode_registry.gd).
+const DEFAULT_MODE: = "coop"
+# The host sends a changed mode state at most this often (seconds).
+const MODE_STATE_INTERVAL: = 0.1
 
 # ProgressData arrays replaced by get_multiplayer_unlocks() while a session is active.
 const UNLOCK_KEYS: = [
@@ -164,6 +171,7 @@ static func new_player_entry(peer_id: int, player_index: int, player_name: Strin
 		"weapon_id": "", 
 		"ready": false, 
 		"connected": true, 
+		"team": player_index % TEAM_COUNT, 
 	}
 
 
@@ -177,6 +185,7 @@ static func default_lobby_settings() -> Dictionary:
 		"scaling": DEFAULT_SCALING.duplicate(), 
 		"choice_time": DEFAULT_CHOICE_TIME, 
 		"scaling_preset": SCALING_PRESET_NORMAL, 
+		"mode": DEFAULT_MODE, 
 	}
 
 

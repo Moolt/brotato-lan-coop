@@ -78,6 +78,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `CLIENT_WALK=2` | join: stop and go (0.6 s walking, 0.6 s standing, the next direction each time) |
 | `OVERSHOOT_LOG=1` | host: per remote player and stop, how far the host showed the player past where the client stopped (along its last direction), every 5 s (median, p90, max px) |
 | `LOAD_STALL=s` | join: the main thread blocks s seconds when the first wave's `LanWaveSync` enters the tree, as a slow load would (the host's 15 s load timeout) |
+| `MODE=id` | host: the run's game mode (`lobby_settings.mode`, an id from `modes/mode_registry.gd`), not remembered. `log_sync` and `log_wave_end` log the mode's id, serial and state on both sides (`mode=` lines; the draft pool as its size). With the default 3 players (host, client, fake) the fake dies at t=18: in the elimination modes it is out from then on; in Team Race host and fake are one team, the client the other |
 | `PET_TEST=1` | host: at t=16 a Blazemander for player 0 and a Bonk Dog for player 1; 5 s into the next wave both sides log every pet (owner, position, net id) |
 | `RELOAD_RACE=1` | host and join: when the wave-end state arrives, every player is queued for a stats reload in main's `StatsManager` (as a stat change in the wave's last frames leaves it); without the drop before the solo view this raised script errors under the mod's path |
 

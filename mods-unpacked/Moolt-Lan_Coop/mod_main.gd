@@ -39,6 +39,7 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/utils.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/zone_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/shop/base_shop.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/shop/shop_item.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/progress_data_loader_v3.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/run/base_end_run.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("ui/menus/run/end_run.gd"))
@@ -46,6 +47,7 @@ func _init() -> void :
 
 func _ready() -> void :
 	load(mod_dir_path.plus_file("net/net_translations.gd")).register()
+	load(mod_dir_path.plus_file("modes/mode_registry.gd")).register_translations()
 
 	# The root is busy setting up autoloads at this point, so add LanNet deferred.
 	var net_manager: Node = load(mod_dir_path.plus_file("net/net_manager.gd")).new()

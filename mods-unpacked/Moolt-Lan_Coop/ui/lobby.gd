@@ -22,6 +22,7 @@ const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 const SettingsPage = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/settings_page.gd")
+const ModeRegistry = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/mode_registry.gd")
 
 const INVENTORY_SCENE = preload("res://ui/menus/shop/inventory.tscn")
 const CHARACTER_PANEL_SCENE = preload("res://ui/menus/ingame/character_panel_ui.tscn")
@@ -59,6 +60,8 @@ var _player_list: VBoxContainer
 var _leave_button: Button
 var _settings_label: Label
 var _settings_button: Button
+# Modes with teams: everyone switches their own team here (the rows show the team colour).
+var _team_button: Button
 var _settings_page: Control
 var _hint_label: Label
 var _start_button: Button
@@ -171,8 +174,12 @@ func _build_ui() -> void :
 	_player_list.add_constant_override("separation", 4)
 	player_scroll.add_child(_player_list)
 
+	_team_button = UiKit.new_button("LAN_SWITCH_TEAM", Vector2(0, 64))
+	var _e = _team_button.connect("pressed", self, "_on_TeamButton_pressed")
+	left.add_child(_team_button)
+
 	_settings_button = UiKit.new_button("LAN_SETTINGS", Vector2(0, 64))
-	var _e = _settings_button.connect("pressed", self, "_on_SettingsButton_pressed")
+	_e = _settings_button.connect("pressed", self, "_on_SettingsButton_pressed")
 	left.add_child(_settings_button)
 
 	# Run settings summary (wraps to two lines if long).
@@ -396,6 +403,11 @@ func _refresh_settings() -> void :
 	var is_host: bool = _net.is_host
 	_start_button.visible = is_host
 	_settings_button.visible = is_host
+	_team_button.visible = ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE))
+	if _net.run_in_progress or _net.lobby_settings.get("in_wave", false):
+		_team_button.disable()
+	else:
+		_team_button.activate()
 	if not is_host:
 		_settings_page.close()
 	_settings_label.text = SettingsPage.get_summary(_net.lobby_settings)
@@ -614,6 +626,12 @@ func _new_player_row(entry: Dictionary) -> Control:
 	swatch.rect_min_size = Vector2(8, ROW_ICON_SIZE.y)
 	swatch.color = UiKit.get_player_color(entry.player_index)
 	row.add_child(swatch)
+	var teams: = ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE))
+	if teams:
+		var team_swatch: = ColorRect.new()
+		team_swatch.rect_min_size = Vector2(16, ROW_ICON_SIZE.y)
+		team_swatch.color = ModeRegistry.TEAM_COLORS[int(entry.get("team", 0)) % ModeRegistry.TEAM_COLORS.size()]
+		row.add_child(team_swatch)
 
 	var character: = LobbyRules.get_character(entry.character_id)
 	row.add_child(_new_row_icon(character.get_icon() if character != null else null))
@@ -765,6 +783,12 @@ func _on_SettingsPage_closed() -> void :
 # on the host; until Step 6 the clients stay in the lobby.
 func _on_StartButton_pressed() -> void :
 	var _err = _net.start_run()
+
+
+func _on_TeamButton_pressed() -> void :
+	var me = _net.get_local_player()
+	if me != null:
+		_net.set_local_player_info({"team": (int(me.get("team", 0)) + 1) % NetProtocol.TEAM_COUNT})
 
 
 func _on_ReadyButton_pressed() -> void :

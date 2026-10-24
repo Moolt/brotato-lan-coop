@@ -76,6 +76,8 @@ extends Node
 #         as a stat change in the wave's last frames leaves them
 #   (host) PET_TEST=1: at t=16 a pet item for player 0 and 1; 5 s into the next wave both sides
 #         log every pet (owner, position, net id)
+#   (host) MODE=id: the run's game mode (lobby_settings.mode, modes/mode_registry.gd), not
+#         remembered; log_sync and log_wave_end log the mode's id and state on both sides
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -844,6 +846,16 @@ func visible_children(node) -> int:
 	return n
 
 
+func log_mode(tag: String) -> void :
+	var net = get_node_or_null("/root/LanNet")
+	if net != null and net.mode != null:
+		var state: Dictionary = net.mode.state.duplicate()
+		# The draft pool is long; its size is enough.
+		if state.has("pool"):
+			state.pool = state.pool.size()
+		print("[TEST] ", tag, " mode=", net.mode.id, " serial=", net.mode.serial, " state=", to_json(state))
+
+
 func log_sync(tag: String) -> void :
 	var main = get_tree().current_scene
 	if main == null or main.filename != MenuData.game_scene:
@@ -854,6 +866,7 @@ func log_sync(tag: String) -> void :
 		var pd = RunData.players_data[p.player_index]
 		out.append("%d:%s%s hp=%d/%d spd=%d g=%d xp=%.1f lvl=%d" % [p.player_index, p.global_position.round(), " dead" if p.dead else "", p.current_stats.health, p.max_stats.health, p.get_move_speed(), pd.gold, pd.current_xp, pd.current_level])
 	var cam = main._camera
+	log_mode(tag)
 	print("[TEST] ", tag, " hurtbox_hits contacts=", enemy_contacts, " bullets=", enemy_bullet_hits)
 	print("[TEST] ", tag, " time_left=", stepify(main._wave_timer.time_left, 0.1), " players=", out, " cam_targets=", cam.targets.size(), " sync=", main.get_node_or_null("LanWaveSync") != null)
 	var spawner = main._entity_spawner
@@ -983,6 +996,9 @@ func _host_step() -> void :
 				net._broadcast_lobby_state()
 			if OS.get_environment("SCALING_PRESET") != "":
 				net.set_lobby_settings({"scaling_preset": int(OS.get_environment("SCALING_PRESET"))})
+			if OS.get_environment("MODE") != "":
+				net.lobby_settings.mode = OS.get_environment("MODE")
+				net._broadcast_lobby_state()
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
@@ -1521,6 +1537,7 @@ func log_wave_end(tag: String) -> void :
 	var net = get_node("/root/LanNet")
 	var RB = load("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.gd")
 	print("[TEST] ", tag, " wave_end_state=", net.wave_end_state, " acks=", net._wave_end_acks, " incoming=", not net._incoming_wave_end.empty())
+	log_mode(tag)
 	print("[TEST] ", tag, " digest=", RB.digest(), " summary=", to_json(RB.summarize()))
 
 

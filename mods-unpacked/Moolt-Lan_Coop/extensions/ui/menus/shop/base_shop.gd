@@ -7,6 +7,9 @@ extends "res://ui/menus/shop/base_shop.gd"
 # Vanilla's once-per-wave Go parts (hourglass, elite rolls, the wave increment) run on the host.
 # With a choice time Go reads "Ready (42)" (game/choice_countdown.gd) and is pressed when the
 # time runs out; from then on Go can't be taken back.
+# The game mode may fill the shop (LanMode.get_shop_items), take over purchases (the draft's
+# claims: intercept_shop_buy, then lan_complete_buy) and block rerolls. A player who is out of
+# the run (LanMode.is_player_out) presses Go at once.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const ShopWaitingOverlay = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/shop_waiting_overlay.gd")
@@ -34,6 +37,11 @@ func _ready() -> void :
 	# shop.gd's _ready (after this one) shows the Endless button before wave 20. Endless is
 	# run-wide but each machine would set it alone, so it stays off in a session.
 	call_deferred("_lan_hide_endless_button")
+	var lan_net = LanGame.get_lan_net()
+	lan_net.mode.on_shop_ready(self)
+	if lan_net.mode.is_player_out(lan_net.local_player_index):
+		ModLoaderLog.info("Out of the run: Go", LanGame.MOD_ID)
+		call_deferred("_on_GoButton_pressed", 0)
 
 
 func _lan_hide_endless_button() -> void :
@@ -139,3 +147,38 @@ func _lan_on_choice_overdue() -> void :
 		_pause_menu.unpause()
 	ModLoaderLog.info("Choice time is up: Go", LanGame.MOD_ID)
 	_on_GoButton_pressed(0)
+
+
+func fill_shop_items(player_locked_items: Array, player_index: int, just_entered_shop: bool = false) -> void :
+	var mode = LanGame.get_mode()
+	var items = mode.get_shop_items(self, ItemService.NB_SHOP_ITEMS - player_locked_items.size(), just_entered_shop) if mode != null else null
+	if items == null:
+		.fill_shop_items(player_locked_items, player_index, just_entered_shop)
+		return
+	_shop_items[player_index] = player_locked_items.duplicate()
+	_shop_items[player_index].append_array(items)
+
+
+func _on_RerollButton_pressed(player_index: int) -> void :
+	var mode = LanGame.get_mode()
+	if mode != null and mode.blocks_reroll():
+		return
+	._on_RerollButton_pressed(player_index)
+
+
+func on_shop_item_bought(shop_item: ShopItem, player_index: int) -> void :
+	var mode = LanGame.get_mode()
+	if mode != null and mode.intercept_shop_buy(self, shop_item):
+		return
+	.on_shop_item_bought(shop_item, player_index)
+
+
+# The mode allowed a purchase it took over (intercept_shop_buy).
+func lan_complete_buy(shop_item: ShopItem) -> void :
+	.on_shop_item_bought(shop_item, 0)
+
+
+# Only while RunData is the solo view: once the next wave's run came, the shop is done.
+func lan_on_mode_state_changed() -> void :
+	if is_inside_tree() and LanGame.get_lan_net().solo_view.active:
+		LanGame.get_mode().on_shop_state_changed(self)

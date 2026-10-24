@@ -10,6 +10,7 @@ signal closed()
 const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 const LobbyRules = preload("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
+const ModeRegistry = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/mode_registry.gd")
 
 const ROW_FONT = preload("res://resources/fonts/actual/base/font_26_outline.tres")
 const INFO_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
@@ -19,6 +20,8 @@ const WIDTH: = 860.0
 const OPTION_SIZE: = Vector2(440, 52)
 
 var _net: Node = null
+var _mode_option: OptionButton
+var _mode_info: Label
 var _zone_option: OptionButton
 var _difficulty_option: OptionButton
 var _choice_time_option: OptionButton
@@ -40,16 +43,14 @@ func _init() -> void :
 	title_gap.rect_min_size = Vector2(0, 16)
 	column.add_child(title_gap)
 
+	_mode_option = _add_row(column, "LAN_SETTING_MODE", "mode")
+	_mode_info = _add_info(column)
 	_zone_option = _add_row(column, "LAN_SETTING_ZONE", "zone")
 	_difficulty_option = _add_row(column, "LAN_SETTING_DANGER", "difficulty")
 	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
 	_scaling_option = _add_row(column, "LAN_SETTING_SCALING", "scaling_preset")
 	# What the preset adds per extra player, from the knobs the clients get.
-	_scaling_info = Label.new()
-	_scaling_info.add_font_override("font", INFO_FONT)
-	_scaling_info.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
-	_scaling_info.autowrap = true
-	column.add_child(_scaling_info)
+	_scaling_info = _add_info(column)
 
 	var spacer: = Control.new()
 	spacer.rect_min_size = Vector2(0, 12)
@@ -65,10 +66,10 @@ func open(net: Node) -> void :
 	_fill_options()
 	refresh()
 	show()
-	if _zone_option.disabled:
+	if _mode_option.disabled:
 		_back_button.grab_focus()
 	else:
-		_zone_option.grab_focus()
+		_mode_option.grab_focus()
 
 
 func close() -> void :
@@ -88,6 +89,9 @@ func refresh() -> void :
 		option.disabled = not editable
 		option.focus_mode = Control.FOCUS_ALL if editable else Control.FOCUS_NONE
 	# select() doesn't emit item_selected, so this never loops back.
+	var mode_id: String = settings.get("mode", NetProtocol.DEFAULT_MODE)
+	_mode_option.select(_get_mode_index(mode_id))
+	_mode_info.text = tr(ModeRegistry.get_description_key(mode_id))
 	_zone_option.select(_zone_option.get_item_index(settings.get("zone", 0)))
 	_difficulty_option.select(_difficulty_option.get_item_index(settings.get("difficulty", 0)))
 	_choice_time_option.select(_choice_time_option.get_item_index(settings.get("choice_time", 0)))
@@ -114,6 +118,9 @@ static func get_summary(settings: Dictionary) -> String:
 	var zone: = LobbyRules.get_zone(settings.get("zone", 0))
 	var difficulty: = LobbyRules.get_difficulty(settings.get("difficulty", 0))
 	var parts: = [TranslationServer.translate(zone.name) if zone != null else "?", difficulty.get_name_text() if difficulty != null else "?"]
+	var mode_id: String = settings.get("mode", NetProtocol.DEFAULT_MODE)
+	if mode_id != NetProtocol.DEFAULT_MODE:
+		parts.push_front(TranslationServer.translate(ModeRegistry.get_name_key(mode_id)))
 	var choice_time: = int(settings.get("choice_time", NetProtocol.DEFAULT_CHOICE_TIME))
 	if choice_time == 0:
 		parts.append(TranslationServer.translate("LAN_SUMMARY_NO_CHOICE_TIME"))
@@ -147,6 +154,10 @@ func _chain_focus() -> void :
 
 
 func _fill_options() -> void :
+	# OptionButton ids are ints: the mode's index in ModeRegistry.MODES.
+	_mode_option.clear()
+	for i in ModeRegistry.MODES.size():
+		_mode_option.add_item(tr(ModeRegistry.MODES[i].name), i)
 	_zone_option.clear()
 	for zone in ZoneService.zones:
 		_zone_option.add_item(tr(zone.name), zone.my_id)
@@ -162,7 +173,23 @@ func _fill_options() -> void :
 
 
 func _get_options() -> Array:
-	return [_zone_option, _difficulty_option, _choice_time_option, _scaling_option]
+	return [_mode_option, _zone_option, _difficulty_option, _choice_time_option, _scaling_option]
+
+
+func _get_mode_index(mode_id: String) -> int:
+	for i in ModeRegistry.MODES.size():
+		if ModeRegistry.MODES[i].id == mode_id:
+			return i
+	return 0
+
+
+func _add_info(column: VBoxContainer) -> Label:
+	var info: = Label.new()
+	info.add_font_override("font", INFO_FONT)
+	info.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	info.autowrap = true
+	column.add_child(info)
+	return info
 
 
 static func _percent(value: float) -> String:
@@ -189,5 +216,9 @@ func _add_row(column: VBoxContainer, text_key: String, setting: String) -> Optio
 
 
 func _on_option_item_selected(index: int, option: OptionButton, setting: String) -> void :
-	if _net != null:
-		_net.set_lobby_settings({setting: option.get_item_id(index)})
+	if _net == null:
+		return
+	var value = option.get_item_id(index)
+	if setting == "mode":
+		value = ModeRegistry.MODES[value].id
+	_net.set_lobby_settings({setting: value})

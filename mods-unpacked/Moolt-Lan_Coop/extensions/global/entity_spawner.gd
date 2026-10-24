@@ -5,6 +5,8 @@ extends "res://global/entity_spawner.gd"
 # enemy cap follows LanGame.get_enemy_cap_factor instead of vanilla's 1 + (n-1)/8.
 # In-wave sync (net/wave_sync.gd): on the host, every non-player spawn and every spawn marker is
 # reported to LanWaveSync. On clients, spawn markers only show; the entity comes from the host.
+# The game mode (LanGame.get_mode()) may move the players' start, change the enemy cap, and (host)
+# rework each queued wave group and react to spawns.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
@@ -24,11 +26,14 @@ func spawn_entity(scene: PackedScene, args: SpawnEntityArgs, data: Resource = nu
 		var radius: float = SPAWN_RADIUS_BASE + SPAWN_RADIUS_PER_PLAYER * player_count
 		var angle: float = TAU * args.player_index / player_count
 		args.position = _zone_max_pos / 2 + Vector2(radius, 0).rotated(angle)
+	if args.type == EntityType.PLAYER and LanGame.in_session():
+		args.position = LanGame.get_mode().get_player_spawn_position(args.player_index, args.position)
 	var entity = .spawn_entity(scene, args, data, source, charmed_by)
 	if args.type != EntityType.PLAYER and entity != null:
 		var wave_sync = LanGame.get_wave_sync()
 		if wave_sync != null and wave_sync.is_host:
 			wave_sync.on_entity_spawned(entity, scene, args.type, args.position, args.player_index, data, charmed_by)
+			LanGame.get_mode().on_entity_spawned(entity, data)
 	return entity
 
 
@@ -58,6 +63,12 @@ func on_group_spawn_timing_reached(group_data: WaveGroupData) -> void :
 		return
 	var max_enemies: int = _current_wave_data.max_enemies
 	var vanilla_factor: = 1.0 + (player_count - 1) / 8.0
-	_current_wave_data.max_enemies = int(round(max_enemies * LanGame.get_enemy_cap_factor(player_count) / vanilla_factor))
+	var mode = LanGame.get_mode()
+	var cap_factor: float = mode.get_enemy_cap_factor(player_count, LanGame.get_enemy_cap_factor(player_count))
+	_current_wave_data.max_enemies = int(round(max_enemies * cap_factor / vanilla_factor))
+	var sizes_before: = [queue_to_spawn.size(), queue_to_spawn_bosses.size(), queue_to_spawn_trees.size()]
 	.on_group_spawn_timing_reached(group_data)
 	_current_wave_data.max_enemies = max_enemies
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host:
+		mode.on_group_queued(self, sizes_before)

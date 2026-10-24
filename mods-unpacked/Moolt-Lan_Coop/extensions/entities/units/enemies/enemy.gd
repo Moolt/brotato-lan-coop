@@ -26,3 +26,23 @@ func shoot() -> void :
 	if LanGame.is_wave_client():
 		return
 	.shoot()
+
+
+func update_target() -> void :
+	var mode = LanGame.get_mode()
+	var targets = mode.get_enemy_targets(self, players_ref) if mode != null else null
+	# Vanilla keeps the old target when it finds none; with no allowed player, all may be chased.
+	if targets == null or targets.empty():
+		.update_target()
+		return
+	var all_players: Array = players_ref
+	players_ref = targets
+	.update_target()
+	players_ref = all_players
+
+
+func _on_Hurtbox_area_entered(hitbox: Area2D) -> void :
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host and not LanGame.get_mode().can_hit(self, hitbox):
+		return
+	._on_Hurtbox_area_entered(hitbox)

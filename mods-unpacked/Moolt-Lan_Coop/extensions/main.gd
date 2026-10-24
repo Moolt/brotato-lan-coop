@@ -32,6 +32,9 @@ extends "res://main.gd"
 #   runs out, random upgrades are picked and crate items taken (game/choice_countdown.gd).
 #   At the run's end (lost or won; everyone dead ends the run, no
 #   retry screen) every machine shows the solo end screen for its own player.
+# - The game mode (LanGame.get_mode(), modes/lan_mode.gd) is asked at fixed points: enemy
+#   scaling, player deaths, the run's verdict, who gets picked-up materials and crates, players
+#   who sit out between waves. A mode can end the wave early on the host (lan_end_wave_now).
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const WaveSync = preload("res://mods-unpacked/Moolt-Lan_Coop/net/wave_sync.gd")
@@ -77,7 +80,8 @@ func _init() -> void :
 func _enter_tree() -> void :
 	if not LanGame.in_session() or get_node_or_null("%LifeContainerP5") != null:
 		return
-	LanGame.apply_enemy_scaling(RunData.get_player_count())
+	var player_count: int = RunData.get_player_count()
+	LanGame.apply_enemy_scaling(player_count, LanGame.get_mode().get_scaling_player_count(player_count))
 	if RunData.get_player_count() > VANILLA_HUD_SLOTS:
 		$UI / CoopUpgradesUI.is_coop_ui = false
 	for template in HUD_TEMPLATES:
@@ -229,7 +233,12 @@ func _on_player_health_updated(player: Player, current_val: int, max_val: int) -
 	player_life_bar.update_value(current_val, max_val)
 
 
+# The mode first: when this was the last death, vanilla cleans the room up right away and the
+# mode's verdict (adjust_run_states) must know about it.
 func _on_player_died(p_player: Player, _args: Entity.DieArgs) -> void :
+	var mode = LanGame.get_mode()
+	if mode != null:
+		mode.on_player_died(self, p_player, _args)
 	._on_player_died(p_player, _args)
 	var label = _players_ui[p_player.player_index].player_life_bar_container.get_node_or_null(NAME_LABEL_NAME)
 	if label != null:
@@ -282,12 +291,21 @@ func on_lock_coop_camera_changed(value: int) -> void :
 	.on_lock_coop_camera_changed(value)
 
 
+# The mode may split materials over fewer players (get_material_receivers; the copy below handles
+# that), and counts what was collected.
 func on_gold_picked_up(gold: Node, player_index: int) -> void :
-	if RunData.get_player_count() <= VANILLA_HUD_SLOTS:
+	var mode = LanGame.get_mode()
+	var receivers = mode.get_material_receivers(player_index) if mode != null and player_index >= 0 else null
+	if receivers == null and RunData.get_player_count() <= VANILLA_HUD_SLOTS:
+		if mode != null and player_index >= 0 and not gold.already_picked_up:
+			mode.on_materials_collected(player_index, gold.value)
 		.on_gold_picked_up(gold, player_index)
 		return
+	if receivers == null:
+		receivers = range(RunData.get_player_count())
 
-	# Copy of vanilla's on_gold_picked_up with player_gold/player_xp sized for every player.
+	# Copy of vanilla's on_gold_picked_up with player_gold/player_xp sized for every player, split
+	# over the receivers only.
 	if gold.already_picked_up:
 		return
 
@@ -337,6 +355,8 @@ func on_gold_picked_up(gold: Node, player_index: int) -> void :
 			for weapon in _players[player_index].current_weapons:
 				weapon._current_cooldown = 0
 
+		if mode != null:
+			mode.on_materials_collected(player_index, value)
 		var player_gold: = []
 		var player_xp: = []
 		player_gold.resize(RunData.get_player_count())
@@ -345,8 +365,9 @@ func on_gold_picked_up(gold: Node, player_index: int) -> void :
 			player_gold[i] = 0
 			player_xp[i] = 0
 		while value > 0:
-			player_gold[_next_gold_player] += 1
-			player_xp[_next_gold_player] += 1
+			var receiver: int = receivers[_next_gold_player % receivers.size()]
+			player_gold[receiver] += 1
+			player_xp[receiver] += 1
 			value -= 1
 			_next_gold_player = (_next_gold_player + 1) % RunData.get_player_count()
 
@@ -395,6 +416,13 @@ func clean_up_room() -> void :
 	if LanGame.in_session():
 		_wave_timer.set_physics_process(false)
 		_wave_timer.tick_timer.stop()
+		# The wave scene stays up for the upgrades (solo view, one player in RunData), so no
+		# player weapon may attack any more: in PvP modes the other players are still standing.
+		for player in _players:
+			if is_instance_valid(player):
+				for weapon in player.current_weapons:
+					weapon._current_target.clear()
+					weapon._range_shape.set_deferred("disabled", true)
 
 
 # clean_up_room starts with this. The host sends its verdict (wave failed, run lost, run won)
@@ -409,7 +437,21 @@ func _set_run_states() -> void :
 	._set_run_states()
 	var lan_net = LanGame.get_lan_net()
 	if lan_net != null and lan_net.active and lan_net.is_host:
+		var states: Array = lan_net.mode.adjust_run_states(self, [_is_wave_failed, _is_run_lost, _is_run_won])
+		_is_wave_failed = states[0]
+		_is_run_lost = states[1]
+		_is_run_won = states[2]
+		RunData.run_won = _is_run_won
 		lan_net.send_wave_cleanup([_is_wave_failed, _is_run_lost, _is_run_won])
+
+
+# Host: the mode ends the wave before its timer (a winner is decided, the boss fell). As if the
+# timer ran out: vanilla's end-of-wave effects, then clean_up_room with the mode's verdict.
+func lan_end_wave_now() -> void :
+	if _cleaning_up or _lan_is_client() or not LanGame.in_session():
+		return
+	_wave_timer.stop()
+	_on_WaveTimer_timeout()
 
 
 # Client: the host's wave ended (the timer ran out or everyone died).
@@ -447,12 +489,18 @@ func spawn_consumables(unit: Unit) -> void :
 
 
 # Host: a crate that waits for the end of the wave goes to a player chosen here (any player with
-# the share_coop_loot option); clients show it in that player's things-to-process icons.
+# the share_coop_loot option, unless the mode says otherwise); clients show it in that player's
+# things-to-process icons.
 func on_consumable_picked_up(consumable: Node, player_index: int) -> void :
 	var sizes: = []
 	for queue in _consumables_to_process:
 		sizes.append(queue.size())
+	var mode = LanGame.get_mode()
+	var share_coop_loot: bool = ProgressData.settings.share_coop_loot
+	if mode != null:
+		ProgressData.settings.share_coop_loot = mode.shares_crates()
 	.on_consumable_picked_up(consumable, player_index)
+	ProgressData.settings.share_coop_loot = share_coop_loot
 	var wave_sync = LanGame.get_wave_sync()
 	if wave_sync == null or not wave_sync.is_host:
 		return
@@ -558,7 +606,13 @@ func _lan_on_wave_end_ready() -> void :
 # (the wave's last level-ups, the applied wave-end run). Run in the solo view, those of players at
 # index 1+ would read RunData slots that no longer exist (script errors under the mod's path).
 # The wave's players and weapons go with the scene; the next wave builds them from the run.
+# Players also stop picking up items (the scene stays up through the upgrades; a pickup would run
+# item effects for players RunData no longer holds).
 func _lan_drop_stats_reloads() -> void :
+	for player in _players:
+		if is_instance_valid(player):
+			player._item_pickup_area.monitoring = false
+			player._item_attract_area.monitoring = false
 	_stats_manager._player_queue.clear()
 	_stats_manager._weapon_queue.clear()
 	for queue in _stats_manager._structure_queues:
@@ -637,6 +691,9 @@ func _lan_get_own_pending(lan_net: Node) -> Array:
 	var upgrades: = []
 	var pending: Array = lan_net.wave_end_state.get("pending", [])
 	var own: Array = pending[lan_net.local_player_index] if lan_net.local_player_index < pending.size() else [[], []]
+	# Out of the run (the mode): nothing to pick.
+	if lan_net.mode.is_player_out(lan_net.local_player_index):
+		own = [[], []]
 
 	var container = _things_to_process_player_containers[lan_net.local_player_index]
 	for consumable_data in container.consumables._elements.duplicate():

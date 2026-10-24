@@ -23,6 +23,7 @@ const RunBuilder = preload("res://mods-unpacked/Moolt-Lan_Coop/net/run_builder.g
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const SoloView = preload("res://mods-unpacked/Moolt-Lan_Coop/game/solo_view.gd")
 const SessionProgress = preload("res://mods-unpacked/Moolt-Lan_Coop/game/session_progress.gd")
+const ModeRegistry = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/mode_registry.gd")
 
 const HOST_PEER_ID: = 1
 # The local player's CoopService device in a session (_fill_coop_players).
@@ -118,12 +119,21 @@ var wave_sync: Node = null
 # True while this machine's in-wave pause menu is open (the game keeps running in a session).
 var pause_menu_open: = false
 
+# The run's game mode (modes/lan_mode.gd and its subclasses), never null. The host builds it from
+# lobby_settings.mode at Start; a client builds its own from the host's first mode state of the
+# run (_rpc_mode_state). Its state goes to the clients whenever it changed (at most every
+# NetProtocol.MODE_STATE_INTERVAL), its messages both ways (_rpc_mode_message).
+var mode: Reference = null
+var _mode_serial: = 0
+var _mode_state_sent_msec: = 0
+
 
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
 	LanGame.grow_autoload_arrays()
 	ModLoaderLog.info("Reloaded subclasses of extended scripts: %s" % to_json(LanGame.reload_stale_subclasses()), NetProtocol.MOD_ID)
 	config.load_config()
+	mode = ModeRegistry.create(ModeRegistry.DEFAULT, self)
 	discovery = NetDiscovery.new()
 	discovery.name = "Discovery"
 	add_child(discovery)
@@ -156,6 +166,8 @@ func _process(_delta: float) -> void :
 	if between_waves and choice_deadline_msec != 0 and now > choice_deadline_msec + NetProtocol.CHOICE_GRACE * 1000:
 		ModLoaderLog.warning("Choice time is over, going on without %s" % PoolStringArray(shop_waiting_names).join(", "), NetProtocol.MOD_ID)
 		_on_all_shops_done()
+	if mode.dirty and now - _mode_state_sent_msec >= NetProtocol.MODE_STATE_INTERVAL * 1000:
+		_send_mode_state()
 
 
 
@@ -185,7 +197,7 @@ func host(port: int = - 1) -> int:
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
 	lobby_settings.scaling = config.scaling.duplicate()
-	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset})
+	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset, "mode": config.last_mode})
 	_apply_multiplayer_unlocks()
 	progress.start()
 	last_end_reason = ""
@@ -267,8 +279,8 @@ func set_local_player_info(changes: Dictionary) -> void :
 		rpc_id(HOST_PEER_ID, "_rpc_update_player", changes)
 
 
-# Host only, not during a run: zone, difficulty, choice time, scaling preset. Invalid values are
-# ignored; valid ones are remembered.
+# Host only, not during a run: zone, difficulty, choice time, scaling preset, mode. Invalid values
+# are ignored; valid ones are remembered.
 func set_lobby_settings(changes: Dictionary) -> void :
 	if not is_host or run_in_progress:
 		return
@@ -277,6 +289,7 @@ func set_lobby_settings(changes: Dictionary) -> void :
 		config.last_difficulty = lobby_settings.difficulty
 		config.last_choice_time = lobby_settings.choice_time
 		config.last_scaling_preset = lobby_settings.scaling_preset
+		config.last_mode = lobby_settings.mode
 		config.save_config()
 		_broadcast_lobby_state()
 
@@ -315,7 +328,14 @@ func start_run() -> int:
 	if not is_host or not are_all_ready():
 		return ERR_UNAVAILABLE
 
+	mode = ModeRegistry.create(lobby_settings.mode, self)
+	_mode_serial += 1
+	mode.serial = _mode_serial
 	RunBuilder.build_run(players, lobby_settings)
+	# The mode may change the run (e.g. endless); its state reaches the clients before the run.
+	mode.start(players)
+	_send_mode_state()
+	ModLoaderLog.info("Mode: %s" % mode.id, NetProtocol.MOD_ID)
 	_send_run("built")
 	return OK
 
@@ -324,6 +344,9 @@ func start_run() -> int:
 # applies its own copy from the same JSON; once every connected client acked a matching digest,
 # everyone loads the wave (_enter_wave_if_synced). Each send is a new run id.
 func _send_run(what: String) -> void :
+	# A mode change not sent yet (e.g. the last purchase before Go) goes before the run.
+	if mode.dirty:
+		_send_mode_state()
 	_run_data_replaced = true
 	run_state = RunBuilder.serialize_run()
 	var _applied = RunBuilder.apply_run(run_state)
@@ -347,6 +370,9 @@ func _send_run(what: String) -> void :
 func send_wave_end_state(upgrades_to_process: Array, consumables_to_process: Array) -> void :
 	if not is_host:
 		return
+	mode.on_wave_end()
+	# Before the run: the clients' upgrades and shops may read it.
+	_send_mode_state()
 	var pending: = RunBuilder.pack_pending(upgrades_to_process, consumables_to_process)
 	# What the wave added to the lifetime counters; clients take it over (team counts).
 	var counters: Dictionary = progress.get_wave_delta()
@@ -410,6 +436,34 @@ func send_shop_done(done: bool) -> void :
 		_on_shop_done(local_player_index, wave, run_json)
 	elif joined:
 		rpc_id(HOST_PEER_ID, "_rpc_shop_done", wave, run_json)
+
+
+# The mode's messages (LanMode.send_message / send_message_to). The host's own go straight to its
+# mode.
+func send_mode_message(payload: Array) -> void :
+	if is_host:
+		mode.on_message(local_player_index, payload)
+	elif is_client and joined:
+		rpc_id(HOST_PEER_ID, "_rpc_mode_message", payload)
+
+
+func send_mode_message_to(player_index: int, payload: Array) -> void :
+	if not is_host:
+		return
+	if player_index == local_player_index:
+		mode.on_message(local_player_index, payload)
+		return
+	var entry = get_player(player_index)
+	if entry != null and entry.connected and get_tree().get_network_connected_peers().has(entry.peer_id):
+		rpc_id(entry.peer_id, "_rpc_mode_message", payload)
+
+
+# Host: the mode state to every client.
+func _send_mode_state() -> void :
+	mode.dirty = false
+	_mode_state_sent_msec = OS.get_ticks_msec()
+	for entry in _get_connected_clients():
+		rpc_id(entry.peer_id, "_rpc_mode_state", mode.serial, mode.id, mode.state)
 
 
 # Back on the title screen (lobby) during a session: whatever happened between waves is over.
@@ -631,6 +685,7 @@ func _rejoin(entry: Dictionary, peer_id: int) -> void :
 	ModLoaderLog.info("%s rejoined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
 	rpc_id(peer_id, "_rpc_welcome", entry.player_index, token)
 	_broadcast_lobby_state(true)
+	rpc_id(peer_id, "_rpc_mode_state", mode.serial, mode.id, mode.state)
 	# The next wave's run is waiting for acks.
 	if _start_requested:
 		rpc_id(peer_id, "_rpc_run_state", _run_id_counter, run_state, _run_digest)
@@ -729,6 +784,32 @@ remote func _rpc_challenge(chal_id) -> void :
 	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(chal_id) != TYPE_INT:
 		return
 	ChallengeService.lan_complete_forwarded(chal_id)
+
+
+# Host -> client: the run's mode and its state (see mode). A new run (serial) builds a new mode.
+remote func _rpc_mode_state(serial, mode_id, new_state) -> void :
+	if not is_client or not joined or get_tree().get_rpc_sender_id() != HOST_PEER_ID:
+		return
+	if typeof(serial) != TYPE_INT or typeof(mode_id) != TYPE_STRING or typeof(new_state) != TYPE_DICTIONARY:
+		return
+	if mode.serial != serial or mode.id != mode_id:
+		mode = ModeRegistry.create(mode_id, self)
+		mode.serial = serial
+		ModLoaderLog.info("Mode: %s" % mode.id, NetProtocol.MOD_ID)
+	mode.set_state(new_state)
+
+
+# A mode's message: client -> host (from that client's player) or host -> client (from player 0).
+remote func _rpc_mode_message(payload) -> void :
+	if typeof(payload) != TYPE_ARRAY:
+		return
+	var sender: = get_tree().get_rpc_sender_id()
+	if is_host:
+		var entry = _get_player_by_peer(sender)
+		if entry != null:
+			mode.on_message(entry.player_index, payload)
+	elif is_client and joined and sender == HOST_PEER_ID:
+		mode.on_message(0, payload)
 
 
 # Host -> client: the run after the wave (see send_wave_end_state).
@@ -954,6 +1035,9 @@ func _apply_player_changes(entry: Dictionary, changes: Dictionary) -> bool:
 				continue
 			if value and not LobbyRules.is_entry_complete(entry):
 				value = false
+		elif key == "team":
+			if typeof(value) != TYPE_INT or value < 0 or value >= NetProtocol.TEAM_COUNT:
+				continue
 		elif typeof(value) != TYPE_STRING:
 			continue
 		elif key == "character_id" and not value.empty() and not LobbyRules.is_character_unlocked(LobbyRules.get_character(value)):
@@ -961,11 +1045,11 @@ func _apply_player_changes(entry: Dictionary, changes: Dictionary) -> bool:
 		elif key == "weapon_id" and not value.empty() and LobbyRules.get_starting_choice(LobbyRules.get_character(entry.character_id), value) == null:
 			continue
 
-		if entry[key] == value:
+		if entry.get(key) == value:
 			continue
 		if key == "character_id":
 			entry.weapon_id = ""
-		if key != "ready":
+		if key != "ready" and key != "team":
 			entry.ready = false
 		entry[key] = value
 		changed = true
@@ -990,6 +1074,9 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 		var factor: float = NetProtocol.SCALING_PRESET_FACTORS[lobby_settings.scaling_preset]
 		for key in NetProtocol.SCALED_BY_PRESET:
 			lobby_settings.scaling[key] = config.scaling[key] * factor
+		changed = true
+	if changes.has("mode") and ModeRegistry.is_valid(changes.mode) and lobby_settings.mode != changes.mode:
+		lobby_settings.mode = changes.mode
 		changed = true
 	return changed
 
@@ -1302,6 +1389,7 @@ func _end_session(reason: String) -> void :
 	_reset_between_waves()
 	solo_view.discard()
 	_left_run_peers = {}
+	mode = ModeRegistry.create(ModeRegistry.DEFAULT, self)
 	CoopService.clear_coop_players()
 
 	active = false

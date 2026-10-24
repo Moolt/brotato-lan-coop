@@ -52,6 +52,8 @@ extends Node
 #     clock that runs a delay behind the host: INTERP_DELAY_MS, more while snapshots arrive late
 #     (WiFi power saving delivers them in bursts), see _note_lateness and _update_puppets.
 #   - The wave timer follows the host's. The wave ends when the host says so.
+# Both: the game mode (LanNet.mode) hears of the wave's start, every physics frame and (host) every
+# synced entity's death; its own traffic goes through LanNet, not the events.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
@@ -238,6 +240,7 @@ func _ready() -> void :
 			if player.player_index != _local_index:
 				player.set_physics_process(false)
 		_net.send_wave_loaded()
+	_net.mode.on_wave_started(_main)
 
 
 func _exit_tree() -> void :
@@ -258,6 +261,8 @@ func stop() -> void :
 
 func _physics_process(delta: float) -> void :
 	_frame += 1
+	if not _main._cleaning_up:
+		_net.mode.on_wave_physics(_main, delta)
 	if is_host:
 		if _waiting:
 			_waiting_time += delta
@@ -580,6 +585,7 @@ func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 	# The clients' own clean_up_room kills everything at the end of the wave.
 	if not args.cleaning_up:
 		_events.append([EVENT_DIE, net_id, args.knockback_vector])
+		_net.mode.on_entity_died(_main, entity, args)
 
 
 # Structures and pets get their data (StructureEffect, PetEffect) from the player's effects,

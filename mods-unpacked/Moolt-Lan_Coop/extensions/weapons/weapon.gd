@@ -6,6 +6,8 @@ extends "res://weapons/weapon.gd"
 # On the host, every attack is reported to LanWaveSync before vanilla runs it (melee weapons
 # switch next_attack_type afterwards). A remote player's weapons aim (manual aim) at the point
 # its client reports, not at the host's mouse.
+# The game mode decides on the host what a weapon may aim at (LanMode.can_target); in PvP modes
+# its range also sees players.
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
@@ -36,3 +38,23 @@ func get_global_mouse_position() -> Vector2:
 		if aim_point != null:
 			return aim_point
 	return .get_global_mouse_position()
+
+
+# Runs after vanilla's _ready.
+func _ready() -> void :
+	var mode = LanGame.get_mode()
+	if mode != null and mode.uses_pvp():
+		_range.collision_mask |= Utils.PLAYER_BIT
+
+
+func _on_Range_body_entered(body: Node) -> void :
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host and not LanGame.get_mode().can_target(self, body):
+		return
+	._on_Range_body_entered(body)
+
+
+# Not for bodies the mode turned away: vanilla disconnects the died signal it connected on entry.
+func _on_Range_body_exited(body: Node) -> void :
+	if body.is_connected("died", self, "on_target_died"):
+		._on_Range_body_exited(body)

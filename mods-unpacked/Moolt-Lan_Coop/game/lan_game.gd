@@ -36,6 +36,12 @@ static func get_wave_sync() -> Node:
 	return lan_net.wave_sync if lan_net != null else null
 
 
+# The session's game mode (modes/lan_mode.gd), null outside a session.
+static func get_mode() -> Reference:
+	var lan_net = get_lan_net()
+	return lan_net.mode if lan_net != null and lan_net.active else null
+
+
 # True on a LAN client during a wave.
 static func is_wave_client() -> bool:
 	var wave_sync = get_wave_sync()
@@ -77,18 +83,24 @@ static func get_enemy_cap_factor(player_count: int) -> float:
 # would cull random enemies without loot at every group spawn. The count it would have added
 # goes into enemy HP instead. Vanilla's coop material bonus (CoopService
 # get_additional_materials_per_coop_player) reads the lower count, so materials keep up.
-static func apply_enemy_scaling(player_count: int) -> void :
+# scaling_count: the player count the enemies scale for, if not player_count (a mode's, e.g. a
+# team's size); vanilla still multiplies by player_count - 1, so the factors are divided by that.
+static func apply_enemy_scaling(player_count: int, scaling_count: int = - 1) -> void :
+	if scaling_count < 0:
+		scaling_count = player_count
 	CoopService.additional_enemy_damage_per_coop_player = get_scaling("enemy_damage_per_player")
 	CoopService.additional_enemies_per_coop_player = get_scaling("enemy_count_per_player")
 	if player_count > 1:
-		var extra: = player_count - 1
-		var count_extra: = get_count_players(player_count) - 1
+		var vanilla_extra: = player_count - 1
+		var extra: int = int(max(0, scaling_count - 1))
+		var count_extra: int = int(max(0, get_count_players(scaling_count) - 1))
 		var per_player: float = get_scaling("enemy_count_per_player")
 		var count_cut: float = (1.0 + per_player * extra) / (1.0 + per_player * count_extra)
-		CoopService.additional_enemies_per_coop_player = per_player * count_extra / extra
+		CoopService.additional_enemies_per_coop_player = per_player * count_extra / vanilla_extra
 		var small: = min(extra, VANILLA_MAX_PLAYERS - 1)
 		var health: float = 1.0 + small * get_scaling("enemy_health_per_player") + (extra - small) * get_scaling("enemy_health_per_player_beyond_4")
-		CoopService.additional_enemy_health_per_coop_player = (health * count_cut - 1.0) / extra
+		CoopService.additional_enemy_health_per_coop_player = (health * count_cut - 1.0) / vanilla_extra
+		CoopService.additional_enemy_damage_per_coop_player = get_scaling("enemy_damage_per_player") * extra / vanilla_extra
 	EntityService.reset_cache()
 
 
