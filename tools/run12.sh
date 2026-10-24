@@ -4,7 +4,8 @@
 # Usage: SCRATCH=<dir holding game/> tools/run12.sh <name> [ENV=val ...]
 #   ENV applies to every instance; HOST_EXTRA="A=1 B=2" to the host only, CLIENT_ENV="..." to the
 #   clients only (e.g. TARGET_FPS=60); ND, NN, PROFILES_D, PROFILES_N, NB (ssh target), HOST_IP,
-#   NB_GODOT (the Godot binary on the second PC), LIMIT (seconds).
+#   NB_GODOT (the Godot binary on the second PC), LIMIT (seconds), DIRECT=1 (the second PC's
+#   clients join the host directly, without netsim).
 # The second PC needs ~/.cache/brotest/game (a test copy: rsync -aL <scratch>/game/ there) and
 # a graphical session; logs end up in <scratch>/runs/<name>/ (the second PC's in nb/).
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,7 +52,7 @@ pids=""
 for i in \$(seq 1 $NN); do
   u=~/.cache/brotest/udata/n\$i; mkdir -p \$u; [ -d \$u/BrotatoLanTest ] || cp -a ~/.local/share/BrotatoLanTest \$u/
   x=\$(( ((i - 1) % 3) * 640 )); y=\$(( ((i - 1) / 3) * 360 ))
-  vblank_mode=0 __GL_SYNC_TO_VBLANK=0 XDG_DATA_HOME=\$u JOIN_ADDR=127.0.0.1:\$((25100 + i)) PLAYER_NAME=Nb\$i PICK=\$((i + 6)) SHOT_DIR=~/.cache/brotest/runs/$name $envs $EXTRA_ENV $CLIENT_ENV \\
+  vblank_mode=0 __GL_SYNC_TO_VBLANK=0 XDG_DATA_HOME=\$u JOIN_ADDR=\$( [ "$DIRECT" = 1 ] && echo $HOST_IP:24999 || echo 127.0.0.1:\$((25100 + i)) ) PLAYER_NAME=Nb\$i PICK=\$((i + 6)) SHOT_DIR=~/.cache/brotest/runs/$name $envs $EXTRA_ENV $CLIENT_ENV \\
     timeout $LIMIT nohup $GN --path game --resolution 640x360 --position \$x,\$y -- join > runs/$name/nb\$i.log 2>&1 &
   pids="\$pids \$!"
   sleep 0.4

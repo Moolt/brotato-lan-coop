@@ -67,6 +67,15 @@ extends Node
 #         their timing relative to the Start
 #   (host and join) WAVES=n counts from the run's first wave, so it combines with START_WAVE
 #   (any role) TARGET_FPS=n: Engine.target_fps (many instances on one PC)
+#   (join) CLIENT_WALK=2: stop and go (0.6 s walking, 0.6 s standing, the next direction each time)
+#   (host) OVERSHOOT_LOG=1: per remote player stop, how far the host showed the player past the
+#         position the client stopped at (along the last direction), logged every 5 s
+#   (join) LOAD_STALL=s: the main thread blocks s seconds while the first wave loads (slow disk)
+#   (host and join) RELOAD_RACE=1: when the wave-end state arrives (the solo view starts right
+#         after), every player's stats and weapons are queued for a reload in main's StatsManager,
+#         as a stat change in the wave's last frames leaves them
+#   (host) PET_TEST=1: at t=16 a pet item for player 0 and 1; 5 s into the next wave both sides
+#         log every pet (owner, position, net id)
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -100,6 +109,8 @@ var waited_for_wave: = false
 
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
+	if OS.get_environment("LOAD_STALL") != "":
+		var _e = get_tree().connect("node_added", self, "_on_node_added")
 	for a in OS.get_cmdline_args():
 		if a in ["host", "join", "quit", "solo", "lobby"]:
 			role = a
@@ -218,6 +229,7 @@ func _process(delta: float) -> void :
 			_e = get_node("/root/LanNet").connect("wave_end_ready", self, "log_progress", [role + "_wave_end"])
 			_e = get_node("/root/LanNet").connect("session_ended", self, "progress_after_session")
 			_e = get_node("/root/LanNet").connect("run_sync_changed", self, "fail_ack_test")
+			_e = get_node("/root/LanNet").connect("wave_end_ready", self, "reload_race")
 		return
 	t += delta
 	# The wave's verdict, once, as soon as its cleanup starts (the scene changes soon after).
@@ -230,6 +242,7 @@ func _process(delta: float) -> void :
 	perf_curve(delta)
 	jitter_sample(delta)
 	client_walk()
+	pet_watch()
 	push_test()
 	choice_watch()
 	pick_upgrades(delta)
@@ -402,6 +415,110 @@ func contact_test(main) -> void :
 func _physics_process(_delta: float) -> void :
 	physics_ticks += 1
 	jitter_tick()
+	overshoot_tick()
+
+
+# OVERSHOOT_LOG=1 (host): per remote player, the shown positions of the last 400 ms and the
+# current stop; a stop is the first state whose input is zero after moving. Overshoot: the largest
+# distance past the reported stop position along the last direction, from 400 ms before that
+# state arrived until 500 ms after (or the next move).
+var overshoot: = {}
+var overshoot_results: = {}
+var overshoot_log_msec: = 0
+
+
+func overshoot_tick() -> void :
+	if OS.get_environment("OVERSHOOT_LOG") != "1" or role != "host":
+		return
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main._cleaning_up or main.get_node_or_null("LanWaveSync") == null:
+		overshoot = {}
+		return
+	var sync = main.get_node("LanWaveSync")
+	var now = OS.get_ticks_msec()
+	for i in sync._remote_states:
+		var state = sync._remote_states[i]
+		var player = main._players[i]
+		if not is_instance_valid(player) or player.dead:
+			continue
+		if not overshoot.has(i):
+			overshoot[i] = {"hist": [], "dir": Vector2.ZERO, "moving": false, "stop": null}
+		var o = overshoot[i]
+		o.hist.append([now, player.global_position])
+		while not o.hist.empty() and now - o.hist[0][0] > 400:
+			o.hist.pop_front()
+		if state.move != Vector2.ZERO:
+			if o.stop != null:
+				overshoot_results[i] = overshoot_results.get(i, []) + [o.stop.max]
+				o.stop = null
+			o.dir = state.move.normalized()
+			o.moving = true
+		elif o.moving:
+			o.moving = false
+			var stop = {"at": now, "pos": state.pos, "dir": o.dir, "max": - 1000.0}
+			for entry in o.hist:
+				stop.max = max(stop.max, (entry[1] - state.pos).dot(o.dir))
+			o.stop = stop
+		elif o.stop != null:
+			o.stop.max = max(o.stop.max, (player.global_position - o.stop.pos).dot(o.stop.dir))
+			if now - o.stop.at > 500:
+				overshoot_results[i] = overshoot_results.get(i, []) + [o.stop.max]
+				o.stop = null
+	if now - overshoot_log_msec >= 5000:
+		overshoot_log_msec = now
+		for i in overshoot_results:
+			var sorted = overshoot_results[i].duplicate()
+			sorted.sort()
+			print("[TEST] overshoot player=", i, " ", get_node("/root/LanNet").get_player(i).name, " stops=", sorted.size(), " px median=", stepify(sorted[sorted.size() / 2], 0.1), " p90=", stepify(sorted[int(sorted.size() * 0.9)], 0.1), " max=", stepify(sorted[- 1], 0.1), " over_5px=", sorted.size() - sorted.bsearch(5.0), " time_left=", stepify(main._wave_timer.time_left, 0.1))
+		overshoot_results = {}
+
+
+# LOAD_STALL=s (join): blocks the main thread once, when the first wave's LanWaveSync enters the
+# tree (before it tells the host it loaded), as a slow load would.
+var load_stalled: = false
+
+
+func _on_node_added(node: Node) -> void :
+	if load_stalled or role != "join" or node.name != "LanWaveSync":
+		return
+	load_stalled = true
+	var seconds = float(OS.get_environment("LOAD_STALL"))
+	print("[TEST] load stall ", seconds, " s at t=", stepify(t, 0.1))
+	OS.delay_msec(int(seconds * 1000))
+	print("[TEST] load stall over at t=", stepify(t, 0.1))
+
+
+func reload_race() -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("RELOAD_RACE") != "1" or main == null or main.filename != MenuData.game_scene:
+		return
+	var weapons = 0
+	for player in main._players:
+		main._stats_manager.reload_stats(player)
+		weapons += player.current_weapons.size()
+	print("[TEST] ", role, " reload_race queued ", main._players.size(), " players, ", weapons, " weapons, solo_view=", get_node("/root/LanNet").solo_view.active)
+
+
+# PET_TEST=1: 5 s into the second wave, every pet on this machine (owner, scene, position, net id).
+var pets_logged: = false
+
+
+func pet_watch() -> void :
+	if OS.get_environment("PET_TEST") != "1" or pets_logged or first_wave == 0:
+		return
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main._cleaning_up or RunData.current_wave != first_wave + 1:
+		return
+	if main._wave_timer.wait_time - main._wave_timer.time_left < 5.0 or main.get_node_or_null("LanWaveSync") == null:
+		return
+	pets_logged = true
+	var sync = main.get_node("LanWaveSync")
+	var out = []
+	for pet in main._entity_spawner.pets:
+		if is_instance_valid(pet):
+			out.append("p%d:%s:%s:id=%s" % [pet.player_index, pet.filename.get_file().get_basename(), pet.global_position.round(), pet.get_meta("lan_net_id") if pet.has_meta("lan_net_id") else "-"])
+	print("[TEST] ", role, "_pets wave=", RunData.current_wave, " time_left=", stepify(main._wave_timer.time_left, 0.01), " count=", out.size(), " ", out, " net_entities=", sync._entities.size())
+	shot(role + "_pets")
 
 
 # Per physics tick (JITTER_LOG): how far up to 20 enemies moved since the last tick. Vanilla
@@ -420,7 +537,7 @@ func push_test() -> void :
 	var sync = main.get_node("LanWaveSync")
 	var me = main._players[sync._local_index]
 	var host = main._players[0]
-	var directions = {"button_move_right_7": Vector2.RIGHT, "button_move_left_7": Vector2.LEFT, "button_move_down_7": Vector2.DOWN, "button_move_up_7": Vector2.UP}
+	var directions = {"button_move_right_0": Vector2.RIGHT, "button_move_left_0": Vector2.LEFT, "button_move_down_0": Vector2.DOWN, "button_move_up_0": Vector2.UP}
 	if role == "join":
 		var to_host = host.global_position - me.global_position
 		for action in directions:
@@ -435,12 +552,16 @@ func push_test() -> void :
 
 # CLIENT_WALK=1 (join): in a wave the client's player walks, a new direction every second.
 func client_walk() -> void :
-	if OS.get_environment("CLIENT_WALK") != "1" or role != "join":
+	if not OS.get_environment("CLIENT_WALK") in ["1", "2"] or role != "join":
 		return
 	var main = get_tree().current_scene
-	var directions = ["button_move_right_7", "button_move_down_7", "button_move_left_7", "button_move_up_7"]
+	var directions = ["button_move_right_0", "button_move_down_0", "button_move_left_0", "button_move_up_0"]
 	var in_wave = main != null and main.filename == MenuData.game_scene and not main._cleaning_up
 	var current = int(OS.get_ticks_msec() / 1000) % 4 if in_wave else - 1
+	if in_wave and OS.get_environment("CLIENT_WALK") == "2":
+		# Stop and go: 600 ms walking, 600 ms standing.
+		var period = int(OS.get_ticks_msec() / 600)
+		current = int(period / 2) % 4 if period % 2 == 0 else - 1
 	for i in 4:
 		if i == current:
 			Input.action_press(directions[i])
@@ -879,7 +1000,7 @@ func _host_step() -> void :
 				first_wave = RunData.current_wave
 			aim_test_setup()
 			log_sync("host_w13")
-			Input.action_press("button_move_left_7")
+			Input.action_press("button_move_left_0")
 			# A boss and three trees, which wave 1 doesn't have.
 			var spawner = get_tree().current_scene._entity_spawner
 			var rect = ZoneService.get_current_zone_rect()
@@ -893,7 +1014,7 @@ func _host_step() -> void :
 				spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), center_offset(i)])
 			next_t = 14.0
 		6:
-			Input.action_release("button_move_left_7")
+			Input.action_release("button_move_left_0")
 			log_sync("host_w14")
 			next_t = 16.0
 		7:
@@ -939,6 +1060,10 @@ func _host_step() -> void :
 				gone.free()
 			contact_test(get_tree().current_scene)
 			progress_test(get_tree().current_scene)
+			if OS.get_environment("PET_TEST") == "1":
+				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_blazemander"), 0)
+				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_bonk_dog"), 1)
+				print("[TEST] pet_test items added: player 0 blazemander, player 1 bonk_dog")
 			log_sync("host_w16")
 			next_t = 18.0
 		8:
@@ -979,10 +1104,14 @@ func _host_step() -> void :
 			next_t = 24.0
 		11:
 			if waves_target() > 1 or OS.get_environment("IDLE_CHOICE") != "":
-				if not wait_for_wave(waves_target() + 1):
+				if wait_for_wave(waves_target() + 1):
+					log_run_check("host_next_wave")
+				elif end_step == 3:
+					# The run ended first (won at wave 20, or lost) and the end screen is done.
+					print("[TEST] host run over before wave ", waves_target() + max(first_wave, 1), ", back in the lobby")
+				else:
 					step -= 1
 					return
-				log_run_check("host_next_wave")
 			else:
 				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 40.0
 		12:
@@ -1298,7 +1427,8 @@ func shop_actions(delta: float) -> void :
 				if own.gold < gold_before:
 					bought = item.item_data.my_id
 					continue
-			if locked == "-":
+			if locked == "-" and not item.locked:
+				# Not an item that is already locked: the real lock button would unlock it.
 				item.change_lock_status(true)
 				locked = item.item_data.my_id
 		print("[TEST] ", tag, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " scene=", shop.filename, " bought=", bought, " gold=", gold_before, "->", own.gold, " locked=", locked, " locked_slot0=", RunData.locked_shop_items[0].size(), " items=", own.items.size(), " weapons=", own.weapons.size())
@@ -1464,10 +1594,10 @@ func _client_step() -> void :
 				first_wave = RunData.current_wave
 			aim_test_setup()
 			log_sync("client_w14")
-			Input.action_press("button_move_right_7")
+			Input.action_press("button_move_right_0")
 			next_t = 15.5
 		5:
-			Input.action_release("button_move_right_7")
+			Input.action_release("button_move_right_0")
 			log_sync("client_w15")
 			next_t = 16.0
 		6:
@@ -1477,7 +1607,7 @@ func _client_step() -> void :
 			var local_index = main.get_node("LanWaveSync")._local_index
 			main._pause_menu.pause(local_index)
 			start_pos = main._players[local_index].global_position
-			Input.action_press("button_move_down_7")
+			Input.action_press("button_move_down_0")
 			progress_test(main)
 			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			next_t = 17.0
@@ -1487,7 +1617,7 @@ func _client_step() -> void :
 			var main = get_tree().current_scene
 			var player = main._players[main.get_node("LanWaveSync")._local_index]
 			print("[TEST] client_paused_moved=", player.global_position.distance_to(start_pos), " time_left=", stepify(main._wave_timer.time_left, 0.1))
-			Input.action_release("button_move_down_7")
+			Input.action_release("button_move_down_0")
 			# Close the menu with the mouse: move onto Resume (shows the cursor), then click it.
 			var resume = main._pause_menu._main_menu._resume_button
 			# Input events use window coordinates; the game renders at 1920x1080 and is stretched.
@@ -1538,10 +1668,14 @@ func _client_step() -> void :
 			next_t = 23.6
 		10:
 			if waves_target() > 1 or OS.get_environment("IDLE_CHOICE") != "":
-				if not wait_for_wave(waves_target() + 1):
+				if wait_for_wave(waves_target() + 1):
+					log_run_check("client_next_wave")
+				elif end_step == 3:
+					# The run ended first (won at wave 20, or lost) and the end screen is done.
+					print("[TEST] client run over before wave ", waves_target() + max(first_wave, 1), ", back in the lobby")
+				else:
 					step -= 1
 					return
-				log_run_check("client_next_wave")
 			else:
 				if quits and OS.get_environment("KILL_ALL") == "1":
 					# In the lobby while the run is lost: the hint says the run is over.

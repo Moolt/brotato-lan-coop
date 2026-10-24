@@ -508,6 +508,7 @@ func _on_EndWaveTimer_timeout() -> void :
 	var wave_sync = LanGame.get_wave_sync()
 	if wave_sync != null:
 		wave_sync.stop()
+	_lan_drop_stats_reloads()
 
 	if _is_run_lost or _is_run_won or _is_wave_failed:
 		# Every machine shows the solo end screen for its own player (base_end_run.gd extension).
@@ -551,6 +552,19 @@ func _on_EndWaveTimer_timeout() -> void :
 
 func _lan_on_wave_end_ready() -> void :
 	emit_signal("lan_wave_end_ready")
+
+
+# Before the solo view: StatsManager reloads stats and weapons up to 60 frames after a stat change
+# (the wave's last level-ups, the applied wave-end run). Run in the solo view, those of players at
+# index 1+ would read RunData slots that no longer exist (script errors under the mod's path).
+# The wave's players and weapons go with the scene; the next wave builds them from the run.
+func _lan_drop_stats_reloads() -> void :
+	_stats_manager._player_queue.clear()
+	_stats_manager._weapon_queue.clear()
+	for queue in _stats_manager._structure_queues:
+		queue.clear()
+	for queue in _stats_manager._pet_queues:
+		queue.clear()
 
 
 # In the solo view RunData's index 0 is the local player, whose HUD is _players_ui[local index]
