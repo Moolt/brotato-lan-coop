@@ -511,7 +511,7 @@ func _on_EndWaveTimer_timeout() -> void :
 
 	if _is_run_lost or _is_run_won or _is_wave_failed:
 		# Every machine shows the solo end screen for its own player (base_end_run.gd extension).
-		lan_net.run_over = true
+		lan_net.set_run_over()
 		if lan_net.enter_solo_view(false):
 			RunData.run_won = run_won
 			RunData.difficulty_unlocked = difficulty_unlocked

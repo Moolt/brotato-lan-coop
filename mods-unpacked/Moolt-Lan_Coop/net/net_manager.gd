@@ -290,6 +290,7 @@ func set_run_in_progress(value: bool) -> void :
 		return
 	run_in_progress = value
 	lobby_settings.in_wave = value
+	lobby_settings.run_over = false
 	if not value:
 		for entry in players.duplicate():
 			if not entry.connected:
@@ -298,6 +299,15 @@ func set_run_in_progress(value: bool) -> void :
 				entry.ready = false
 		_compact_player_indices()
 	_broadcast_lobby_state(value)
+
+
+# The run ended (lost or won) and this machine shows its end screen. The host tells the lobby
+# (lobby_settings.run_over), so clients waiting there (quit or rejoined) see it at once.
+func set_run_over() -> void :
+	run_over = true
+	if is_host and run_in_progress:
+		lobby_settings.run_over = true
+		_broadcast_lobby_state(true)
 
 
 # Host: builds the run from the lobby and sends it to every client.

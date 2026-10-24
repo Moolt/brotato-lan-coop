@@ -67,7 +67,7 @@ Visuals, controls and menus with what exists (Step 8). Done so far:
 
 Open:
 - [ ] **Name overlap.** 12 names overlap when players stand close, e.g. on the spawn circle at wave start. Options: fade names while they overlap, or shorten long names.
-- [ ] **Lobby hint for a client that quit to the lobby.** It shows "A wave is in progress" until the host is back from its end screen, because it gets no end-of-run notice (`LanNet.run_over` is only set in `main`). The host's wave-end state at the run's end, or the lobby broadcast, could carry it.
+- [x] **Lobby hint for a client that quit to the lobby** (or rejoined): at the run's end the host sets `lobby_settings.run_over` and broadcasts it, so the lobby shows "The run is over…" instead of "A wave is in progress" while the host is on its end screen.
 - [ ] **Controller text entry.** An on-screen keyboard for the name and the join address. Until then controller players keep the default name and join from the discovered games list.
 - [ ] **End screen sorted by kills.** The player dropdown lists players by index. Vanilla only counts kills globally (`ProgressData` `enemies_killed`, `main.gd`), not per player. Count kills per player on the host (the killer's player index from the hit), carry them in the run state, then sort the dropdown by them and show the count.
 - [ ] **End screen focus.** Vanilla `end_run.gd` gives the focus to the New Run button (hidden in a session) after an inventory element is pressed; with a gamepad the focus is lost until the mouse or a direction moves it.

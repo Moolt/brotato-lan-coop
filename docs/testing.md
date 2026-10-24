@@ -50,6 +50,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `START_WAVE=n` | the run starts at wave n (20: run won) |
 | `CLIENT_QUITS=1` / `=2` | the client quits the wave from its pause menu and changes its character in the lobby (ignored) / its process exits mid-wave |
 | `SHOP_QUIT=1` | the client quits from the shop |
+| `CLIENT_QUITS=1` or `=3` with `KILL_ALL=1` | the client waits in the lobby while the run is lost; `client_run_over` logs its hint ("The run is over…") while the host is on its end screen |
 | `CLIENT_QUITS=3` / `=4` | at t=18 in the wave the client's connection breaks without a goodbye (`drop_connection`) and it rejoins: unnoticed by the host (the old ENet peer is kept unpolled, so the rejoin takes over a slot that still looks connected) / with the host seeing the disconnect first |
 | `SHOP_QUIT=2` | the client's connection breaks silently in the shop; it rejoins and the host goes on without waiting |
 | `HOST_QUITS=1` | the host closes its game at t=18 in the wave; the client must end with "host left" (goodbye), not reconnect |
@@ -117,6 +118,7 @@ Each takes about 1–2 min.
 - `grep -a "SCRIPT\|ERROR"` the logs. Nothing from mod code is allowed: any `ERROR:` mentioning `mods-unpacked` makes the crash reporter disable mods on the next launch.
 - Ignore (vanilla prints them too, check with `--disable-mods`): engine shutdown errors (`_first != nullptr`, `self_list.h`, resources/MemoryPool still in use, ObjectDB leaks) and `WARNING: Node './Attach' was modified from inside an instance` on wave load.
 - A stray background instance from an earlier run can mix into results; check `ps` first.
+- Twice (2026-10-23/24, once each on the code before and after the run-over hint) a test client quit cleanly mid-run without a driver step or error (normal shutdown lines, the host logs "left"); a rerun passed. Cause unknown; rerun before suspecting a change.
 
 ## Two machines
 Host here, join on the second PC (same layout, its own test copy from `tools/make_test_copy.sh`, the driver copied over with `scp`). Start the client over `ssh` with `DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.*)` (GNOME Wayland session), pass the test options in that environment too, and start the host 1 s later; discovery finds the host across the LAN. Run `ping` alongside for RTT. Interface byte counters are useless for bandwidth when the other PC syncs files in the background; work it out from `snapshot_bytes` × 20 Hz.

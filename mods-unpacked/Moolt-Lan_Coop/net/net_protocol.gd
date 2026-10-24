@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 19
+const PROTOCOL_VERSION: = 20
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -173,6 +173,7 @@ static func default_lobby_settings() -> Dictionary:
 		"difficulty": 0, 
 		"run_id": 0, 
 		"in_wave": false, 
+		"run_over": false, 
 		"scaling": DEFAULT_SCALING.duplicate(), 
 		"choice_time": DEFAULT_CHOICE_TIME, 
 		"scaling_preset": SCALING_PRESET_NORMAL, 

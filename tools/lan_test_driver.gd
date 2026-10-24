@@ -1446,6 +1446,9 @@ func _client_step() -> void :
 					return
 				log_run_check("client_next_wave")
 			else:
+				if quits and OS.get_environment("KILL_ALL") == "1":
+					# In the lobby while the run is lost: the hint says the run is over.
+					var _e = get_tree().create_timer(4.0).connect("timeout", self, "log_lobby", ["client_run_over"])
 				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 39.0
 		11:
 			log_lobby("client_end")
