@@ -11,9 +11,9 @@ extends "res://mods-unpacked/Moolt-Lan_Coop/modes/elimination_mode.gd"
 
 const Storm = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/last_potato/storm.gd")
 
-const SHRINK_FROM: = 0.1
-const SHRINK_TO: = 0.8
-const END_RADIUS: = 220.0
+const SHRINK_FROM: = 0.15
+const SHRINK_TO: = 1.0
+const END_RADIUS: = 280.0
 const END_RADIUS_PER_PLAYER: = 20.0
 # How far the centre may be from the map centre, as a share of the arena's size.
 const CENTER_SPREAD: = 0.25
@@ -76,6 +76,10 @@ func on_wave_physics(main: Node, delta: float) -> void :
 		args.dodgeable = false
 		args.armor_applied = false
 		args.bypass_invincibility = true
+		# No hit effect (white slashes at the player): every 0.5 s it looked like the player was
+		# fighting the storm. The flash, sound and damage number stay; clients get the scale with
+		# the damage event.
+		args.base_effect_scale = 0.0
 		var _taken = player.take_damage(int(max(1.0, ceil(player.max_stats.health * percent / 100.0))), args)
 
 

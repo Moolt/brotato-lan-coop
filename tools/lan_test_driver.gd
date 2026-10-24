@@ -32,6 +32,7 @@ extends Node
 #   (join) in the lobby: logs the settings summary and that there is no Settings button
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
+#   (host and join) END_STAY=1: stay on the end screen (no Exit, no quit), e.g. to look at it
 #   (any role) PERF_LOG=1: once a second in a wave, enemies, physics bodies/pairs, physics and
 #         process time, FPS; ENEMY_CAP=n: the wave's enemy cap (solo: exactly n);
 #         PHYS_ITER=n: Physics2DServer collision iterations; NO_ENEMY_COLLIDE=1: enemies don't
@@ -222,6 +223,9 @@ func _process(delta: float) -> void :
 	if OS.get_environment("TARGET_FPS") != "" and Engine.target_fps != int(OS.get_environment("TARGET_FPS")):
 		Engine.target_fps = int(OS.get_environment("TARGET_FPS"))
 	hit_log_watch()
+	target_log(delta)
+	storm_edge()
+	hurt_host()
 	if role == "":
 		return
 	if not started:
@@ -630,6 +634,93 @@ func jitter_tick() -> void :
 				jitter.remote_shown[index] = [shown, step]
 			else:
 				jitter.remote_shown[index] = [shown, - 1.0]
+
+
+# HURT_HOST=n (host): in wave 1 at wave time 5 s the host player takes n damage (through armor
+# and invincibility), e.g. to check HP at the next wave's start (log_run_check's hp=).
+var host_hurt: = false
+var host_hurt_checked: = false
+
+
+func hurt_host() -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("HURT_HOST") == "" or role != "host" or main == null or main.filename != MenuData.game_scene or main._cleaning_up:
+		return
+	if host_hurt and RunData.current_wave == 2 and not host_hurt_checked and not main._players.empty():
+		host_hurt_checked = true
+		print("[TEST] hurt_host wave 2 hp=", main._players[0].current_stats.health, "/", main._players[0].max_stats.health)
+	if host_hurt or RunData.current_wave != 1:
+		return
+	if main._wave_timer.wait_time - main._wave_timer.time_left < 5.0 or main._players.empty():
+		return
+	host_hurt = true
+	var args = TakeDamageArgs.new(RunData.DUMMY_PLAYER_INDEX)
+	args.dodgeable = false
+	args.armor_applied = false
+	args.bypass_invincibility = true
+	var _taken = main._players[0].take_damage(int(OS.get_environment("HURT_HOST")), args)
+	print("[TEST] hurt_host hp=", main._players[0].current_stats.health, "/", main._players[0].max_stats.health)
+
+
+# STORM_EDGE=1 (host, Last Potato Standing): from wave time 24 s the host player is held 60 px
+# outside the storm's circle, towards the arena's centre; screenshots at 26, 30 and 34 s
+# (WAVE_DURATION=40).
+var storm_edge_shots: = {}
+
+
+func storm_edge() -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("STORM_EDGE") != "1" or role != "host" or main == null or main.filename != MenuData.game_scene or main._cleaning_up:
+		return
+	var mode = get_node("/root/LanNet").mode
+	if not mode.has_method("get_storm"):
+		return
+	var elapsed = main._wave_timer.wait_time - main._wave_timer.time_left
+	if elapsed < 24.0 or main._players.empty() or main._players[0].dead:
+		return
+	var storm = mode.get_storm(main)
+	var rect = ZoneService.get_current_zone_rect()
+	var direction = (rect.position + rect.size / 2.0 - storm[0]).normalized()
+	if direction == Vector2.ZERO:
+		direction = Vector2.RIGHT
+	main._players[0].global_position = storm[0] + direction * (storm[1] + 60.0)
+	for at in [26, 30, 34]:
+		if elapsed >= at and not storm_edge_shots.has(at):
+			storm_edge_shots[at] = true
+			shot("storm_edge_%d" % at)
+
+
+# TARGET_LOG=1 (any role): once a second in a wave, what every player weapon aims at (its
+# current targets: script, name, distance to the player, and whether it is an Enemy).
+var target_log_wait: = 0.0
+
+
+func target_log(delta: float) -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("TARGET_LOG") != "1" or main == null or main.filename != MenuData.game_scene or main._cleaning_up:
+		return
+	target_log_wait += delta
+	if target_log_wait < 1.0:
+		return
+	target_log_wait = 0.0
+	for player in main._players:
+		if not is_instance_valid(player):
+			continue
+		var parts = []
+		for weapon in player.current_weapons:
+			var targets = []
+			for target in weapon._current_target:
+				if not is_instance_valid(target):
+					targets.append("freed")
+					continue
+				var script = target.get_script()
+				targets.append("%s:%s:%d:%s" % [script.resource_path.get_file() if script != null else target.get_class(), target.name, int(target.global_position.distance_to(player.global_position)), target is Enemy])
+			var odd = []
+			for body in weapon._targets_in_range:
+				if is_instance_valid(body) and not body is Enemy:
+					odd.append("%s:%s" % [body.get_class(), body.name])
+			parts.append("%s rot=%.2f shooting=%s cd=%d %s in_range=%d odd=%s" % [weapon.name, weapon.rotation, weapon._is_shooting, int(weapon._current_cooldown), targets, weapon._targets_in_range.size(), odd])
+		print("[TEST] targets t=%.1f p%d dead=%s %s" % [main._wave_timer.wait_time - main._wave_timer.time_left, player.player_index, player.dead, parts])
 
 
 # JITTER_LOG: frame times, physics ticks per frame, enemy motion per tick (jitter_tick), and on
@@ -1367,22 +1458,18 @@ func end_screen_actions(delta: float) -> void :
 		print("[TEST] ", tag, " scene=", scene.filename, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " won=", RunData.run_won, " wave=", RunData.current_wave, " title='", scene._title.text, "' character=", own.current_character.my_id, " gold=", own.gold, " weapons=", own.weapons.size(), " buttons restart=", scene._restart_button.visible, " new_run=", scene._new_run_button.visible, " exit=", scene._exit_button.visible, " exit_focus=", scene._exit_button.has_focus())
 		shot(tag)
 		end_step = 1
-		var option = scene.get("_lan_player_option")
-		if option != null:
-			var other = 1 - option.selected
-			option.select(other)
-			scene._on_LanPlayerOption_item_selected(other)
+		var player_list = scene.get("_lan_player_list")
+		if player_list != null:
+			var solo_view = get_node("/root/LanNet").solo_view
+			player_list.get_row((solo_view.shown_index + 1) % solo_view.get_player_count()).emit_signal("pressed")
 			log_end_screen_player(tag + "_other", scene)
 			end_step = 4
 	elif end_step == 4 and end_wait >= 2.0:
 		shot(tag + "_other")
-		var option = scene._lan_player_option
-		var own = 1 - option.selected
-		option.select(own)
-		scene._on_LanPlayerOption_item_selected(own)
+		scene._lan_player_list.get_row(get_node("/root/LanNet").solo_view.player_index).emit_signal("pressed")
 		log_end_screen_player(tag + "_own", scene)
 		end_step = 1
-	elif end_step == 1 and end_wait >= (2.5 if role != "host" else 5.5):
+	elif end_step == 1 and end_wait >= (2.5 if role != "host" else 5.5) and OS.get_environment("END_STAY") != "1":
 		print("[TEST] ", tag, " exit")
 		scene._on_ExitButton_pressed()
 		end_step = 2
@@ -1391,8 +1478,12 @@ func end_screen_actions(delta: float) -> void :
 
 func log_end_screen_player(tag: String, scene) -> void :
 	var shown = RunData.players_data[0]
-	var option = scene._lan_player_option
-	print("[TEST] ", tag, " option='", option.get_item_text(option.selected), "' items=", option.get_item_count(), " character=", shown.current_character.my_id, " weapons=", shown.weapons.size(), " items_shown=", scene._items_container._elements.get_child_count(), " max_hp=", Utils.get_stat(Keys.stat_max_hp_hash, 0), " focus_left=", scene._exit_button.focus_neighbour_left)
+	var player_list = scene._lan_player_list
+	var highlighted = []
+	for player_index in player_list.rows:
+		if not player_list.rows[player_index].flat:
+			highlighted.append(player_index)
+	print("[TEST] ", tag, " shown=", get_node("/root/LanNet").solo_view.shown_index, " highlighted=", highlighted, " rows=", player_list.rows.size(), " character=", shown.current_character.my_id, " weapons=", shown.weapons.size(), " items_shown=", scene._items_container._elements.get_child_count(), " max_hp=", Utils.get_stat(Keys.stat_max_hp_hash, 0), " focus_left=", scene._exit_button.focus_neighbour_left)
 
 
 func log_saved_run(tag: String) -> void :
@@ -1493,7 +1584,7 @@ func log_run_check(tag: String) -> void :
 		var weapons = []
 		for w in pd.weapons:
 			weapons.append(w.my_id)
-		out.append("%d: gold=%d items=%d weapons=%s nodes=%d locked=%d dead=%s" % [i, pd.gold, pd.items.size(), weapons, main._players[i].current_weapons.size(), RunData.locked_shop_items[i].size(), main._players[i].dead])
+		out.append("%d: gold=%d items=%d weapons=%s nodes=%d locked=%d dead=%s hp=%d/%d" % [i, pd.gold, pd.items.size(), weapons, main._players[i].current_weapons.size(), RunData.locked_shop_items[i].size(), main._players[i].dead, main._players[i].current_stats.health, main._players[i].max_stats.health])
 	print("[TEST] ", tag, " wave=", RunData.current_wave, " coop=", RunData.is_coop_run, " count=", RunData.get_player_count(), " digest=", RB.digest())
 	for line in out:
 		print("[TEST] ", tag, "   ", line)

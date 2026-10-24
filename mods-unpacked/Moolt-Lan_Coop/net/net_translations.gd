@@ -74,6 +74,7 @@ const STRINGS: = {
 		"LAN_NEXT_WAVE_IN": "Next wave in", 
 		"LAN_HINT_HOST_RESULTS": "The run is over. Waiting for the host to leave the results.", 
 		"LAN_BACK_TO_LOBBY": "Back to the lobby", 
+		"LAN_END_PLAYERS": "Players", 
 	}, 
 	"de": {
 		"MENU_MULTIPLAYER": "Mehrspieler", 
@@ -146,6 +147,7 @@ const STRINGS: = {
 		"LAN_NEXT_WAVE_IN": "Nächste Welle in", 
 		"LAN_HINT_HOST_RESULTS": "Der Lauf ist vorbei. Warte, bis der Host die Ergebnisse verlässt.", 
 		"LAN_BACK_TO_LOBBY": "Zurück zur Lobby", 
+		"LAN_END_PLAYERS": "Spieler", 
 	}, 
 }
 

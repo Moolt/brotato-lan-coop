@@ -18,7 +18,6 @@ signal state_changed()
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const Scoreboard = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/scoreboard.gd")
-const ResultsPanel = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/results_panel.gd")
 
 const KILLS: = "kills"
 const SCOREBOARD_NAME: = "LanScoreboard"
@@ -309,19 +308,18 @@ func get_result_text() -> String:
 	return tr("LAN_RESULT_WINNER").replace("{0}", get_player_name(leader)) if leader >= 0 else tr("LAN_RESULT_DRAW")
 
 
-# (both) The end screen: competitive modes add their results.
+# Whether the end screen's player list shows the winner, ranks and scores (end_run_player_list.gd).
+func has_results() -> bool:
+	return not get_score_columns().empty() and get_player_count() >= 2
+
+
+# (both) The end screen: competitive modes set the title.
 func on_end_screen(end_run: Node) -> void :
-	if get_score_columns().empty() or get_player_count() < 2:
+	if not has_results():
 		return
 	var title: String = get_end_title()
 	if not title.empty():
 		end_run._title.text = title
-	var panel: = ResultsPanel.new()
-	panel.init(self)
-	var column: Node = end_run._title.get_parent().get_parent()
-	column.add_child(panel)
-	column.move_child(panel, end_run._title.get_parent().get_index() + 1)
-
 
 
 # Helpers

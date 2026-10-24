@@ -418,11 +418,16 @@ func clean_up_room() -> void :
 		_wave_timer.tick_timer.stop()
 		# The wave scene stays up for the upgrades (solo view, one player in RunData), so no
 		# player weapon may attack any more: in PvP modes the other players are still standing.
+		# Their timers stop too: the rail gun's one-second timer reloads its stats (init_stats
+		# for its coop player_index, which RunData no longer holds).
 		for player in _players:
 			if is_instance_valid(player):
 				for weapon in player.current_weapons:
 					weapon._current_target.clear()
 					weapon._range_shape.set_deferred("disabled", true)
+					for child in weapon.get_children():
+						if child is Timer:
+							child.stop()
 
 
 # clean_up_room starts with this. The host sends its verdict (wave failed, run lost, run won)

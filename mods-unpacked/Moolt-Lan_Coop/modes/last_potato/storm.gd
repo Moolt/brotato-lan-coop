@@ -28,7 +28,13 @@ func _draw() -> void :
 	var storm: Array = _mode.get_storm(_main)
 	var center: Vector2 = storm[0]
 	var radius: float = storm[1]
-	# A band wide enough to cover the whole arena outside the circle.
-	var band: float = ZoneService.get_current_zone_rect().size.length() * 2.0
-	draw_arc(center, radius + band / 2.0, 0.0, TAU, POINTS, OUTSIDE_COLOR, band)
+	# A band wide enough to cover the whole arena outside the circle, as quads that only share
+	# edges (one thick draw_arc overlaps itself where it closes: a darker wedge on the right).
+	var outer: float = radius + ZoneService.get_current_zone_rect().size.length() * 2.0
+	var colors: = PoolColorArray([OUTSIDE_COLOR, OUTSIDE_COLOR, OUTSIDE_COLOR, OUTSIDE_COLOR])
+	var previous: = Vector2.RIGHT
+	for i in range(1, POINTS + 1):
+		var direction: = Vector2.RIGHT.rotated(TAU * i / POINTS)
+		draw_polygon(PoolVector2Array([center + previous * radius, center + direction * radius, center + direction * outer, center + previous * outer]), colors)
+		previous = direction
 	draw_arc(center, radius, 0.0, TAU, POINTS * 2, RING_COLOR, RING_WIDTH, true)
