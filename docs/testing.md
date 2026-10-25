@@ -150,6 +150,7 @@ Host here, join on the second PC (same layout, its own test copy from `tools/mak
 
 ## Manual test by the user
 Two windows, `--resolution 1280x720 --position 0,0` and `--position 1280,0`, no role argument (the driver stays idle), started with `nohup` and logging to files. Check the logs afterwards.
+`tools/play2.sh [game copy]` does this: it builds a test copy at `~/.cache/brotato-lan-test/game` on first use (`make_test_copy.sh`), closes that copy's open windows, starts both and logs to `~/.cache/brotato-lan-test/logs/left.log` / `right.log`. `GODOT` overrides the binary (default `../Godot/Godot_v3.7-dev1_x11.64` next to the repo), `WIDTH` / `HEIGHT` the window size.
 
 ## Pitfalls
 - The session scratchpad can be emptied between sessions. Godot started with `--path` to a missing copy opens the editor on the last project, `Decompiled/`, which may re-save vanilla files. Rebuild the copy first and check `git status` in `Decompiled/` afterwards.
