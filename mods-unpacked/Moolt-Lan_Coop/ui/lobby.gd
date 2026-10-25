@@ -614,8 +614,20 @@ func _refresh_players() -> void :
 		child.queue_free()
 
 	_count_label.text = tr("LAN_PLAYER_COUNT").replace("{0}", str(_net.get_player_count())).replace("{1}", str(NetProtocol.MAX_PLAYERS))
-	for entry in _net.players:
-		_player_list.add_child(_new_player_row(entry))
+	if not ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE)):
+		for entry in _net.players:
+			_player_list.add_child(_new_player_row(entry))
+		return
+	# Modes with teams: each team under its name, in its colour (players by index within it).
+	for team in NetProtocol.TEAM_COUNT:
+		var header: = Label.new()
+		header.text = ModeRegistry.TEAM_NAMES[team]
+		header.add_font_override("font", ROW_FONT)
+		header.add_color_override("font_color", ModeRegistry.TEAM_COLORS[team % ModeRegistry.TEAM_COLORS.size()])
+		_player_list.add_child(header)
+		for entry in _net.players:
+			if int(entry.get("team", 0)) % NetProtocol.TEAM_COUNT == team:
+				_player_list.add_child(_new_player_row(entry))
 
 
 func _new_player_row(entry: Dictionary) -> Control:

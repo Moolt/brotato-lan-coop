@@ -74,9 +74,21 @@ func _ready() -> void :
 	var detail_font: DynamicFont = DETAIL_FONT.duplicate()
 	detail_font.size = DETAIL_FONT_SIZE
 	var player_indices: Array = _mode.get_ranking() if ranked else range(_solo_view.get_player_count())
-	for rank in player_indices.size():
-		var player_index: int = player_indices[rank]
-		var row: = _new_row(player_index, rank + 1 if ranked else 0, detail_font)
+	# Groups (teams) under a header in their colour; ranks count within the group.
+	var rank: = 0
+	var group: = - 1
+	for player_index in player_indices:
+		if ranked and _mode.get_group(player_index) != group:
+			group = _mode.get_group(player_index)
+			if group >= 0:
+				var header: = _new_label(_mode.get_group_title(group), NAME_FONT)
+				header.add_color_override("font_color", _mode.get_group_color(group))
+				header.clip_text = false
+				header.autowrap = true
+				row_column.add_child(header)
+				rank = 0
+		rank += 1
+		var row: = _new_row(player_index, rank if ranked else 0, detail_font)
 		row_column.add_child(row)
 		rows[player_index] = row
 

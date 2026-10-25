@@ -1,16 +1,18 @@
 extends Control
 
 # In-wave HUD of a mode with scores (added by LanMode.on_wave_started): top right, one row per
-# player in the mode's ranking (colour, name, the mode's columns, a note such as "out"), and a
-# banner line under the wave timer (LanMode.get_banner). Short toasts (show_toast) replace the
-# banner for a moment. Refreshed when the mode state changes and a few times a second.
+# player in the mode's ranking (colour, name, the mode's columns, a note such as "out"; groups
+# such as teams under a header row with their totals), and a banner line under the wave timer
+# (LanMode.get_banner). Short toasts (show_toast) replace the banner for a moment. Refreshed when
+# the mode state changes and a few times a second. Tab or the gamepad's Back button shows or
+# hides the table (remembered in the config); the banner stays.
+# It sits in UI/HUD, a MarginContainer: the HUD's margins put it level with the health bars.
 
 const FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 
 const FONT_SIZE: = 20
 const BANNER_FONT_SIZE: = 30
 const WIDTH: = 330.0
-const MARGIN: = 20.0
 const BANNER_TOP: = 140.0
 const REFRESH_INTERVAL: = 0.25
 const TOAST_TIME: = 3.0
@@ -49,9 +51,10 @@ func _ready() -> void :
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.anchor_left = 1.0
 	_panel.anchor_right = 1.0
-	_panel.margin_left = - WIDTH - MARGIN
-	_panel.margin_right = - MARGIN
-	_panel.margin_top = MARGIN
+	_panel.margin_left = - WIDTH
+	_panel.margin_right = 0
+	_panel.margin_top = 0
+	_panel.visible = _mode.net.config.show_scoreboard
 	_panel.self_modulate = Color(1, 1, 1, 0.75)
 	add_child(_panel)
 	_grid = GridContainer.new()
@@ -88,6 +91,20 @@ func _process(delta: float) -> void :
 		refresh()
 
 
+func _unhandled_input(event: InputEvent) -> void :
+	var toggle: = false
+	if event is InputEventKey:
+		toggle = event.pressed and not event.echo and event.scancode == KEY_TAB
+	elif event is InputEventJoypadButton:
+		toggle = event.pressed and event.button_index == JOY_SELECT
+	if not toggle:
+		return
+	get_tree().set_input_as_handled()
+	_panel.visible = not _panel.visible
+	_mode.net.config.show_scoreboard = _panel.visible
+	_mode.net.config.save_config()
+
+
 func show_toast(text: String) -> void :
 	_toast_left = TOAST_TIME
 	_banner.text = text
@@ -108,7 +125,17 @@ func refresh() -> void :
 	for column in columns:
 		_add_cell(tr(column[1]), MUTED_COLOR)
 	var rank: = 1
+	var group: = - 1
 	for player_index in _mode.get_ranking():
+		if _mode.get_group(player_index) != group:
+			group = _mode.get_group(player_index)
+			if group >= 0:
+				if rank > 1:
+					# An empty row between groups.
+					for _i in _grid.columns:
+						_add_cell("", MUTED_COLOR)
+				_add_group_row(group, columns)
+				rank = 1
 		var color: Color = CoopService.get_player_color(player_index)
 		var note: String = _mode.get_player_note(player_index)
 		var muted: bool = _mode.is_player_out(player_index)
@@ -121,6 +148,19 @@ func refresh() -> void :
 			_add_cell(str(_mode.get_score(column[0], player_index)), MUTED_COLOR if muted else Color.white)
 		rank += 1
 	_refresh_banner()
+
+
+# A group's header: its title in its colour and its players' totals.
+func _add_group_row(group: int, columns: Array) -> void :
+	var color: Color = _mode.get_group_color(group)
+	_add_cell("", color)
+	_add_cell(_mode.get_group_title(group), color, true)
+	for column in columns:
+		var total: = 0
+		for player_index in _mode.get_player_count():
+			if _mode.get_group(player_index) == group:
+				total += _mode.get_score(column[0], player_index)
+		_add_cell(str(total), color)
 
 
 func _refresh_banner() -> void :

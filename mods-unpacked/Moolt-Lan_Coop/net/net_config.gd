@@ -26,6 +26,10 @@ var last_difficulty: = 0
 var last_choice_time: = NetProtocol.DEFAULT_CHOICE_TIME
 var last_scaling_preset: = NetProtocol.SCALING_PRESET_NORMAL
 var last_mode: = NetProtocol.DEFAULT_MODE
+var last_share_materials: = true
+var last_share_crates: = true
+# The in-wave scoreboard of modes with scores (toggled with Tab or the gamepad's Back button).
+var show_scoreboard: = true
 var scaling: = NetProtocol.DEFAULT_SCALING.duplicate()
 var rejoin_token: = 0
 
@@ -41,6 +45,9 @@ func load_config() -> void :
 		last_choice_time = int(file.get_value(SECTION, "last_choice_time", last_choice_time))
 		last_scaling_preset = int(file.get_value(SECTION, "last_scaling_preset", last_scaling_preset))
 		last_mode = str(file.get_value(SECTION, "last_mode", last_mode))
+		last_share_materials = bool(file.get_value(SECTION, "last_share_materials", last_share_materials))
+		last_share_crates = bool(file.get_value(SECTION, "last_share_crates", last_share_crates))
+		show_scoreboard = bool(file.get_value(SECTION, "show_scoreboard", show_scoreboard))
 		rejoin_token = int(file.get_value(SECTION, "rejoin_token", rejoin_token))
 		for key in scaling:
 			scaling[key] = clamp(float(file.get_value(SCALING_SECTION, key, scaling[key])), 0.0, NetProtocol.MAX_SCALING_VALUE)
@@ -66,6 +73,9 @@ func save_config() -> void :
 	file.set_value(SECTION, "last_choice_time", last_choice_time)
 	file.set_value(SECTION, "last_scaling_preset", last_scaling_preset)
 	file.set_value(SECTION, "last_mode", last_mode)
+	file.set_value(SECTION, "last_share_materials", last_share_materials)
+	file.set_value(SECTION, "last_share_crates", last_share_crates)
+	file.set_value(SECTION, "show_scoreboard", show_scoreboard)
 	file.set_value(SECTION, "rejoin_token", rejoin_token)
 	for key in scaling:
 		file.set_value(SCALING_SECTION, key, scaling[key])

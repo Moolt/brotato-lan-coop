@@ -78,6 +78,16 @@ static func uses_teams(mode_id: String) -> bool:
 	return info != null and info.teams
 
 
+# The lobby settings the mode decides itself (its FIXED_SETTINGS constant): the settings page
+# hides them and the summary leaves them out.
+static func get_fixed_settings(mode_id: String) -> Array:
+	var info = get_info(mode_id)
+	if info == null:
+		return []
+	var fixed = load(info.script).get_script_constant_map().get("FIXED_SETTINGS")
+	return fixed if typeof(fixed) == TYPE_ARRAY else []
+
+
 static func get_name_key(mode_id: String) -> String:
 	var info = get_info(mode_id)
 	return info.name if info != null else "?"

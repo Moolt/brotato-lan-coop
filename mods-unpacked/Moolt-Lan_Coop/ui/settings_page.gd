@@ -1,7 +1,8 @@
 extends Control
 
 # The lobby's run settings, opened with its Settings button and shown over the lobby: one row
-# per setting (label, dropdown). Only the host opens it and changes them
+# per setting (label, dropdown). Rows of settings the mode fixes (ModeRegistry.get_fixed_settings)
+# are hidden. Only the host opens it and changes them
 # (LanNet.set_lobby_settings, applied at once); during a run they are read-only. Back or
 # ui_cancel (handled by the lobby) closes the page.
 
@@ -27,6 +28,9 @@ var _difficulty_option: OptionButton
 var _choice_time_option: OptionButton
 var _scaling_option: OptionButton
 var _scaling_info: Label
+var _share_materials_option: OptionButton
+var _share_crates_option: OptionButton
+var _loot_info: Label
 var _back_button: Button
 
 
@@ -51,6 +55,10 @@ func _init() -> void :
 	_scaling_option = _add_row(column, "LAN_SETTING_SCALING", "scaling_preset")
 	# What the preset adds per extra player, from the knobs the clients get.
 	_scaling_info = _add_info(column)
+	_share_materials_option = _add_row(column, "LAN_SETTING_SHARE_MATERIALS", "share_materials")
+	_share_crates_option = _add_row(column, "LAN_SETTING_SHARE_CRATES", "share_crates")
+	_loot_info = _add_info(column)
+	_loot_info.text = "LAN_SETTING_LOOT_INFO"
 
 	var spacer: = Control.new()
 	spacer.rect_min_size = Vector2(0, 12)
@@ -102,6 +110,12 @@ func refresh() -> void :
 			.replace("{1}", _percent(scaling.get("enemy_health_per_player", 0.0))) \
 			.replace("{2}", _percent(scaling.get("enemy_damage_per_player", 0.0))) \
 			.replace("{3}", _percent(scaling.get("enemy_health_per_player_beyond_4", 0.0)))
+	var fixed: = ModeRegistry.get_fixed_settings(mode_id)
+	for option in [_share_materials_option, _share_crates_option]:
+		var setting: String = option.get_meta("setting")
+		option.select(option.get_item_index(1 if settings.get(setting, true) else 0))
+		option.get_parent().visible = not fixed.has(setting)
+	_loot_info.visible = _share_materials_option.get_parent().visible or _share_crates_option.get_parent().visible
 	_chain_focus()
 
 
@@ -131,6 +145,11 @@ static func get_summary(settings: Dictionary) -> String:
 			parts.append(TranslationServer.translate("LAN_SUMMARY_SCALING_RELAXED"))
 		NetProtocol.SCALING_PRESET_TOUGH:
 			parts.append(TranslationServer.translate("LAN_SUMMARY_SCALING_TOUGH"))
+	var fixed: = ModeRegistry.get_fixed_settings(mode_id)
+	if not settings.get("share_materials", true) and not fixed.has("share_materials"):
+		parts.append(TranslationServer.translate("LAN_SUMMARY_OWN_MATERIALS"))
+	if not settings.get("share_crates", true) and not fixed.has("share_crates"):
+		parts.append(TranslationServer.translate("LAN_SUMMARY_OWN_CRATES"))
 	return PoolStringArray(parts).join(" · ")
 
 
@@ -139,7 +158,7 @@ static func get_summary(settings: Dictionary) -> String:
 func _chain_focus() -> void :
 	var controls: = []
 	for control in _get_options() + [_back_button]:
-		if control.focus_mode != Control.FOCUS_NONE:
+		if control.focus_mode != Control.FOCUS_NONE and control.get_parent().visible:
 			controls.append(control)
 	for i in controls.size():
 		var control: Control = controls[i]
@@ -170,10 +189,14 @@ func _fill_options() -> void :
 	_scaling_option.clear()
 	for preset in NetProtocol.SCALING_PRESET_KEYS.size():
 		_scaling_option.add_item(tr(NetProtocol.SCALING_PRESET_KEYS[preset]), preset)
+	for option in [_share_materials_option, _share_crates_option]:
+		option.clear()
+		option.add_item(tr("LAN_SETTING_ON"), 1)
+		option.add_item(tr("LAN_SETTING_OFF"), 0)
 
 
 func _get_options() -> Array:
-	return [_mode_option, _zone_option, _difficulty_option, _choice_time_option, _scaling_option]
+	return [_mode_option, _zone_option, _difficulty_option, _choice_time_option, _scaling_option, _share_materials_option, _share_crates_option]
 
 
 func _get_mode_index(mode_id: String) -> int:
@@ -210,6 +233,7 @@ func _add_row(column: VBoxContainer, text_key: String, setting: String) -> Optio
 	var option: = OptionButton.new()
 	option.theme = OPTION_THEME
 	option.rect_min_size = OPTION_SIZE
+	option.set_meta("setting", setting)
 	var _e = option.connect("item_selected", self, "_on_option_item_selected", [option, setting])
 	row.add_child(option)
 	return option
@@ -221,4 +245,6 @@ func _on_option_item_selected(index: int, option: OptionButton, setting: String)
 	var value = option.get_item_id(index)
 	if setting == "mode":
 		value = ModeRegistry.MODES[value].id
+	elif setting == "share_materials" or setting == "share_crates":
+		value = value == 1
 	_net.set_lobby_settings({setting: value})

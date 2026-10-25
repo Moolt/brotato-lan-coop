@@ -197,7 +197,7 @@ func host(port: int = - 1) -> int:
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
 	lobby_settings.scaling = config.scaling.duplicate()
-	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset, "mode": config.last_mode})
+	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset, "mode": config.last_mode, "share_materials": config.last_share_materials, "share_crates": config.last_share_crates})
 	_apply_multiplayer_unlocks()
 	progress.start()
 	last_end_reason = ""
@@ -279,7 +279,7 @@ func set_local_player_info(changes: Dictionary) -> void :
 		rpc_id(HOST_PEER_ID, "_rpc_update_player", changes)
 
 
-# Host only, not during a run: zone, difficulty, choice time, scaling preset, mode. Invalid values
+# Host only, not during a run: zone, difficulty, choice time, scaling preset, mode, loot sharing. Invalid values
 # are ignored; valid ones are remembered.
 func set_lobby_settings(changes: Dictionary) -> void :
 	if not is_host or run_in_progress:
@@ -290,6 +290,8 @@ func set_lobby_settings(changes: Dictionary) -> void :
 		config.last_choice_time = lobby_settings.choice_time
 		config.last_scaling_preset = lobby_settings.scaling_preset
 		config.last_mode = lobby_settings.mode
+		config.last_share_materials = lobby_settings.share_materials
+		config.last_share_crates = lobby_settings.share_crates
 		config.save_config()
 		_broadcast_lobby_state()
 
@@ -1078,6 +1080,10 @@ func _apply_lobby_settings(changes: Dictionary) -> bool:
 	if changes.has("mode") and ModeRegistry.is_valid(changes.mode) and lobby_settings.mode != changes.mode:
 		lobby_settings.mode = changes.mode
 		changed = true
+	for key in ["share_materials", "share_crates"]:
+		if changes.has(key) and typeof(changes[key]) == TYPE_BOOL and lobby_settings[key] != changes[key]:
+			lobby_settings[key] = changes[key]
+			changed = true
 	return changed
 
 

@@ -80,9 +80,11 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `LOAD_STALL=s` | join: the main thread blocks s seconds when the first wave's `LanWaveSync` enters the tree, as a slow load would (the host's 15 s load timeout) |
 | `END_STAY=1` | host and join: stay on the end screen instead of pressing Exit (to look at it by hand; start without `timeout`) |
 | `HURT_HOST=n` | host: in wave 1 at 5 s the host player takes n damage; the next-wave check (`log_run_check`) logs every player's `hp=` |
+| `SHARE_MATERIALS=0`, `SHARE_CRATES=0` | host: loot sharing off for the run (`lobby_settings`, not remembered) |
+| `TOGGLE_TEST=1` | any role, a mode with a scoreboard: in wave 1 Tab at 6 s, the gamepad's Back at 8 s; logs the table's visibility before and after |
 | `STORM_EDGE=1` | host, Last Potato Standing: from wave time 24 s the host player is held 60 px outside the storm, towards the arena centre; screenshots at 26, 30, 34 s (`WAVE_DURATION=40`) |
 | `TARGET_LOG=1` | any role: once a second in a wave, every player weapon's targets (script, name, distance, Enemy or not), rotation, shooting state, bodies in range that are no Enemy |
-| `MODE=id` | host: the run's game mode (`lobby_settings.mode`, an id from `modes/mode_registry.gd`), not remembered. `log_sync` and `log_wave_end` log the mode's id, serial and state on both sides (`mode=` lines; the draft pool as its size). With the default 3 players (host, client, fake) the fake dies at t=18: in the elimination modes it is out from then on; in Team Race host and fake are one team, the client the other |
+| `MODE=id` | host (and the `lobby` role, with `FAKES` fake players): the run's game mode (`lobby_settings.mode`, an id from `modes/mode_registry.gd`), not remembered. `log_sync` and `log_wave_end` log the mode's id, serial and state on both sides (`mode=` lines; the draft pool as its size). With the default 3 players (host, client, fake) the fake dies at t=18: in the elimination modes it is out from then on; in Team Race host and fake are one team, the client the other |
 | `PET_TEST=1` | host: at t=16 a Blazemander for player 0 and a Bonk Dog for player 1; 5 s into the next wave both sides log every pet (owner, position, net id) |
 | `RELOAD_RACE=1` | host and join: when the wave-end state arrives, every player is queued for a stats reload in main's `StatsManager` (as a stat change in the wave's last frames leaves it); without the drop before the solo view this raised script errors under the mod's path |
 

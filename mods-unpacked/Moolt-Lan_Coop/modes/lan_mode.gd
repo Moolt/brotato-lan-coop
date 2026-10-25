@@ -138,16 +138,19 @@ func get_enemy_targets(_enemy: Node, _players: Array):
 
 
 # Loot (host)
+# The lobby's share_materials and share_crates settings apply unless a mode fixes them: a mode
+# that answers these on its own lists them in its FIXED_SETTINGS constant, so the settings page
+# hides them (ModeRegistry.get_fixed_settings).
 
 # The players a picked-up material is split over (one material and one XP each, round-robin);
 # null = everyone, as vanilla coop.
-func get_material_receivers(_picker: int):
-	return null
+func get_material_receivers(picker: int):
+	return null if get_lobby_setting("share_materials", true) else [picker]
 
 
 # Whether crates go to any player (vanilla's share_coop_loot option) or to the picker.
 func shares_crates() -> bool:
-	return ProgressData.settings.share_coop_loot
+	return get_lobby_setting("share_crates", true)
 
 
 # A player picked up materials worth value (before the split).
@@ -245,7 +248,22 @@ func get_score_columns() -> Array:
 	return []
 
 
-# What a row shows under the name ("" = nothing): out, boss, team, ...
+# Players can be shown in groups (teams): the scoreboard and the end screen's list put a header
+# (title, colour) above each group's players. The ranking must keep a group's players together.
+# -1 = no groups.
+func get_group(_player_index: int) -> int:
+	return - 1
+
+
+func get_group_title(_group: int) -> String:
+	return ""
+
+
+func get_group_color(_group: int) -> Color:
+	return Color.white
+
+
+# What a row shows under the name ("" = nothing): out, boss, ...
 func get_player_note(_player_index: int) -> String:
 	return ""
 
@@ -323,6 +341,10 @@ func on_end_screen(end_run: Node) -> void :
 
 
 # Helpers
+
+func get_lobby_setting(key: String, default_value):
+	return net.lobby_settings.get(key, default_value)
+
 
 func get_player_count() -> int:
 	return int(state.get("player_count", 0))

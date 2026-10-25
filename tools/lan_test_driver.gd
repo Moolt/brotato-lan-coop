@@ -226,6 +226,7 @@ func _process(delta: float) -> void :
 	target_log(delta)
 	storm_edge()
 	hurt_host()
+	toggle_test()
 	if role == "":
 		return
 	if not started:
@@ -634,6 +635,40 @@ func jitter_tick() -> void :
 				jitter.remote_shown[index] = [shown, step]
 			else:
 				jitter.remote_shown[index] = [shown, - 1.0]
+
+
+# TOGGLE_TEST=1 (any role, a mode with a scoreboard): in wave 1 at 6 s Tab, at 8 s the gamepad's
+# Back button; logs whether the scoreboard's table is shown before and after each.
+var toggle_steps: = {}
+
+
+func toggle_test() -> void :
+	var main = get_tree().current_scene
+	if OS.get_environment("TOGGLE_TEST") != "1" or main == null or main.filename != MenuData.game_scene or main._cleaning_up or RunData.current_wave != 1:
+		return
+	var board = main.get_node_or_null("UI/HUD/LanScoreboard")
+	if board == null:
+		return
+	var elapsed = main._wave_timer.wait_time - main._wave_timer.time_left
+	for at in [6, 8]:
+		if elapsed >= at and not toggle_steps.has(at):
+			toggle_steps[at] = true
+			var before = board._panel.visible
+			var event
+			if at == 6:
+				event = InputEventKey.new()
+				event.scancode = KEY_TAB
+			else:
+				event = InputEventJoypadButton.new()
+				event.button_index = JOY_SELECT
+			event.pressed = true
+			Input.parse_input_event(event)
+			call_deferred("toggle_log", board, at, before)
+
+
+func toggle_log(board, at: int, before: bool) -> void :
+	yield(get_tree(), "idle_frame")
+	print("[TEST] toggle_test t=", at, " before=", before, " after=", board._panel.visible, " saved=", get_node("/root/LanNet").config.show_scoreboard)
 
 
 # HURT_HOST=n (host): in wave 1 at wave time 5 s the host player takes n damage (through armor
@@ -1090,6 +1125,11 @@ func _host_step() -> void :
 			if OS.get_environment("MODE") != "":
 				net.lobby_settings.mode = OS.get_environment("MODE")
 				net._broadcast_lobby_state()
+			# SHARE_MATERIALS=0 / SHARE_CRATES=0: loot sharing off (not remembered).
+			for key in ["share_materials", "share_crates"]:
+				if OS.get_environment(key.to_upper()) != "":
+					net.lobby_settings[key] = OS.get_environment(key.to_upper()) == "1"
+					net._broadcast_lobby_state()
 			m.get_node("LanLobby")._start_button.emit_signal("pressed")
 			next_t = 13.0
 		5:
@@ -1904,6 +1944,13 @@ func _lobby_step() -> void :
 		10:
 			var lobby = m.get_node("LanLobby")
 			print("[TEST] lobby after ready focus: character=", lobby._focused_character, " preview=", lobby._starting_items_character.my_id if lobby._starting_items_character != null else "-", " popup=", lobby._starting_item_popup.visible)
+			# MODE=id: that mode (not remembered) and $FAKES fake players, e.g. teams in the list
+			# and the mode's settings rows.
+			if OS.get_environment("MODE") != "":
+				var net = get_node("/root/LanNet")
+				net.lobby_settings.mode = OS.get_environment("MODE")
+				add_fake_players(net, int(OS.get_environment("FAKES")) if OS.get_environment("FAKES") != "" else 0)
+				net._broadcast_lobby_state()
 			# Settings page: open, change the choice time, close with ui_cancel.
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			lobby._settings_button.emit_signal("pressed")

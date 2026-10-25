@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 21
+const PROTOCOL_VERSION: = 22
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -186,6 +186,11 @@ static func default_lobby_settings() -> Dictionary:
 		"choice_time": DEFAULT_CHOICE_TIME, 
 		"scaling_preset": SCALING_PRESET_NORMAL, 
 		"mode": DEFAULT_MODE, 
+		# Loot sharing (modes may fix them: ModeRegistry.get_fixed_settings). Materials: every
+		# picked-up material and its XP are split over all players (vanilla coop), else they stay
+		# with the picker. Crates: any player may take a crate (vanilla's share_coop_loot).
+		"share_materials": true, 
+		"share_crates": true, 
 	}
 
 

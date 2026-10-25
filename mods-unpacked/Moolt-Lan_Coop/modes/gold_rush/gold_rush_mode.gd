@@ -9,6 +9,8 @@ const DEATH_DROP_SHARE: = 0.5
 const DEATH_DROP_SPREAD: = 100
 const MATERIALS: = "materials"
 const DROPPED: = "dropped"
+# Loot is never shared here (ModeRegistry.get_fixed_settings).
+const FIXED_SETTINGS: = ["share_materials", "share_crates"]
 
 const STRINGS: = {
 	"en": {

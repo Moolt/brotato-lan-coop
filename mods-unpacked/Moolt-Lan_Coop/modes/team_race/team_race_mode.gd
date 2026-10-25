@@ -22,6 +22,8 @@ const SPAWN_RADIUS_BASE: = 60.0
 const SPAWN_RADIUS_PER_PLAYER: = 15.0
 const DIVIDER_NAME: = "LanTeamDivider"
 const DRAW: = 2
+# Materials go to the picker's team, crates to the picker (ModeRegistry.get_fixed_settings).
+const FIXED_SETTINGS: = ["share_materials", "share_crates"]
 
 const STRINGS: = {
 	"en": {
@@ -230,7 +232,7 @@ func can_hit(target: Node, hitbox: Node) -> bool:
 
 func get_material_receivers(picker: int):
 	if not is_split():
-		return null
+		return .get_material_receivers(picker)
 	var receivers: = []
 	for player_index in state.teams.size():
 		if state.teams[player_index] == get_team(picker):
@@ -312,11 +314,18 @@ func get_rank_key(player_index: int) -> Array:
 	return [1 if team == state.get("winner_team", - 1) else 0, 1 - team] + .get_rank_key(player_index)
 
 
-func get_player_note(player_index: int) -> String:
-	var team: = get_team(player_index)
+func get_group(player_index: int) -> int:
+	return get_team(player_index) if is_split() else - 1
+
+
+func get_group_title(team: int) -> String:
 	if is_team_out(team):
-		return get_team_name(team) + ", " + tr("LAN_NOTE_TEAM_OUT").replace("{0}", str(state.out_wave[team]))
+		return get_team_name(team) + " · " + tr("LAN_NOTE_TEAM_OUT").replace("{0}", str(state.out_wave[team]))
 	return get_team_name(team)
+
+
+func get_group_color(team: int) -> Color:
+	return ModeRegistry.TEAM_COLORS[team % ModeRegistry.TEAM_COLORS.size()]
 
 
 func get_banner(main: Node) -> String:
