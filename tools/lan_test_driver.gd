@@ -1951,6 +1951,13 @@ func _lobby_step() -> void :
 				net.lobby_settings.mode = OS.get_environment("MODE")
 				add_fake_players(net, int(OS.get_environment("FAKES")) if OS.get_environment("FAKES") != "" else 0)
 				net._broadcast_lobby_state()
+				# Teams: a click on the other team's header joins it.
+				var lobby_node = m.get_node("LanLobby")
+				var before = net.get_local_player().get("team", 0)
+				for child in lobby_node._player_list.get_children():
+					if child is Button and child.text.begins_with(tr(["LAN_TEAM_A", "LAN_TEAM_B"][1 - before]) + " ("):
+						child.emit_signal("pressed")
+				print("[TEST] lobby_team_header before=", before, " after=", net.get_local_player().get("team", 0))
 			# Settings page: open, change the choice time, close with ui_cancel.
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 			lobby._settings_button.emit_signal("pressed")

@@ -618,12 +618,30 @@ func _refresh_players() -> void :
 		for entry in _net.players:
 			_player_list.add_child(_new_player_row(entry))
 		return
-	# Modes with teams: each team under its name, in its colour (players by index within it).
+	# Modes with teams: each team under its name, in its colour (players by index within it). A
+	# click on the name joins that team (mouse only; gamepads have the Switch team button).
+	var can_switch: bool = not _net.run_in_progress and not _net.lobby_settings.get("in_wave", false)
 	for team in NetProtocol.TEAM_COUNT:
-		var header: = Label.new()
-		header.text = ModeRegistry.TEAM_NAMES[team]
+		var color: Color = ModeRegistry.TEAM_COLORS[team % ModeRegistry.TEAM_COLORS.size()]
+		var header: = Button.new()
+		header.flat = true
+		header.focus_mode = Control.FOCUS_NONE
+		header.align = Button.ALIGN_LEFT
+		var members: = 0
+		for entry in _net.players:
+			if int(entry.get("team", 0)) % NetProtocol.TEAM_COUNT == team:
+				members += 1
+		header.text = "%s (%d)" % [tr(ModeRegistry.TEAM_NAMES[team]), members]
+		header.disabled = not can_switch
+		header.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if can_switch else Control.CURSOR_ARROW
 		header.add_font_override("font", ROW_FONT)
-		header.add_color_override("font_color", ModeRegistry.TEAM_COLORS[team % ModeRegistry.TEAM_COLORS.size()])
+		for state in ["font_color", "font_color_pressed", "font_color_disabled"]:
+			header.add_color_override(state, color)
+		header.add_color_override("font_color_hover", color.lightened(0.4))
+		# No padding: the name lines up with the rows below.
+		for style in ["normal", "hover", "pressed", "disabled", "focus"]:
+			header.add_stylebox_override(style, StyleBoxEmpty.new())
+		var _e = header.connect("pressed", self, "_on_TeamHeader_pressed", [team])
 		_player_list.add_child(header)
 		for entry in _net.players:
 			if int(entry.get("team", 0)) % NetProtocol.TEAM_COUNT == team:
@@ -638,12 +656,6 @@ func _new_player_row(entry: Dictionary) -> Control:
 	swatch.rect_min_size = Vector2(8, ROW_ICON_SIZE.y)
 	swatch.color = UiKit.get_player_color(entry.player_index)
 	row.add_child(swatch)
-	var teams: = ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE))
-	if teams:
-		var team_swatch: = ColorRect.new()
-		team_swatch.rect_min_size = Vector2(16, ROW_ICON_SIZE.y)
-		team_swatch.color = ModeRegistry.TEAM_COLORS[int(entry.get("team", 0)) % ModeRegistry.TEAM_COLORS.size()]
-		row.add_child(team_swatch)
 
 	var character: = LobbyRules.get_character(entry.character_id)
 	row.add_child(_new_row_icon(character.get_icon() if character != null else null))
@@ -801,6 +813,12 @@ func _on_TeamButton_pressed() -> void :
 	var me = _net.get_local_player()
 	if me != null:
 		_net.set_local_player_info({"team": (int(me.get("team", 0)) + 1) % NetProtocol.TEAM_COUNT})
+
+
+func _on_TeamHeader_pressed(team: int) -> void :
+	var me = _net.get_local_player()
+	if me != null and int(me.get("team", 0)) != team:
+		_net.set_local_player_info({"team": team})
 
 
 func _on_ReadyButton_pressed() -> void :
