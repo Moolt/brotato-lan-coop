@@ -77,6 +77,7 @@ extends Node
 #         as a stat change in the wave's last frames leaves them
 #   (host) PET_TEST=1: at t=16 a pet item for player 0 and 1; 5 s into the next wave both sides
 #         log every pet (owner, position, net id)
+#   (host) HOST_DIES=1: the host also dies at t=18 (with the fake; in Team Race their team is out).
 #   (host) MODE=id: the run's game mode (lobby_settings.mode, modes/mode_registry.gd), not
 #         remembered; log_sync and log_wave_end log the mode's id and state on both sides
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
@@ -1236,6 +1237,9 @@ func _host_step() -> void :
 			var main = get_tree().current_scene
 			# Fresh args: vanilla's Utils.default_die_args may hold a freed killer.
 			main._players[2].die(Entity.DieArgs.new())
+			if OS.get_environment("HOST_DIES") == "1":
+				# With the fake: Team Race's first team is out, the run ends with this wave.
+				main._players[0].die(Entity.DieArgs.new())
 			var spawner = main._entity_spawner
 			if not spawner.neutrals.empty():
 				spawner.neutrals[0].die()

@@ -53,6 +53,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `CLIENT_QUITS=1` or `=3` with `KILL_ALL=1` | the client waits in the lobby while the run is lost; `client_run_over` logs its hint ("The run is over…") while the host is on its end screen |
 | `CLIENT_QUITS=3` / `=4` | at t=18 in the wave the client's connection breaks without a goodbye (`drop_connection`) and it rejoins: unnoticed by the host (the old ENet peer is kept unpolled, so the rejoin takes over a slot that still looks connected) / with the host seeing the disconnect first |
 | `SHOP_QUIT=2` | the client's connection breaks silently in the shop; it rejoins and the host goes on without waiting |
+| `HOST_DIES=1` | the host also dies at t=18, with the fake: in Team Race (`MODE=team_race`) their team is out and the run ends with that wave |
 | `HOST_QUITS=1` | the host closes its game at t=18 in the wave; the client must end with "host left" (goodbye), not reconnect |
 | `FAIL_ACK=1` | the next wave's run counts as a digest mismatch on both sides |
 | `TIMER_LAG=s` | the client's wave timer s seconds behind |

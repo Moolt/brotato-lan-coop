@@ -31,14 +31,23 @@ func shoot() -> void :
 func update_target() -> void :
 	var mode = LanGame.get_mode()
 	var targets = mode.get_enemy_targets(self, players_ref) if mode != null else null
-	# Vanilla keeps the old target when it finds none; with no allowed player, all may be chased.
-	if targets == null or targets.empty():
+	# Vanilla keeps the old target when it finds none (and fails without one); with no allowed
+	# player alive (Team Race: an enemy spawned in a half whose team just went out), all may be
+	# chased.
+	if targets == null or not _lan_has_living(targets):
 		.update_target()
 		return
 	var all_players: Array = players_ref
 	players_ref = targets
 	.update_target()
 	players_ref = all_players
+
+
+func _lan_has_living(players: Array) -> bool:
+	for player in players:
+		if not player.dead:
+			return true
+	return false
 
 
 func _on_Hurtbox_area_entered(hitbox: Area2D) -> void :

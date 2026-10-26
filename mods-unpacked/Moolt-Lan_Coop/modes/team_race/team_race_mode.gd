@@ -8,8 +8,10 @@ extends "res://mods-unpacked/Moolt-Lan_Coop/modes/lan_mode.gd"
 # together, so the load stays as in co-op. Materials are shared within the team, crates go to the
 # picker.
 # A team whose players are all dead at once is out: its half is cleared and gets no more
-# enemies, its players stay dead. The run ends when both are out or the last wave is won; the
-# team that lasted longer wins, then the one with more kills. With an empty team it is co-op.
+# enemies, its players stay dead. The run ends with the wave in which the first team goes out
+# (the other team must still survive it, or both fell in the same wave), or when the last wave
+# is won; the team that lasted longer wins, then the one with more kills. With an empty team it
+# is co-op.
 # state: teams (per player 0/1), split (both teams have players), out_wave (per team, 0 = in),
 # winner_team (-1 = none yet, 2 = draw).
 
@@ -28,7 +30,7 @@ const FIXED_SETTINGS: = ["share_materials", "share_crates"]
 const STRINGS: = {
 	"en": {
 		"LAN_MODE_TEAM_RACE": "Team Race",
-		"LAN_MODE_TEAM_RACE_DESC": "Two teams play the same waves side by side, a wall between them. A team whose players all die is out. The team that lasts longer wins, then the one with more kills.",
+		"LAN_MODE_TEAM_RACE_DESC": "Two teams play the same waves side by side, a wall between them. A team whose players all die is out, and the run ends with that wave. The team that lasts longer wins, then the one with more kills.",
 		"LAN_TEAM_ALIVE": "{0}: {1} alive",
 		"LAN_TEAM_OUT": "{0}: out",
 		"LAN_TEAM_WINS": "{0} wins",
@@ -36,7 +38,7 @@ const STRINGS: = {
 	},
 	"de": {
 		"LAN_MODE_TEAM_RACE": "Team-Rennen",
-		"LAN_MODE_TEAM_RACE_DESC": "Zwei Teams spielen dieselben Wellen nebeneinander, getrennt durch eine Wand. Ein Team, dessen Spieler alle sterben, ist raus. Es gewinnt das Team, das länger durchhält, dann das mit mehr Kills.",
+		"LAN_MODE_TEAM_RACE_DESC": "Zwei Teams spielen dieselben Wellen nebeneinander, getrennt durch eine Wand. Ein Team, dessen Spieler alle sterben, ist raus, und der Lauf endet mit dieser Welle. Es gewinnt das Team, das länger durchhält, dann das mit mehr Kills.",
 		"LAN_TEAM_ALIVE": "{0}: {1} am Leben",
 		"LAN_TEAM_OUT": "{0}: raus",
 		"LAN_TEAM_WINS": "{0} gewinnt",
@@ -276,8 +278,9 @@ func _quiet_die_args() -> Entity.DieArgs:
 	return args
 
 
+# The run ends at the end of the wave in which a team went out: later waves can't change the result.
 func adjust_run_states(_main: Node, states: Array) -> Array:
-	if not is_split() or not (states[0] or states[1] or states[2]):
+	if not is_split() or not (states[0] or states[1] or states[2] or state.out_wave[0] > 0 or state.out_wave[1] > 0):
 		return states
 	if state.winner_team < 0:
 		state.winner_team = _decide_winner()
