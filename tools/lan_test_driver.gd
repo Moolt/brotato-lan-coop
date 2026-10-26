@@ -190,10 +190,24 @@ func first_element(grid, nth: = 0):
 	return null
 
 
-# Client in the lobby: only the settings summary, no Settings button.
+# Client in the lobby: the settings summary and the read-only settings page (dropdowns open,
+# every choice disabled; picking one changes nothing).
 func client_settings_check(lobby) -> void :
 	print("[TEST] client_settings button=", lobby._settings_button.visible, " hint='", lobby._hint_label.text, "' hint_visible=", lobby._hint_label.visible, " summary='", lobby._settings_label.text, "'")
 	shot("client_lobby")
+	lobby._settings_button.emit_signal("pressed")
+	var page = lobby._settings_page
+	var zone = page._zone_option
+	var items_disabled = true
+	for i in zone.get_item_count():
+		items_disabled = items_disabled and zone.is_item_disabled(i)
+	var net = get_node("/root/LanNet")
+	var before = net.lobby_settings.zone
+	page._on_option_item_selected((zone.selected + 1) % zone.get_item_count(), zone, "zone")
+	yield(get_tree().create_timer(0.5), "timeout")
+	print("[TEST] client_settings_page visible=", page.visible, " note='", page._read_only_label.text, "' note_visible=", page._read_only_label.visible, " zone_disabled=", zone.disabled, " items_disabled=", items_disabled, " focus=", get_viewport().gui_get_focus_owner() == page._mode_option, " zone_before=", before, " zone_after=", net.lobby_settings.zone)
+	shot("client_settings_page")
+	page.close()
 
 
 func pick_and_ready(lobby, nth: = 0) -> void :

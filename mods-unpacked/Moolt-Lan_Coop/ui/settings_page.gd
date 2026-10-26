@@ -3,9 +3,11 @@ extends Control
 # The lobby's run settings, opened with its Settings button and shown over the lobby: rows
 # (label, dropdown) in groups under small headers, and one help box at the bottom that explains
 # the row with the focus or the mouse (the mode's description otherwise). Rows of settings the
-# mode fixes (ModeRegistry.get_fixed_settings) stay, greyed out and showing "Set by mode". Only
-# the host opens it and changes them (LanNet.set_lobby_settings, applied at once); during a run
-# they are read-only. Back or ui_cancel (handled by the lobby) closes the page.
+# mode fixes (ModeRegistry.get_fixed_settings) stay, greyed out and showing "Set by mode".
+# Everyone opens it; only the host changes the settings (LanNet.set_lobby_settings, applied at
+# once), and not during a run. Read-only, the dropdowns still open and list their choices, all
+# disabled, and a note under the title says why. Back or ui_cancel (handled by the lobby) closes
+# the page.
 
 signal closed()
 
@@ -43,6 +45,7 @@ var _share_materials_option: OptionButton
 var _share_crates_option: OptionButton
 var _back_button: Button
 var _help_label: Label
+var _read_only_label: Label
 # setting -> its row (an HBoxContainer: label, dropdown).
 var _rows: = {}
 # The rows the help box explains: the one under the mouse wins until the focus moves.
@@ -59,6 +62,11 @@ func _init() -> void :
 	background.mouse_filter = Control.MOUSE_FILTER_STOP
 	background.color = Color(0.06, 0.06, 0.06, 0.96)
 	column.add_constant_override("separation", 8)
+	_read_only_label = Label.new()
+	_read_only_label.align = Label.ALIGN_CENTER
+	_read_only_label.add_font_override("font", INFO_FONT)
+	_read_only_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	column.add_child(_read_only_label)
 
 	_add_header(column, "LAN_SETTINGS_GROUP_GAME")
 	_mode_option = _add_row(column, "LAN_SETTING_MODE", "mode")
@@ -97,10 +105,7 @@ func open(net: Node) -> void :
 	_fill_options()
 	refresh()
 	show()
-	if _mode_option.disabled:
-		_back_button.grab_focus()
-	else:
-		_mode_option.grab_focus()
+	_mode_option.grab_focus()
 
 
 func close() -> void :
@@ -116,9 +121,11 @@ func refresh() -> void :
 		return
 	var settings: Dictionary = _net.lobby_settings
 	var editable: bool = _net.is_host and not _net.run_in_progress
+	_read_only_label.visible = not editable
+	_read_only_label.text = "LAN_SETTINGS_RUN_READ_ONLY" if _net.is_host else "LAN_SETTINGS_HOST_ONLY"
 	for option in _get_options():
-		option.disabled = not editable
-		option.focus_mode = Control.FOCUS_ALL if editable else Control.FOCUS_NONE
+		option.disabled = false
+		option.focus_mode = Control.FOCUS_ALL
 	# select() doesn't emit item_selected, so this never loops back.
 	var mode_id: String = settings.get("mode", NetProtocol.DEFAULT_MODE)
 	_mode_option.select(_get_mode_index(mode_id))
@@ -137,6 +144,10 @@ func refresh() -> void :
 		else:
 			option.select(option.get_item_index(1 if settings.get(setting, true) else 0))
 		_rows[setting].modulate.a = FIXED_ALPHA if is_fixed else 1.0
+	# Read-only: the lists show every choice, but none can be picked.
+	for option in _get_options():
+		for i in option.get_item_count():
+			option.set_item_disabled(i, not editable)
 	_update_help()
 	_chain_focus()
 
@@ -333,7 +344,7 @@ func _add_row(column: VBoxContainer, text_key: String, setting: String) -> Optio
 	var option: = OptionButton.new()
 	option.theme = OPTION_THEME
 	option.rect_min_size = OPTION_SIZE
-	# The theme's dark text is hard to read on the disabled box (clients, fixed settings).
+	# The theme's dark text is hard to read on the disabled box (fixed settings).
 	option.add_color_override("font_color_disabled", Color(1, 1, 1, 0.75))
 	option.set_meta("setting", setting)
 	var _e = option.connect("item_selected", self, "_on_option_item_selected", [option, setting])

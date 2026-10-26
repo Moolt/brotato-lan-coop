@@ -3,7 +3,7 @@ extends Control
 # Title screen page shown while in a LAN session.
 # The page takes the screen's height, so Leave, Start and Ready sit at the bottom and the player
 # list and both grids get the rest. Left: every player (colour, character, name, weapon,
-# ready), the host's Settings button (ui/settings_page.gd over the lobby), a summary of the run
+# ready), the Settings button (ui/settings_page.gd over the lobby, read-only for clients), a summary of the run
 # settings, a status line only when something is going on (run sync, a wave in progress, run
 # over), Leave and the host's Start. Right: the local player's
 # character and starting weapon grids side by side, each with its preview below, and the Ready
@@ -404,14 +404,11 @@ func _refresh() -> void :
 func _refresh_settings() -> void :
 	var is_host: bool = _net.is_host
 	_start_button.visible = is_host
-	_settings_button.visible = is_host
 	_team_button.visible = ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE))
 	if _net.run_in_progress or _net.lobby_settings.get("in_wave", false):
 		_team_button.disable()
 	else:
 		_team_button.activate()
-	if not is_host:
-		_settings_page.close()
 	_settings_label.text = SettingsPage.get_summary(_net.lobby_settings)
 	if _settings_page.visible:
 		_settings_page.refresh()
