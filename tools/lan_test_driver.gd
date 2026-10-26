@@ -1964,17 +1964,28 @@ func _lobby_step() -> void :
 			var page = m.get_node("LanLobby")._settings_page
 			print("[TEST] lobby_settings_page visible=", page.visible, " focus=", get_viewport().gui_get_focus_owner().get_path(), " disabled=", page._zone_option.disabled, " zone_left=", page._zone_option.focus_neighbour_left, " back_down=", page._back_button.focus_neighbour_bottom)
 			shot("lobby_settings_page")
+			# A mode that fixes the loot settings, then co-op with the page open: the loot rows get
+			# their options back (MODE=team_race).
+			if OS.get_environment("MODE") != "":
+				var loot = page._share_materials_option
+				var before_items = loot.get_item_count()
+				page._on_option_item_selected(0, page._mode_option, "mode")
+				print("[TEST] lobby_settings_loot mode=", get_node("/root/LanNet").lobby_settings.mode, " items_before=", before_items, " items_after=", loot.get_item_count(), " disabled=", loot.disabled, " text=", loot.text)
+				var mode_index = page._get_mode_index(OS.get_environment("MODE"))
+				page._on_option_item_selected(mode_index, page._mode_option, "mode")
 			var index = page._choice_time_option.get_item_index(60)
 			page._choice_time_option.select(index)
 			page._on_option_item_selected(index, page._choice_time_option, "choice_time")
 			index = page._scaling_option.get_item_index(2)
 			page._scaling_option.select(index)
 			page._on_option_item_selected(index, page._scaling_option, "scaling_preset")
+			# The help box explains the focused row: the scaling's percentages.
+			page._scaling_option.grab_focus()
 			next_t = t + 0.5
 		12:
 			var lobby = m.get_node("LanLobby")
 			var net = get_node("/root/LanNet")
-			print("[TEST] lobby_settings_changed choice_time=", net.lobby_settings.choice_time, " saved=", net.config.last_choice_time, " preset=", net.lobby_settings.scaling_preset, " saved=", net.config.last_scaling_preset, " scaling=", net.lobby_settings.scaling, " config_scaling=", net.config.scaling, " info='", lobby._settings_page._scaling_info.text, "' summary='", lobby._settings_label.text, "'")
+			print("[TEST] lobby_settings_changed choice_time=", net.lobby_settings.choice_time, " saved=", net.config.last_choice_time, " preset=", net.lobby_settings.scaling_preset, " saved=", net.config.last_scaling_preset, " scaling=", net.lobby_settings.scaling, " config_scaling=", net.config.scaling, " info='", lobby._settings_page._help_label.text, "' summary='", lobby._settings_label.text, "'")
 			shot("lobby_settings_tough")
 			for pressed in [true, false]:
 				var event = InputEventAction.new()

@@ -35,7 +35,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 |---|---|
 | `host` / `join` | the two sides of a session |
 | `solo` | `RunBuilder.build_run` with one entry, `set_coop_run(false)`, `change_scene(MenuData.game_scene)`: vanilla solo play still works without a session |
-| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 and the scaling to Tough (knobs, info line, summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 and Normal again. The `join` role logs and screenshots its lobby (summary, no Settings button) |
+| `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 and the scaling to Tough (knobs, the help box with the scaling row focused, summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 and Normal again. The `join` role logs and screenshots its lobby (summary, no Settings button) |
 | `quit` | quits as soon as the title screen loads (parse-error check) |
 | none | idle, for manual tests |
 

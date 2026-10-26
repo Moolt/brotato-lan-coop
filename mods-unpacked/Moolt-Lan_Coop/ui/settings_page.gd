@@ -1,10 +1,11 @@
 extends Control
 
-# The lobby's run settings, opened with its Settings button and shown over the lobby: one row
-# per setting (label, dropdown). Rows of settings the mode fixes (ModeRegistry.get_fixed_settings)
-# are hidden. Only the host opens it and changes them
-# (LanNet.set_lobby_settings, applied at once); during a run they are read-only. Back or
-# ui_cancel (handled by the lobby) closes the page.
+# The lobby's run settings, opened with its Settings button and shown over the lobby: rows
+# (label, dropdown) in groups under small headers, and one help box at the bottom that explains
+# the row with the focus or the mouse (the mode's description otherwise). Rows of settings the
+# mode fixes (ModeRegistry.get_fixed_settings) stay, greyed out and showing "Set by mode". Only
+# the host opens it and changes them (LanNet.set_lobby_settings, applied at once); during a run
+# they are read-only. Back or ui_cancel (handled by the lobby) closes the page.
 
 signal closed()
 
@@ -18,20 +19,35 @@ const INFO_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.
 const OPTION_THEME = preload("res://resources/themes/zone_selection_button_theme.tres")
 
 const WIDTH: = 860.0
-const OPTION_SIZE: = Vector2(440, 52)
+const OPTION_SIZE: = Vector2(380, 52)
+# Four lines of the help font, so a longer text doesn't move the page.
+const HELP_HEIGHT: = 104.0
+const HELP_COLOR: = Color(1, 1, 1, 0.8)
+const FIXED_ALPHA: = 0.5
+# The item id of a fixed setting's only entry (not -1: add_item takes that as "use the index").
+const FIXED_ID: = 2
+const LOOT_SETTINGS: = ["share_materials", "share_crates"]
+# Item texts of the loot rows: [shared (id 1), picker's (id 0)].
+const LOOT_ITEM_KEYS: = {
+	"share_materials": ["LAN_LOOT_MATERIALS_SHARED", "LAN_LOOT_PICKER_KEEPS"], 
+	"share_crates": ["LAN_LOOT_CRATES_SHARED", "LAN_LOOT_PICKER_KEEPS"], 
+}
 
 var _net: Node = null
 var _mode_option: OptionButton
-var _mode_info: Label
 var _zone_option: OptionButton
 var _difficulty_option: OptionButton
 var _choice_time_option: OptionButton
 var _scaling_option: OptionButton
-var _scaling_info: Label
 var _share_materials_option: OptionButton
 var _share_crates_option: OptionButton
-var _loot_info: Label
 var _back_button: Button
+var _help_label: Label
+# setting -> its row (an HBoxContainer: label, dropdown).
+var _rows: = {}
+# The rows the help box explains: the one under the mouse wins until the focus moves.
+var _hovered_setting: = ""
+var _focused_setting: = ""
 
 
 func _init() -> void :
@@ -43,34 +59,41 @@ func _init() -> void :
 	background.mouse_filter = Control.MOUSE_FILTER_STOP
 	background.color = Color(0.06, 0.06, 0.06, 0.96)
 	column.add_constant_override("separation", 8)
-	var title_gap: = Control.new()
-	title_gap.rect_min_size = Vector2(0, 16)
-	column.add_child(title_gap)
 
+	_add_header(column, "LAN_SETTINGS_GROUP_GAME")
 	_mode_option = _add_row(column, "LAN_SETTING_MODE", "mode")
-	_mode_info = _add_info(column)
 	_zone_option = _add_row(column, "LAN_SETTING_ZONE", "zone")
 	_difficulty_option = _add_row(column, "LAN_SETTING_DANGER", "difficulty")
-	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
+	_add_header(column, "LAN_SETTINGS_GROUP_BALANCE")
 	_scaling_option = _add_row(column, "LAN_SETTING_SCALING", "scaling_preset")
-	# What the preset adds per extra player, from the knobs the clients get.
-	_scaling_info = _add_info(column)
+	_choice_time_option = _add_row(column, "LAN_SETTING_CHOICE_TIME", "choice_time")
+	_add_header(column, "LAN_SETTINGS_GROUP_LOOT")
 	_share_materials_option = _add_row(column, "LAN_SETTING_SHARE_MATERIALS", "share_materials")
 	_share_crates_option = _add_row(column, "LAN_SETTING_SHARE_CRATES", "share_crates")
-	_loot_info = _add_info(column)
-	_loot_info.text = "LAN_SETTING_LOOT_INFO"
 
-	var spacer: = Control.new()
-	spacer.rect_min_size = Vector2(0, 12)
-	column.add_child(spacer)
+	_add_gap(column, 16)
+	var help_box: = PanelContainer.new()
+	help_box.add_stylebox_override("panel", UiKit.new_rounded_style(Color(1, 1, 1, 0.06), 8, 16, 10))
+	column.add_child(help_box)
+	_help_label = Label.new()
+	_help_label.add_font_override("font", INFO_FONT)
+	_help_label.add_color_override("font_color", HELP_COLOR)
+	_help_label.autowrap = true
+	_help_label.rect_min_size = Vector2(0, HELP_HEIGHT)
+	help_box.add_child(_help_label)
+
+	_add_gap(column, 12)
 	_back_button = UiKit.new_back_button()
 	var _e = _back_button.connect("pressed", self, "close")
+	_e = _back_button.connect("focus_entered", self, "_on_control_focus_entered", [""])
 	column.add_child(_back_button)
 	visible = false
 
 
 func open(net: Node) -> void :
 	_net = net
+	_hovered_setting = ""
+	_focused_setting = ""
 	_fill_options()
 	refresh()
 	show()
@@ -99,23 +122,22 @@ func refresh() -> void :
 	# select() doesn't emit item_selected, so this never loops back.
 	var mode_id: String = settings.get("mode", NetProtocol.DEFAULT_MODE)
 	_mode_option.select(_get_mode_index(mode_id))
-	_mode_info.text = tr(ModeRegistry.get_description_key(mode_id))
 	_zone_option.select(_zone_option.get_item_index(settings.get("zone", 0)))
 	_difficulty_option.select(_difficulty_option.get_item_index(settings.get("difficulty", 0)))
 	_choice_time_option.select(_choice_time_option.get_item_index(settings.get("choice_time", 0)))
 	_scaling_option.select(_scaling_option.get_item_index(settings.get("scaling_preset", NetProtocol.SCALING_PRESET_NORMAL)))
-	var scaling: Dictionary = settings.get("scaling", NetProtocol.DEFAULT_SCALING)
-	_scaling_info.text = tr("LAN_SCALING_INFO") \
-			.replace("{0}", _percent(scaling.get("enemy_count_per_player", 0.0))) \
-			.replace("{1}", _percent(scaling.get("enemy_health_per_player", 0.0))) \
-			.replace("{2}", _percent(scaling.get("enemy_damage_per_player", 0.0))) \
-			.replace("{3}", _percent(scaling.get("enemy_health_per_player_beyond_4", 0.0)))
 	var fixed: = ModeRegistry.get_fixed_settings(mode_id)
 	for option in [_share_materials_option, _share_crates_option]:
 		var setting: String = option.get_meta("setting")
-		option.select(option.get_item_index(1 if settings.get(setting, true) else 0))
-		option.get_parent().visible = not fixed.has(setting)
-	_loot_info.visible = _share_materials_option.get_parent().visible or _share_crates_option.get_parent().visible
+		var is_fixed: = fixed.has(setting)
+		_fill_loot_option(option, is_fixed)
+		if is_fixed:
+			option.disabled = true
+			option.focus_mode = Control.FOCUS_NONE
+		else:
+			option.select(option.get_item_index(1 if settings.get(setting, true) else 0))
+		_rows[setting].modulate.a = FIXED_ALPHA if is_fixed else 1.0
+	_update_help()
 	_chain_focus()
 
 
@@ -158,7 +180,7 @@ static func get_summary(settings: Dictionary) -> String:
 func _chain_focus() -> void :
 	var controls: = []
 	for control in _get_options() + [_back_button]:
-		if control.focus_mode != Control.FOCUS_NONE and control.get_parent().visible:
+		if control.focus_mode != Control.FOCUS_NONE:
 			controls.append(control)
 	for i in controls.size():
 		var control: Control = controls[i]
@@ -191,8 +213,6 @@ func _fill_options() -> void :
 		_scaling_option.add_item(tr(NetProtocol.SCALING_PRESET_KEYS[preset]), preset)
 	for option in [_share_materials_option, _share_crates_option]:
 		option.clear()
-		option.add_item(tr("LAN_SETTING_ON"), 1)
-		option.add_item(tr("LAN_SETTING_OFF"), 0)
 
 
 func _get_options() -> Array:
@@ -206,13 +226,92 @@ func _get_mode_index(mode_id: String) -> int:
 	return 0
 
 
-func _add_info(column: VBoxContainer) -> Label:
-	var info: = Label.new()
-	info.add_font_override("font", INFO_FONT)
-	info.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
-	info.autowrap = true
-	column.add_child(info)
-	return info
+# A loot row's entries: shared (id 1) and the picker's (id 0), or only "Set by mode" when the
+# mode fixes the setting. Refilled only when that changes, so an open dropdown keeps its list.
+func _fill_loot_option(option: OptionButton, is_fixed: bool) -> void :
+	if option.get_item_count() > 0 and (option.get_item_id(0) == FIXED_ID) == is_fixed:
+		return
+	option.clear()
+	if is_fixed:
+		option.add_item(tr("LAN_SETTING_BY_MODE"), FIXED_ID)
+		return
+	var keys: Array = LOOT_ITEM_KEYS[option.get_meta("setting")]
+	option.add_item(tr(keys[0]), 1)
+	option.add_item(tr(keys[1]), 0)
+
+
+func _get_help_text(setting: String) -> String:
+	var mode_id: String = _net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE)
+	match setting:
+		"choice_time":
+			return tr("LAN_HELP_CHOICE_TIME")
+		"scaling_preset":
+			# What the preset adds per extra player, from the knobs the clients get.
+			var scaling: Dictionary = _net.lobby_settings.get("scaling", NetProtocol.DEFAULT_SCALING)
+			return tr("LAN_SCALING_INFO") \
+					.replace("{0}", _percent(scaling.get("enemy_count_per_player", 0.0))) \
+					.replace("{1}", _percent(scaling.get("enemy_health_per_player", 0.0))) \
+					.replace("{2}", _percent(scaling.get("enemy_damage_per_player", 0.0))) \
+					.replace("{3}", _percent(scaling.get("enemy_health_per_player_beyond_4", 0.0)))
+		"share_materials", "share_crates":
+			# A fixed loot row: the mode's description says who gets what.
+			if not ModeRegistry.get_fixed_settings(mode_id).has(setting):
+				return tr("LAN_HELP_" + setting.to_upper())
+	return tr(ModeRegistry.get_description_key(mode_id))
+
+
+func _update_help() -> void :
+	if _net == null:
+		return
+	_help_label.text = _get_help_text(_hovered_setting if _hovered_setting != "" else _focused_setting)
+
+
+func _input(event: InputEvent) -> void :
+	if not visible or not (event is InputEventMouseMotion) or is_popup_open():
+		return
+	var mouse: = get_global_mouse_position()
+	var hovered: = ""
+	for setting in _rows:
+		if _rows[setting].get_global_rect().has_point(mouse):
+			hovered = setting
+	if hovered != _hovered_setting:
+		_hovered_setting = hovered
+		_update_help()
+
+
+# setting is "" for the back button.
+func _on_control_focus_entered(setting: String) -> void :
+	_focused_setting = setting
+	_hovered_setting = ""
+	_update_help()
+
+
+func _add_header(column: VBoxContainer, text_key: String) -> void :
+	# The first header sits under the title.
+	_add_gap(column, 12 if column.get_child_count() > 1 else 4)
+	var header: = HBoxContainer.new()
+	header.add_constant_override("separation", 12)
+	column.add_child(header)
+	var label: = Label.new()
+	label.text = text_key
+	label.uppercase = true
+	label.add_font_override("font", INFO_FONT)
+	label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
+	header.add_child(label)
+	var line: = ColorRect.new()
+	line.color = Color(1, 1, 1, 0.18)
+	line.rect_min_size = Vector2(0, 2)
+	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(line)
+
+
+func _add_gap(column: VBoxContainer, height: float) -> void :
+	var gap: = Control.new()
+	gap.rect_min_size = Vector2(0, height)
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(gap)
 
 
 static func _percent(value: float) -> String:
@@ -224,6 +323,7 @@ func _add_row(column: VBoxContainer, text_key: String, setting: String) -> Optio
 	var row: = HBoxContainer.new()
 	row.add_constant_override("separation", 16)
 	column.add_child(row)
+	_rows[setting] = row
 	var label: = Label.new()
 	label.text = text_key
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -233,8 +333,11 @@ func _add_row(column: VBoxContainer, text_key: String, setting: String) -> Optio
 	var option: = OptionButton.new()
 	option.theme = OPTION_THEME
 	option.rect_min_size = OPTION_SIZE
+	# The theme's dark text is hard to read on the disabled box (clients, fixed settings).
+	option.add_color_override("font_color_disabled", Color(1, 1, 1, 0.75))
 	option.set_meta("setting", setting)
 	var _e = option.connect("item_selected", self, "_on_option_item_selected", [option, setting])
+	_e = option.connect("focus_entered", self, "_on_control_focus_entered", [setting])
 	row.add_child(option)
 	return option
 
@@ -245,6 +348,6 @@ func _on_option_item_selected(index: int, option: OptionButton, setting: String)
 	var value = option.get_item_id(index)
 	if setting == "mode":
 		value = ModeRegistry.MODES[value].id
-	elif setting == "share_materials" or setting == "share_crates":
+	elif LOOT_SETTINGS.has(setting):
 		value = value == 1
 	_net.set_lobby_settings({setting: value})
