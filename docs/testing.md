@@ -12,6 +12,7 @@ How to run and check the mod: a throwaway game copy, the test driver (`tools/lan
 `tools/make_test_copy.sh <scratchpad>/game` builds it in one go (about 300 MB, a few seconds). It does:
 - `cp -a Decompiled <scratch>/game`, then removes its `.git`
 - replaces `mods-unpacked/Moolt-Lan_Coop` with an **absolute** symlink to `brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop`, and symlinks `tools/lan_test_driver.gd` as `lan_test_driver.gd` (edits to the driver stay tracked in the repo; it is not in the release zip)
+- adds the Abyssal Terrors DLC from its decompiled sources when `../BrotatoAbyssalTerrors_Decompiled` exists (`NO_DLC=1`: a copy without it): its `dlcs/` and `.import/`, and its global script classes in `project.godot` (the DLC's scripts use them; entries whose script the decompile lacks, its tests, are left out). Not the `.pck`: in this Godot build `ProjectSettings.load_resource_pack` makes all `res://` directory access go to the pack (`Directory.dir_exists` is then always false and the base game's folders can't be listed), so vanilla never finds the pack's `dlcs/` folder. Vanilla then loads the DLC as in the shipped game (`check_for_available_dlcs`; ownership is `DebugService.has_dlc` off Steam)
 - in the copy's `project.godot`:
   - `config/custom_user_dir_name="BrotatoLanTest"` (under `[application]`); without it, instances use the real `~/.local/share/Brotato` save and log
   - `window/vsync/use_vsync=false` (under `[display]`): covered or unfocused windows stall on vsync under Wayland/XWayland, which also stops the network poll
@@ -87,6 +88,10 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TARGET_LOG=1` | any role: once a second in a wave, every player weapon's targets (script, name, distance, Enemy or not), rotation, shooting state, bodies in range that are no Enemy |
 | `MODE=id` | host (and the `lobby` role, with `FAKES` fake players): the run's game mode (`lobby_settings.mode`, an id from `modes/mode_registry.gd`), not remembered. `log_sync` and `log_wave_end` log the mode's id, serial and state on both sides (`mode=` lines; the draft pool as its size). With the default 3 players (host, client, fake) the fake dies at t=18: in the elimination modes it is out from then on; in Team Race host and fake are one team, the client the other |
 | `PET_TEST=1` | host: at t=16 a Blazemander for player 0 and a Bonk Dog for player 1; 5 s into the next wave both sides log every pet (owner, position, net id) |
+| `ZONE=n` | host: the run's zone (`lobby_settings.zone`, 1 = the DLC's Abyss), not remembered |
+| `CHAR=id` | host and join: pick that character (e.g. `character_diver`) instead of the nth |
+| `CURSE_TEST=1` | host and join (DLC): every item in the first shop is cursed before the buy and the lock; `log_run_check` logs each player's cursed gear and a hash of all its gear's effects (must match on both sides) |
+| `CURSE_ENEMIES=1` | host and join (DLC): vanilla's `DebugService.curse_enemy_spawn` on both sides; `log_sync`'s `outlines` line: cursed enemies' net ids, boosted and charmed counts, scene effect behaviours (clients: 0) |
 | `RELOAD_RACE=1` | host and join: when the wave-end state arrives, every player is queued for a stats reload in main's `StatsManager` (as a stat change in the wave's last frames leaves it); without the drop before the solo view this raised script errors under the mod's path |
 
 `WAVES=n` counts from the run's first wave, so it combines with `START_WAVE`. When the host's end steps are still in a wave (`WAVES=n` ends in wave n+1), it quits instead of calling `net.leave()`.
@@ -135,6 +140,8 @@ Each takes about 1–2 min.
 | `PET_TEST=1` | pets spawn on both sides at the same positions |
 | `LOAD_STALL=8`, `LOAD_STALL=20` | the host waits for a slow client ("every client loaded" after ~8 s) and starts after 15 s without it ("timed out"); the late client plays on |
 | `RELOAD_RACE=1`, `RELOAD_RACE=1 FAKES=5 WAVES=2` | no script errors when stats reloads are pending at the solo view |
+| `MODE=coop ZONE=1 WAVES=3 CURSE_TEST=1` with `CHAR=` DLC characters, `ZONE=1 START_WAVE=20`, `ZONE=1 CURSE_ENEMIES=1` | DLC: Abyss waves, cursed gear through the shop merge (equal `gear_md5`), the Abyss boss and run won, cursed enemies' outlines on the client |
+| host in a DLC copy, `join` in a `NO_DLC=1` copy | the client is turned away ("different set of DLCs") |
 
 ## Log check
 - `grep -a "SCRIPT\|ERROR"` the logs. Nothing from mod code is allowed: any `ERROR:` mentioning `mods-unpacked` makes the crash reporter disable mods on the next launch.
@@ -156,6 +163,8 @@ Two windows, `--resolution 1280x720 --position 0,0` and `--position 1280,0`, no 
 `tools/play2.sh [game copy]` does this: it builds a test copy at `~/.cache/brotato-lan-test/game` on first use (`make_test_copy.sh`), closes that copy's open windows, starts both and logs to `~/.cache/brotato-lan-test/logs/left.log` / `right.log`. `GODOT` overrides the binary (default `../Godot/Godot_v3.7-dev1_x11.64` next to the repo), `WIDTH` / `HEIGHT` the window size.
 
 ## Pitfalls
+- `log_lobby` prints `dlcs=[abyssal_terrors] zones=2` when the copy has the DLC; `dlcs=[] zones=1` means it didn't load (`~/.local/share/BrotatoLanTest/user/log.txt` has vanilla's DLC lines). A lobby setting for a zone that doesn't exist (`ZONE=1` without the DLC) fails the run build with script errors.
+- The test profile remembers lobby settings (`lan_coop.cfg`, e.g. `last_mode` from a manual test); pass `MODE=coop` when a run must be plain co-op.
 - The session scratchpad can be emptied between sessions. Godot started with `--path` to a missing copy opens the editor on the last project, `Decompiled/`, which may re-save vanilla files. Rebuild the copy first and check `git status` in `Decompiled/` afterwards.
 - Stopping instances: list the PIDs in one command (`ps -eo pid,args | grep "[G]odot_v3.7-dev1_x11.64 --path game"`) and kill them in a separate one. In the same command line as the game's invocation the pattern matches the shell itself, which then kills itself. Don't `pkill -f` with such a pattern either.
 - `rm` of a glob after a `cd` in the same command is refused by Claude Code's safety check (the whole command doesn't run). Screenshots overwrite by name, so there is no need to clear them.

@@ -80,6 +80,14 @@ extends Node
 #   (host) HOST_DIES=1: the host also dies at t=18 (with the fake; in Team Race their team is out).
 #   (host) MODE=id: the run's game mode (lobby_settings.mode, modes/mode_registry.gd), not
 #         remembered; log_sync and log_wave_end log the mode's id and state on both sides
+#   (host) ZONE=n: the run's zone (lobby_settings.zone, 1 = the DLC's Abyss), not remembered
+#   (host and join) CHAR=id: pick that character (e.g. character_diver) instead of the nth
+#   (host and join) CURSE_TEST=1 (DLC): every item in the first shop is cursed before the buy and
+#         the lock; log_run_check logs each player's cursed gear and a hash of its effects
+#   (host and join) CURSE_ENEMIES=1 (DLC): vanilla's debug flag that curses every spawned enemy, on
+#         both sides (only the host's curse may count); log_sync logs the cursed enemies'
+#         net ids, the boosted and charmed counts and the scene effect behaviours on both sides
+# log_lobby logs the active DLCs and how many zones, characters, items and weapons are loaded.
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
 # The step scripts follow the latest feature under test; edit them for the next one.
@@ -171,6 +179,7 @@ func log_lobby(tag: String) -> void :
 	var lobby = m.get_node("LanLobby")
 	print("[TEST] ", tag, " page=", m._current_page.name, " joined=", net.joined, " index=", net.local_player_index, " reconnecting=", net.is_reconnecting(), " run_in_progress=", net.run_in_progress, " settings=", net.lobby_settings, " players=", net.players.size(), " coop_players=", CoopService.connected_players)
 	print("[TEST] ", tag, " hint='", tr(lobby._hint_label.text), "' start_disabled=", lobby._start_button.disabled)
+	print("[TEST] ", tag, " dlcs=", ProgressData.get_active_dlc_ids(), " zones=", ZoneService.zones.size(), " characters=", ItemService.characters.size(), " items=", ItemService.items.size(), " weapons=", ItemService.weapons.size())
 
 
 func log_wave(tag: String) -> void :
@@ -213,6 +222,10 @@ func client_settings_check(lobby) -> void :
 
 func pick_and_ready(lobby, nth: = 0) -> void :
 	var character = first_element(lobby._character_grid, nth)
+	if OS.get_environment("CHAR") != "":
+		for e in lobby._character_grid.get_children():
+			if e.item != null and e.item.my_id == OS.get_environment("CHAR"):
+				character = e
 	lobby._on_CharacterGrid_element_pressed(character)
 	# The weapon grid follows the host's lobby state, which takes a round trip (slow links).
 	var net = get_node("/root/LanNet")
@@ -237,6 +250,8 @@ func _process(delta: float) -> void :
 	# own). Every frame: the game applies its own FPS setting after startup.
 	if OS.get_environment("TARGET_FPS") != "" and Engine.target_fps != int(OS.get_environment("TARGET_FPS")):
 		Engine.target_fps = int(OS.get_environment("TARGET_FPS"))
+	if OS.get_environment("CURSE_ENEMIES") == "1":
+		DebugService.curse_enemy_spawn = true
 	hit_log_watch()
 	target_log(delta)
 	storm_edge()
@@ -1017,6 +1032,21 @@ func log_sync(tag: String) -> void :
 	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " bosses=", spawner.bosses.size(), " boss_hp=", boss_hp, " neutrals=", spawner.neutrals.size(), " structures=", spawner.structures.size(), " pets=", spawner.pets.size(), " births=", spawner.active_births, " gold=", main._active_golds.size(), " consumables=", main._consumables.size(), " p0_upgrade_icons=", main._things_to_process_player_containers[0].upgrades.get_child_count(), " p0_crate_icons=", main._things_to_process_player_containers[0].consumables.get_child_count())
 	var sync = main.get_node_or_null("LanWaveSync")
 	if sync != null:
+		# Enemy outlines by net id (compare host and client) and the scene effect behaviours (DLC curse).
+		var cursed = []
+		var outlined = {"boosted": 0, "charmed": 0}
+		for net_id in sync._entities:
+			var e = sync._entities[net_id]
+			if is_instance_valid(e) and e is Enemy and not e.dead:
+				if e.has_outline(Utils.CURSE_COLOR):
+					cursed.append(net_id)
+				if e.has_outline(Utils.BOOST_COLOR):
+					outlined.boosted += 1
+				if e.has_outline(Utils.CHARM_COLOR):
+					outlined.charmed += 1
+		cursed.sort()
+		print("[TEST] ", tag, " outlines cursed=", cursed, " boosted=", outlined.boosted, " charmed=", outlined.charmed, " scene_behaviors=", main._effect_behaviors.get_child_count())
+	if sync != null:
 		var ids = sync._entities.keys()
 		ids.sort()
 		var sample = []
@@ -1139,6 +1169,9 @@ func _host_step() -> void :
 				net.set_lobby_settings({"scaling_preset": int(OS.get_environment("SCALING_PRESET"))})
 			if OS.get_environment("MODE") != "":
 				net.lobby_settings.mode = OS.get_environment("MODE")
+				net._broadcast_lobby_state()
+			if OS.get_environment("ZONE") != "":
+				net.lobby_settings.zone = int(OS.get_environment("ZONE"))
 				net._broadcast_lobby_state()
 			# SHARE_MATERIALS=0 / SHARE_CRATES=0: loot sharing off (not remembered).
 			for key in ["share_materials", "share_crates"]:
@@ -1584,6 +1617,10 @@ func shop_actions(delta: float) -> void :
 		var gold_before = own.gold
 		var bought = "-"
 		var locked = "-"
+		if OS.get_environment("CURSE_TEST") == "1" and ProgressData.get_dlc_data("abyssal_terrors") != null:
+			for item in container._shop_items:
+				if item.active:
+					item.set_shop_item(ProgressData.get_dlc_data("abyssal_terrors").curse_item(item.item_data, 0))
 		for item in container._shop_items:
 			if not item.active:
 				continue
@@ -1643,9 +1680,20 @@ func log_run_check(tag: String) -> void :
 		for w in pd.weapons:
 			weapons.append(w.my_id)
 		out.append("%d: gold=%d items=%d weapons=%s nodes=%d locked=%d dead=%s hp=%d/%d" % [i, pd.gold, pd.items.size(), weapons, main._players[i].current_weapons.size(), RunData.locked_shop_items[i].size(), main._players[i].dead, main._players[i].current_stats.health, main._players[i].max_stats.health])
-	print("[TEST] ", tag, " wave=", RunData.current_wave, " coop=", RunData.is_coop_run, " count=", RunData.get_player_count(), " digest=", RB.digest())
+	print("[TEST] ", tag, " wave=", RunData.current_wave, " zone=", RunData.current_zone, " coop=", RunData.is_coop_run, " count=", RunData.get_player_count(), " digest=", RB.digest())
 	for line in out:
 		print("[TEST] ", tag, "   ", line)
+	# Cursed gear (DLC): which items are cursed and a hash of every item's effects and stats.
+	for i in RunData.get_player_count():
+		var pd = RunData.players_data[i]
+		var cursed = []
+		var gear = []
+		for item in pd.items + pd.weapons + RunData.locked_shop_items[i]:
+			var data = item[0] if item is Array else item
+			gear.append(data.serialize())
+			if data.is_cursed:
+				cursed.append("%s(%.2f)" % [data.my_id, data.curse_factor])
+		print("[TEST] ", tag, "   ", i, ": cursed=", cursed, " gear_md5=", to_json(gear).md5_text())
 	shot(tag)
 
 

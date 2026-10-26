@@ -31,7 +31,8 @@ extends Node
 #   - The end of the wave goes out with the host's verdict (wave failed, run lost, run won).
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
 #     wave time left, whether the wave still waits for clients; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
-#     excluded, they don't move) position, HP ratio (0-255) and a burning flag.
+#     excluded, they don't move) position, HP ratio (0-255), burning and the enemy outlines
+#     (boosted, cursed, charmed).
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
 #     spawned through the normal spawner (and its pools), then made inert: no physics, kinematic,
@@ -99,9 +100,12 @@ const SNAPSHOT_FLAG_WAITING: = 1
 const LOAD_TIMEOUT: = 15.0
 const WAITING_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 const WAITING_FONT_SIZE: = 40
-const SNAPSHOT_PLAYER_SIZE: = 33
+const SNAPSHOT_PLAYER_SIZE: = 37
 const SNAPSHOT_ENTITY_SIZE: = 8
 const ENTITY_FLAG_BURNING: = 1
+const ENTITY_FLAG_BOOSTED: = 2
+const ENTITY_FLAG_CURSED: = 4
+const ENTITY_FLAG_CHARMED: = 8
 const MAX_NET_ID: = 65535
 
 const EVENT_SPAWN: = 0
@@ -143,6 +147,8 @@ var _frame: = 0
 
 # Net id -> entity, on both sides. Ids are u16 and wrap; a wave never gets near 65535 alive.
 var _entities: = {}
+# Built in _ready: Utils isn't a constant.
+var _enemy_outlines: = []
 
 # Host: latest state per remote player_index: {pos, time (client msec), move, aim, manual_aim,
 # fresh (not applied yet), since (its age in s: estimated at arrival, then counted up),
@@ -207,6 +213,13 @@ func _init() -> void :
 
 
 func _ready() -> void :
+	# [flag, colour, alpha, desaturation] of the enemy outlines the snapshot carries, as vanilla's
+	# boost and the DLC's curse and charm add them.
+	_enemy_outlines = [
+		[ENTITY_FLAG_BOOSTED, Utils.BOOST_COLOR, 1.0, 0.0], 
+		[ENTITY_FLAG_CURSED, Utils.CURSE_COLOR, 1.0, 0.0], 
+		[ENTITY_FLAG_CHARMED, Utils.CHARM_COLOR, 0.4, 0.75], 
+	]
 	_net = LanGame.get_lan_net()
 	_main = get_parent()
 	is_host = _net.is_host
@@ -231,6 +244,10 @@ func _ready() -> void :
 		_main._entity_spawner._structure_timer.stop()
 		# Bullet hell events shoot from here; enemy projectiles come from the host later (6c).
 		for child in _main._enemy_projectiles.get_children():
+			child.queue_free()
+		# Scene effect behaviours act on spawns (the DLC curses enemies as they spawn); the
+		# host's do that, and the snapshot carries the outlines.
+		for child in _main._effect_behaviors.get_children():
 			child.queue_free()
 		for player in _main._players:
 			player.disable_hurtbox()
@@ -682,7 +699,8 @@ func _build_snapshot() -> PoolByteArray:
 		buffer.put_u8(FLAG_DEAD if player.dead else 0)
 		var player_data = RunData.players_data[player.player_index]
 		buffer.put_32(player_data.gold)
-		buffer.put_float(player_data.current_xp)
+		# A double: XP gain bonuses make it fractional, and a float32 would differ from the host's.
+		buffer.put_double(player_data.current_xp)
 		buffer.put_u16(player_data.current_level)
 
 	var moving: = []
@@ -703,6 +721,10 @@ func _build_snapshot() -> PoolByteArray:
 		var flags: = 0
 		if entity is Unit and entity._is_burning:
 			flags |= ENTITY_FLAG_BURNING
+		if entity is Enemy:
+			for outline in _enemy_outlines:
+				if entity.has_outline(outline[1]):
+					flags |= outline[0]
 		buffer.put_u8(flags)
 	return buffer.data_array
 
@@ -748,7 +770,7 @@ func on_snapshot(data: PoolByteArray) -> void :
 		var max_health: = buffer.get_32()
 		var flags: = buffer.get_u8()
 		var gold: = buffer.get_32()
-		var xp: = buffer.get_float()
+		var xp: = buffer.get_double()
 		var level: = buffer.get_u16()
 		positions.append({"pos": pos, "move": move})
 		_apply_player_state(_main._players[player_index], speed, health, max_health, (flags & FLAG_DEAD) != 0)
@@ -824,6 +846,13 @@ func _apply_entity_flags(entity, flags: int) -> void :
 			entity._burning_particles.start_emitting()
 		else:
 			entity._burning_particles.stop_emitting()
+	if entity is Enemy:
+		for outline in _enemy_outlines:
+			var shown: bool = (flags & outline[0]) != 0
+			if shown and not entity.has_outline(outline[1]):
+				entity.add_outline(outline[1], outline[2], outline[3])
+			elif not shown and entity.has_outline(outline[1]):
+				entity.remove_outline(outline[1])
 
 
 func _count_events(events: Array) -> void :
