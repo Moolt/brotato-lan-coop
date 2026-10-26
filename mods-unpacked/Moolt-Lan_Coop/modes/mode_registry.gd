@@ -77,13 +77,19 @@ static func uses_teams(mode_id: String) -> bool:
 
 
 # The lobby settings the mode decides itself (its FIXED_SETTINGS constant): the settings page
-# hides them and the summary leaves them out.
+# hides them and the summary leaves them out. A base script's constant counts too (Godot's
+# constant map only holds the script's own).
 static func get_fixed_settings(mode_id: String) -> Array:
 	var info = get_info(mode_id)
 	if info == null:
 		return []
-	var fixed = load(info.script).get_script_constant_map().get("FIXED_SETTINGS")
-	return fixed if typeof(fixed) == TYPE_ARRAY else []
+	var script: Script = load(info.script)
+	while script != null:
+		var fixed = script.get_script_constant_map().get("FIXED_SETTINGS")
+		if typeof(fixed) == TYPE_ARRAY:
+			return fixed
+		script = script.get_base_script()
+	return []
 
 
 static func get_name_key(mode_id: String) -> String:

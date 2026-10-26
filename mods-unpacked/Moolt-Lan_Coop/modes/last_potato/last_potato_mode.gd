@@ -2,9 +2,9 @@ extends "res://mods-unpacked/Moolt-Lan_Coop/modes/elimination_mode.gd"
 
 # Last Potato Standing: endless waves, last one alive wins (elimination_mode.gd). A storm closes
 # in during every wave: the safe circle shrinks from the whole arena to END_RADIUS between
-# SHRINK_FROM and SHRINK_TO of the wave, around a centre picked per wave; outside it players
-# lose STORM_DAMAGE_PERCENT of their max HP (more in later waves) every STORM_TICK seconds,
-# through armor, dodge and invincibility. The enemy count keeps scaling for every player of the
+# SHRINK_FROM and SHRINK_TO of the wave, around a centre that drifts across the map; outside it
+# players lose STORM_DAMAGE_PERCENT of their max HP (more in later waves) every STORM_TICK
+# seconds, through armor, dodge and invincibility. The enemy count keeps scaling for every player of the
 # run, so the survivors face more and more.
 # Centre and radius come from the wave number, the run's seed (state.seed) and the wave timer,
 # so every machine draws the same storm without traffic; only the host deals the damage.
@@ -15,8 +15,12 @@ const SHRINK_FROM: = 0.15
 const SHRINK_TO: = 1.0
 const END_RADIUS: = 280.0
 const END_RADIUS_PER_PLAYER: = 20.0
-# How far the centre may be from the map centre, as a share of the arena's size.
-const CENTER_SPREAD: = 0.25
+# The centre drifts on a Lissajous path (phases per wave): how far it swings from the map centre,
+# as a share of the arena's size, and the seconds per swing on each axis. It stays far enough
+# from the walls for the final circle to fit.
+const DRIFT_EXTENT: = 0.3
+const DRIFT_PERIOD_X: = 43.0
+const DRIFT_PERIOD_Y: = 61.0
 const STORM_TICK: = 0.5
 const STORM_DAMAGE_PERCENT: = 4.0
 const STORM_DAMAGE_PERCENT_PER_WAVE: = 0.25
@@ -36,8 +40,6 @@ const STRINGS: = {
 }
 
 var _tick: = 0.0
-# Wave number -> centre, computed once per wave.
-var _centers: = {}
 
 
 func start(players: Array) -> void :
@@ -86,23 +88,27 @@ func on_wave_physics(main: Node, delta: float) -> void :
 # [centre, radius] of the safe circle right now.
 func get_storm(main: Node) -> Array:
 	var rect: Rect2 = ZoneService.get_current_zone_rect()
-	var center: Vector2 = _get_center(rect)
+	var end_radius: float = END_RADIUS + END_RADIUS_PER_PLAYER * get_player_count()
+	var center: Vector2 = _get_center(main, rect, end_radius)
 	var start_radius: float = 0.0
 	for corner in [rect.position, rect.end, Vector2(rect.position.x, rect.end.y), Vector2(rect.end.x, rect.position.y)]:
 		start_radius = max(start_radius, center.distance_to(corner))
-	var end_radius: float = END_RADIUS + END_RADIUS_PER_PLAYER * get_player_count()
 	var shrink: float = clamp((get_wave_progress(main) - SHRINK_FROM) / (SHRINK_TO - SHRINK_FROM), 0.0, 1.0)
 	return [center, lerp(start_radius, end_radius, shrink)]
 
 
-func _get_center(rect: Rect2) -> Vector2:
-	var wave: int = RunData.current_wave
-	if not _centers.has(wave):
-		var rng: = RandomNumberGenerator.new()
-		rng.seed = hash([state.get("seed", 0), wave])
-		var spread: Vector2 = rect.size * CENTER_SPREAD
-		_centers[wave] = rect.position + rect.size / 2.0 + Vector2(rng.randf_range( - spread.x, spread.x), rng.randf_range( - spread.y, spread.y))
-	return _centers[wave]
+func _get_center(main: Node, rect: Rect2, end_radius: float) -> Vector2:
+	var rng: = RandomNumberGenerator.new()
+	rng.seed = hash([state.get("seed", 0), RunData.current_wave])
+	var phase_x: = rng.randf_range(0.0, TAU)
+	var phase_y: = rng.randf_range(0.0, TAU)
+	var time: float = get_wave_elapsed(main)
+	var middle: Vector2 = rect.position + rect.size / 2.0
+	var center: Vector2 = middle + rect.size * DRIFT_EXTENT * Vector2(sin(TAU * time / DRIFT_PERIOD_X + phase_x), sin(TAU * time / DRIFT_PERIOD_Y + phase_y))
+	# Keep the final circle inside the walls (on a small arena: the middle on that axis).
+	var reach_x: float = max(0.0, rect.size.x / 2.0 - end_radius)
+	var reach_y: float = max(0.0, rect.size.y / 2.0 - end_radius)
+	return Vector2(clamp(center.x, middle.x - reach_x, middle.x + reach_x), clamp(center.y, middle.y - reach_y, middle.y + reach_y))
 
 
 func get_banner(main: Node) -> String:

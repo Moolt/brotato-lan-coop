@@ -4,12 +4,16 @@ extends "res://mods-unpacked/Moolt-Lan_Coop/modes/lan_mode.gd"
 # player who dies in a wave is out for the rest of the run: killed again at the start of each
 # later wave (the camera then follows the others), no upgrades, Go at once. Once at most one
 # player is left, the wave ends and so does the run: the survivor wins, or, if the last ones
-# fell together, the last to fall. With one player it is a plain endless run.
+# fell together, the last to fall. With one player it is a plain endless run. Everyone plays for
+# themselves: materials and crates go to whoever picks them up.
 # A won run here credits nothing on the own save (the verdict is "run lost" for everyone; the
 # title and the results say who won).
 # state: out (per player the wave they fell in, 0 = still in), out_order (first out first),
 # winner (-1 until decided).
 # Texts: mode_registry.gd (STRINGS), shared by the subclasses.
+
+# Loot is never shared (ModeRegistry.get_fixed_settings, which also reads it for the subclasses).
+const FIXED_SETTINGS: = ["share_materials", "share_crates"]
 
 
 func start(players: Array) -> void :
@@ -21,6 +25,14 @@ func start(players: Array) -> void :
 	state.out = out
 	state.out_order = []
 	state.winner = - 1
+
+
+func get_material_receivers(picker: int):
+	return [picker]
+
+
+func shares_crates() -> bool:
+	return false
 
 
 func is_player_out(player_index: int) -> bool:
