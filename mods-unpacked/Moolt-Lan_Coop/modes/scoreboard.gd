@@ -2,7 +2,8 @@ extends Control
 
 # In-wave HUD of a mode with scores (added by LanMode.on_wave_started): top right, one row per
 # player in the mode's ranking (rank, colour bar, name shortened with "...", the mode's status
-# (an icon such as the crown, or the wave a player died in as "(W7)"), the mode's columns headed by their icons; the own row highlighted; groups such as teams
+# (an icon such as the crown, or the wave a player died in as "(W7)"), greyed while the player is
+# dead or out, the mode's columns headed by their icons; the own row highlighted; groups such as teams
 # under a header row with the tinted team flag, the group's name and status and its totals; a dark
 # rounded panel), and a banner
 # line under the wave timer
@@ -158,7 +159,7 @@ func refresh() -> void :
 				_add_group_row(group, columns)
 				rank = 1
 		var status: Dictionary = _mode.get_player_status(player_index)
-		var muted: bool = status.get("muted", false)
+		var muted: bool = status.get("muted", false) or _is_dead(player_index)
 		var label: = _add_label(str(rank), MUTED_COLOR)
 		label.rect_min_size = Vector2(RANK_WIDTH, 0)
 		label.align = Label.ALIGN_RIGHT
@@ -171,6 +172,13 @@ func refresh() -> void :
 		rank += 1
 	_grid.update()
 	_refresh_banner()
+
+
+func _is_dead(player_index: int) -> bool:
+	if not is_instance_valid(_main) or player_index < 0 or player_index >= _main._players.size():
+		return false
+	var player = _main._players[player_index]
+	return is_instance_valid(player) and player.dead
 
 
 # A group's header: the tinted team flag in the rank column, its name and status, its players'
