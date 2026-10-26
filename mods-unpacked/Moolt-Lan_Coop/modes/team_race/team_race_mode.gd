@@ -33,7 +33,6 @@ const STRINGS: = {
 		"LAN_TEAM_OUT": "{0}: out",
 		"LAN_TEAM_WINS": "{0} wins",
 		"LAN_TEAM_YOU_WIN": "Your team wins!",
-		"LAN_NOTE_TEAM_OUT": "out in wave {0}",
 	},
 	"de": {
 		"LAN_MODE_TEAM_RACE": "Team-Rennen",
@@ -42,7 +41,6 @@ const STRINGS: = {
 		"LAN_TEAM_OUT": "{0}: raus",
 		"LAN_TEAM_WINS": "{0} gewinnt",
 		"LAN_TEAM_YOU_WIN": "Dein Team gewinnt!",
-		"LAN_NOTE_TEAM_OUT": "raus in Welle {0}",
 	},
 }
 
@@ -306,7 +304,7 @@ func _decide_winner() -> int:
 # Scores
 
 func get_score_columns() -> Array:
-	return [[KILLS, "LAN_SCORE_KILLS"]] if is_split() else []
+	return [[KILLS, "LAN_SCORE_KILLS", KILLS_ICON]] if is_split() else []
 
 
 func get_rank_key(player_index: int) -> Array:
@@ -319,9 +317,19 @@ func get_group(player_index: int) -> int:
 
 
 func get_group_title(team: int) -> String:
-	if is_team_out(team):
-		return get_team_name(team) + " · " + tr("LAN_NOTE_TEAM_OUT").replace("{0}", str(state.out_wave[team]))
 	return get_team_name(team)
+
+
+# A team is out only when all its players are dead at once, so the status is the team's (crown
+# for the winner, the wave in brackets when out); its players get none.
+func get_group_status(team: int) -> Dictionary:
+	if state.get("winner_team", - 1) == team:
+		return {"icon": WINNER_ICON}
+	if is_team_out(team):
+		var status: = get_out_status(state.out_wave[team])
+		status.muted = false
+		return status
+	return {}
 
 
 func get_group_color(team: int) -> Color:

@@ -11,6 +11,8 @@ const SEND_DISTANCE: = 220.0
 const SENT_HEALTH_FACTOR: = 1.5
 const SENT: = "sent"
 const RECEIVED: = "received"
+const SENT_ICON = preload("res://ui/menus/global/arrow_right.png")
+const RECEIVED_ICON = preload("res://ui/menus/global/arrow_left.png")
 const MSG_SENT: = "sent"
 
 const STRINGS: = {
@@ -93,4 +95,4 @@ func on_message(_from_index: int, payload: Array) -> void :
 
 
 func get_score_columns() -> Array:
-	return [[KILLS, "LAN_SCORE_KILLS"], [SENT, "LAN_SCORE_SENT"], [RECEIVED, "LAN_SCORE_RECEIVED"]]
+	return [[KILLS, "LAN_SCORE_KILLS", KILLS_ICON], [SENT, "LAN_SCORE_SENT", SENT_ICON], [RECEIVED, "LAN_SCORE_RECEIVED", RECEIVED_ICON]]

@@ -1,24 +1,32 @@
 extends PanelContainer
 
 # The LAN end screen's player list, left of the stats and styled like them (stats_container.tscn):
-# every player with character, and in modes with scores the winner, the rank, the mode's note
-# and the scores, in the mode's ranking (the character only as its icon then). The rows scroll
-# if they don't fit (12 players fit at 1080p), so the list never grows the end screen. Pressing a row shows that player's stats, weapons and items (signal
-# player_selected); the shown row is highlighted, the own one at first.
+# one compact row per player (colour bar, character icon, name shortened with "..."), and in modes
+# with scores the winner line, the rank and the first score column (with its icon), in the mode's
+# ranking; players who are out are greyed, with the wave they died in. Teams sit in a frame in
+# their colour (faded for a team that is out) whose header has the tinted team flag, the team's
+# name (and wave when out) and its total of the first column. Only the status' text is shown, no
+# icons (crown, boss): the winner line says who won. Everything else (the
+# character, all scores) is in the stats panel (end_run.gd extension). The rows scroll if they
+# don't fit, so the list never grows the end screen. Pressing a row shows that player's stats,
+# weapons and items (signal player_selected); the shown row is highlighted, the own one at first.
 
 signal player_selected(player_index)
 
 const BASE_THEME = preload("res://resources/themes/base_theme.tres")
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_26.tres")
-const DETAIL_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
+const VALUE_FONT = preload("res://resources/fonts/actual/base/font_22.tres")
 const UiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
 
 const WIDTH: = 400.0
-const ROW_HEIGHT: = 70.0
-const ICON_SIZE: = 56.0
-const DETAIL_FONT_SIZE: = 20
+const ROW_HEIGHT: = 44.0
+const ICON_SIZE: = 40.0
+const VALUE_ICON_SIZE: = 26.0
+const TEAM_ICON_SIZE: = 30.0
+const RANK_WIDTH: = 28.0
 const WINNER_COLOR: = Color(1.0, 0.85, 0.3)
-const DETAIL_COLOR: = Color(1, 1, 1, 0.7)
+const MUTED_COLOR: = Color(1, 1, 1, 0.6)
+const MUTED_MODULATE: = Color(1, 1, 1, 0.45)
 
 var rows: = {}
 
@@ -56,7 +64,6 @@ func _ready() -> void :
 		result.set_message_translation(false)
 		result.text = _mode.get_result_text()
 		result.align = Label.ALIGN_CENTER
-		result.autowrap = true
 		result.add_font_override("font", NAME_FONT)
 		result.add_color_override("font_color", WINNER_COLOR)
 		column.add_child(result)
@@ -68,28 +75,28 @@ func _ready() -> void :
 	column.add_child(_scroll)
 	var row_column: = VBoxContainer.new()
 	row_column.size_flags_horizontal = SIZE_EXPAND_FILL
-	row_column.add_constant_override("separation", 6)
+	row_column.add_constant_override("separation", 4)
 	_scroll.add_child(row_column)
 
-	var detail_font: DynamicFont = DETAIL_FONT.duplicate()
-	detail_font.size = DETAIL_FONT_SIZE
+	var score_column: Array = _mode.get_score_columns()[0] if ranked else []
 	var player_indices: Array = _mode.get_ranking() if ranked else range(_solo_view.get_player_count())
-	# Groups (teams) under a header in their colour; ranks count within the group.
+	# Groups (teams) in a frame in their colour; ranks count within the group.
 	var rank: = 0
 	var group: = - 1
+	var parent: Container = row_column
 	for player_index in player_indices:
 		if ranked and _mode.get_group(player_index) != group:
 			group = _mode.get_group(player_index)
+			parent = row_column
 			if group >= 0:
-				var header: = _new_label(_mode.get_group_title(group), NAME_FONT)
-				header.add_color_override("font_color", _mode.get_group_color(group))
-				header.clip_text = false
-				header.autowrap = true
-				row_column.add_child(header)
+				var frame: = UiKit.new_team_frame(_mode.get_group_color(group), _mode.get_group_status(group).get("out", false))
+				row_column.add_child(frame)
+				parent = frame.get_child(0)
+				parent.add_child(_new_group_header(group, score_column))
 				rank = 0
 		rank += 1
-		var row: = _new_row(player_index, rank if ranked else 0, detail_font)
-		row_column.add_child(row)
+		var row: = _new_row(player_index, rank if ranked else 0, score_column)
+		parent.add_child(row)
 		rows[player_index] = row
 
 	var previous: Button = null
@@ -126,73 +133,78 @@ func get_row(player_index: int) -> Button:
 	return rows.get(player_index)
 
 
-func _new_row(player_index: int, rank: int, detail_font: Font) -> Button:
+# The tinted team flag, the team's name and status text ("(W7)"), the team's total.
+func _new_group_header(group: int, score_column: Array) -> Control:
+	var color: Color = _mode.get_group_color(group)
+	var margin: = MarginContainer.new()
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_constant_override("margin_left", 6)
+	margin.add_constant_override("margin_right", 10)
+	var header: = HBoxContainer.new()
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_constant_override("separation", 6)
+	header.rect_min_size = Vector2(0, 34)
+	margin.add_child(header)
+	header.add_child(UiKit.new_team_icon(color, TEAM_ICON_SIZE))
+	header.add_child(UiKit.new_icon_value(null, _mode.get_group_title(group), VALUE_FONT, color))
+	var status_text: String = _mode.get_group_status(group).get("text", "")
+	if not status_text.empty():
+		header.add_child(UiKit.new_icon_value(null, status_text, VALUE_FONT, color))
+	var spacer: = Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.size_flags_horizontal = SIZE_EXPAND_FILL
+	header.add_child(spacer)
+	if not score_column.empty():
+		var total: = 0
+		for player_index in _mode.get_player_count():
+			if _mode.get_group(player_index) == group:
+				total += _mode.get_score(score_column[0], player_index)
+		header.add_child(UiKit.new_icon_value(score_column[2], str(total), VALUE_FONT, Color.white, VALUE_ICON_SIZE))
+	return margin
+
+
+func _new_row(player_index: int, rank: int, score_column: Array) -> Button:
 	var row: Button = MyMenuButton.new()
 	row.rect_min_size = Vector2(0, ROW_HEIGHT)
 	row.clip_text = true
+	UiKit.style_row_button(row)
 	var _e = row.connect("pressed", self, "_on_row_pressed", [player_index])
 
 	var line: = HBoxContainer.new()
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	line.add_constant_override("separation", 10)
+	line.add_constant_override("separation", 8)
 	line.set_anchors_and_margins_preset(Control.PRESET_WIDE)
-	line.margin_left = 10
 	line.margin_right = - 10
 	row.add_child(line)
 
-	var character = _solo_view.get_player_data(player_index).current_character
+	var status: Dictionary = _mode.get_player_status(player_index) if rank > 0 else {}
+	var muted: bool = status.get("muted", false)
+	if muted:
+		line.modulate = MUTED_MODULATE
+
+	line.add_child(UiKit.new_player_bar(player_index))
 	if rank > 0:
-		var rank_label: = _new_label("%d." % rank, NAME_FONT)
-		rank_label.rect_min_size = Vector2(36, 0)
+		var rank_label: = Label.new()
+		rank_label.set_message_translation(false)
+		rank_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rank_label.text = "%d." % rank
+		rank_label.align = Label.ALIGN_RIGHT
+		rank_label.valign = Label.VALIGN_CENTER
+		rank_label.size_flags_vertical = SIZE_FILL
+		rank_label.rect_min_size = Vector2(RANK_WIDTH, 0)
+		rank_label.add_font_override("font", VALUE_FONT)
+		rank_label.add_color_override("font_color", MUTED_COLOR)
 		line.add_child(rank_label)
-	var icon: = TextureRect.new()
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.texture = character.icon if character != null else null
-	icon.expand = true
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.rect_min_size = Vector2(ICON_SIZE, ICON_SIZE)
-	icon.size_flags_vertical = SIZE_SHRINK_CENTER
-	line.add_child(icon)
+	var character = _solo_view.get_player_data(player_index).current_character
+	line.add_child(UiKit.new_icon(character.icon if character != null else null, Vector2(ICON_SIZE, ICON_SIZE)))
 
-	var text: = VBoxContainer.new()
-	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	text.alignment = BoxContainer.ALIGN_CENTER
-	text.size_flags_horizontal = SIZE_EXPAND_FILL
-	text.add_constant_override("separation", 0)
-	line.add_child(text)
-
-	var player_name: String = _mode.get_player_name(player_index)
-	var name_label: = _new_label(player_name, NAME_FONT)
-	name_label.add_color_override("font_color", UiKit.get_player_color(player_index))
-	text.add_child(name_label)
-
-	var details: = []
-	if rank > 0:
-		var note: String = _mode.get_player_note(player_index)
-		if not note.empty():
-			details.append(note)
-		for score_column in _mode.get_score_columns():
-			details.append("%s %d" % [tr(score_column[1]), _mode.get_score(score_column[0], player_index)])
-	elif character != null:
-		details.append(tr(character.name))
-	text.add_child(_new_detail_label(PoolStringArray(details).join(" · "), detail_font))
+	var name_color: Color = MUTED_COLOR if muted else UiKit.get_player_color(player_index)
+	line.add_child(UiKit.new_name_label(_mode.get_player_name(player_index), name_color, NAME_FONT))
+	if not status.get("text", "").empty():
+		line.add_child(UiKit.new_icon_value(null, status.text, VALUE_FONT, MUTED_COLOR))
+	if not score_column.empty():
+		line.add_child(UiKit.new_icon_value(score_column[2], str(_mode.get_score(score_column[0], player_index)), VALUE_FONT, Color.white, VALUE_ICON_SIZE))
 	return row
-
-
-func _new_detail_label(text: String, font: Font) -> Label:
-	var label: = _new_label(text, font)
-	label.add_color_override("font_color", DETAIL_COLOR)
-	return label
-
-
-func _new_label(text: String, font: Font) -> Label:
-	var label: = Label.new()
-	label.set_message_translation(false)
-	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.text = text
-	label.clip_text = true
-	label.add_font_override("font", font)
-	return label
 
 
 func _on_row_pressed(player_index: int) -> void :

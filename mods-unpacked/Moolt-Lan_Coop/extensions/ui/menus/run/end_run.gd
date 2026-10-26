@@ -4,12 +4,20 @@ extends "res://ui/menus/run/end_run.gd"
 # stats (ui/end_run_player_list.gd, with the mode's ranking and scores) picks the player, the own
 # one at first. The solo view puts that player into slot 0 (SoloView.show_player), so vanilla's
 # code for player 0 shows it. Rewards stay the own ones.
+# The stats panel shows the shown player's name as its title, and under "Current Level" rows like
+# vanilla's for the character and the match: the mode's score columns, or the kills in modes
+# without scores.
 
 # Not "LanGame": the base_end_run.gd extension, which may become the parent, declares that one.
 const EndRunLanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const EndRunPlayerList = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/end_run_player_list.gd")
+const EndRunUiKit = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/ui_kit.gd")
+const STAT_ROW_SCENE = preload("res://ui/menus/shop/stat_container.tscn")
 
 var _lan_player_list: PanelContainer = null
+var _lan_character_row: Control = null
+# [stat row, score key]
+var _lan_score_rows: = []
 
 
 # Runs after vanilla's _ready.
@@ -28,6 +36,8 @@ func _ready() -> void :
 	var panel_row: Node = _stats_container.get_parent()
 	panel_row.add_child(_lan_player_list)
 	panel_row.move_child(_lan_player_list, _stats_container.get_index())
+	_lan_add_stat_rows()
+	_lan_update_stat_rows(solo_view.shown_index)
 
 	# Exit <-> the shown player's row.
 	var own_row: Button = _lan_player_list.get_row(solo_view.shown_index)
@@ -57,6 +67,7 @@ func _on_LanPlayerList_player_selected(player_index: int) -> void :
 	_exit_button.focus_neighbour_top = row_path
 	# update_player_stats only covers the open tab.
 	_stats_container.general_stats[0].update_info(0)
+	_lan_update_stat_rows(player_index)
 	for stat in _stats_container.primary_stats + _stats_container.secondary_stats:
 		stat.update_player_stat(0)
 	_weapons_container.set_data("WEAPONS", Category.WEAPON, RunData.get_player_weapons(0))
@@ -67,3 +78,45 @@ func _on_LanPlayerList_player_selected(player_index: int) -> void :
 func _lan_sort_inventories() -> void :
 	_items_container._elements.emit_signal("need_to_sort_inventory")
 	_weapons_container._elements.emit_signal("need_to_sort_inventory")
+
+
+func _lan_add_stat_rows() -> void :
+	var mode = EndRunLanGame.get_mode()
+	_lan_character_row = _lan_new_stat_row(null, "")
+	var columns: Array = mode.get_score_columns()
+	if columns.empty():
+		columns = [[mode.KILLS, "LAN_SCORE_KILLS", mode.KILLS_ICON]]
+	for column in columns:
+		_lan_score_rows.append([_lan_new_stat_row(column[2], column[1]), column[0]])
+
+
+# A row like vanilla's stat rows (stat_container.tscn), filled here instead of from a stat.
+func _lan_new_stat_row(icon: Texture, label_key: String) -> Control:
+	var row: Control = STAT_ROW_SCENE.instance()
+	row.focus_mode = Control.FOCUS_NONE
+	_stats_container._general_stats.add_child(row)
+	row.get_node("HBoxContainer/Icon").texture = icon
+	# No hover or focus: vanilla's handlers would look up a stat for the row.
+	row.get_node("HBoxContainer").mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.get_node("HBoxContainer/Label").mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.get_node("HBoxContainer/Label").focus_mode = Control.FOCUS_NONE
+	row.get_node("HBoxContainer/Label").text = label_key
+	row.get_node("HBoxContainer/Value").text = ""
+	return row
+
+
+func _lan_update_stat_rows(player_index: int) -> void :
+	var solo_view = _lan_get_solo_view()
+	if solo_view == null or _lan_character_row == null:
+		return
+	var mode = EndRunLanGame.get_mode()
+	var title: Label = _stats_container.title_label
+	title.set_message_translation(false)
+	title.text = mode.get_player_name(player_index)
+	title.add_color_override("font_color", EndRunUiKit.get_player_color(player_index))
+	var character = solo_view.get_player_data(player_index).current_character
+	if character != null:
+		_lan_character_row.get_node("HBoxContainer/Icon").texture = character.icon
+		_lan_character_row.get_node("HBoxContainer/Label").text = character.name
+	for score_row in _lan_score_rows:
+		score_row[0].get_node("HBoxContainer/Value").text = str(mode.get_score(score_row[1], player_index))

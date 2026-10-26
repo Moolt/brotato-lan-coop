@@ -108,7 +108,7 @@ func get_players_inside(main: Node, center: Vector2) -> Array:
 
 
 func get_score_columns() -> Array:
-	return [[HILL, "LAN_SCORE_HILL"], [KILLS, "LAN_SCORE_KILLS"]]
+	return [[HILL, "LAN_SCORE_HILL", WINNER_ICON], [KILLS, "LAN_SCORE_KILLS", KILLS_ICON]]
 
 
 func get_banner(main: Node) -> String:

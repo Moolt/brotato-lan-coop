@@ -85,13 +85,16 @@ func get_rank_key(player_index: int) -> Array:
 
 
 func get_score_columns() -> Array:
-	return [[KILLS, "LAN_SCORE_KILLS"]]
+	return [[KILLS, "LAN_SCORE_KILLS", KILLS_ICON]]
 
 
-func get_player_note(player_index: int) -> String:
+# The winner gets the crown, players who are out the skull and their wave.
+func get_player_status(player_index: int) -> Dictionary:
+	if state.get("winner", - 1) == player_index:
+		return {"icon": WINNER_ICON}
 	if is_player_out(player_index):
-		return tr("LAN_NOTE_OUT_WAVE").replace("{0}", str(state.out[player_index]))
-	return ""
+		return get_out_status(state.out[player_index])
+	return {}
 
 
 func get_banner(_main: Node) -> String:

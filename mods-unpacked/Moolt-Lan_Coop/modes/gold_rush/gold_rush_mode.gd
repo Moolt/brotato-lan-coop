@@ -9,6 +9,8 @@ const DEATH_DROP_SHARE: = 0.5
 const DEATH_DROP_SPREAD: = 100
 const MATERIALS: = "materials"
 const DROPPED: = "dropped"
+const MATERIALS_ICON = preload("res://items/materials/material_ui.png")
+const DROPPED_ICON = preload("res://items/materials/material_bag_icon.png")
 # Loot is never shared here (ModeRegistry.get_fixed_settings).
 const FIXED_SETTINGS: = ["share_materials", "share_crates"]
 
@@ -57,7 +59,7 @@ func on_player_died(main: Node, player: Node, _args) -> void :
 
 
 func get_score_columns() -> Array:
-	return [[MATERIALS, "LAN_SCORE_MATERIALS"], [KILLS, "LAN_SCORE_KILLS"], [DROPPED, "LAN_SCORE_DROPPED"]]
+	return [[MATERIALS, "LAN_SCORE_MATERIALS", MATERIALS_ICON], [KILLS, "LAN_SCORE_KILLS", KILLS_ICON], [DROPPED, "LAN_SCORE_DROPPED", DROPPED_ICON]]
 
 
 func get_rank_key(player_index: int) -> Array:

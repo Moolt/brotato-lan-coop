@@ -62,6 +62,8 @@ var _settings_label: Label
 var _settings_button: Button
 # Modes with teams: everyone switches their own team here (the rows show the team colour).
 var _team_button: Button
+# The team headers in the player list (by team).
+var _team_headers: = []
 var _settings_page: Control
 var _hint_label: Label
 var _start_button: Button
@@ -613,16 +615,28 @@ func _refresh_players() -> void :
 		_player_list.remove_child(child)
 		child.queue_free()
 
+	_team_headers.clear()
 	_count_label.text = tr("LAN_PLAYER_COUNT").replace("{0}", str(_net.get_player_count())).replace("{1}", str(NetProtocol.MAX_PLAYERS))
 	if not ModeRegistry.uses_teams(_net.lobby_settings.get("mode", NetProtocol.DEFAULT_MODE)):
 		for entry in _net.players:
 			_player_list.add_child(_new_player_row(entry))
 		return
-	# Modes with teams: each team under its name, in its colour (players by index within it). A
-	# click on the name joins that team (mouse only; gamepads have the Switch team button).
+	# Modes with teams: each team in a frame in its colour (UiKit.new_team_frame, as on the
+	# scoreboard and the end screen), under the tinted flag and its name (players by index within
+	# it). A click on the name joins that team (mouse only; gamepads have the Switch team button).
 	var can_switch: bool = not _net.run_in_progress and not _net.lobby_settings.get("in_wave", false)
 	for team in NetProtocol.TEAM_COUNT:
 		var color: Color = ModeRegistry.TEAM_COLORS[team % ModeRegistry.TEAM_COLORS.size()]
+		var frame: = UiKit.new_team_frame(color)
+		_player_list.add_child(frame)
+		var team_rows: VBoxContainer = frame.get_child(0)
+		var header_margin: = MarginContainer.new()
+		header_margin.add_constant_override("margin_left", 6)
+		team_rows.add_child(header_margin)
+		var header_line: = HBoxContainer.new()
+		header_line.add_constant_override("separation", 8)
+		header_line.add_child(UiKit.new_team_icon(color, 36))
+		header_margin.add_child(header_line)
 		var header: = Button.new()
 		header.flat = true
 		header.focus_mode = Control.FOCUS_NONE
@@ -642,37 +656,35 @@ func _refresh_players() -> void :
 		for style in ["normal", "hover", "pressed", "disabled", "focus"]:
 			header.add_stylebox_override(style, StyleBoxEmpty.new())
 		var _e = header.connect("pressed", self, "_on_TeamHeader_pressed", [team])
-		_player_list.add_child(header)
+		header_line.add_child(header)
+		_team_headers.append(header)
 		for entry in _net.players:
 			if int(entry.get("team", 0)) % NetProtocol.TEAM_COUNT == team:
-				_player_list.add_child(_new_player_row(entry))
+				team_rows.add_child(_new_player_row(entry))
 
 
+# The own row has the light rounded background of the end screen's shown row.
 func _new_player_row(entry: Dictionary) -> Control:
+	var panel: = PanelContainer.new()
+	var own: bool = entry.player_index == _net.local_player_index
+	var style: = UiKit.new_rounded_style(UiKit.ROW_SELECTED_COLOR if own else Color(0, 0, 0, 0), UiKit.ROW_RADIUS, 0, 2)
+	style.content_margin_right = 8
+	panel.add_stylebox_override("panel", style)
 	var row: = HBoxContainer.new()
 	row.add_constant_override("separation", 10)
+	panel.add_child(row)
 
-	var swatch: = ColorRect.new()
-	swatch.rect_min_size = Vector2(8, ROW_ICON_SIZE.y)
-	swatch.color = UiKit.get_player_color(entry.player_index)
-	row.add_child(swatch)
+	row.add_child(UiKit.new_player_bar(entry.player_index))
 
 	var character: = LobbyRules.get_character(entry.character_id)
 	row.add_child(_new_row_icon(character.get_icon() if character != null else null))
 
-	var name_label: = Label.new()
 	var text: String = entry.name
 	if entry.player_index == 0:
 		text += "  " + tr("LAN_TAG_HOST")
-	if entry.player_index == _net.local_player_index:
-		text += "  " + tr("LAN_TAG_YOU")
 	if not entry.connected:
 		text += "  " + tr("LAN_TAG_DISCONNECTED")
-	name_label.text = text
-	name_label.add_font_override("font", ROW_FONT)
-	name_label.clip_text = true
-	name_label.size_flags_horizontal = SIZE_EXPAND_FILL
-	name_label.valign = Label.VALIGN_CENTER
+	var name_label: = UiKit.new_name_label(text, UiKit.get_player_color(entry.player_index), ROW_FONT)
 	name_label.size_flags_vertical = SIZE_FILL
 	row.add_child(name_label)
 
@@ -688,7 +700,7 @@ func _new_player_row(entry: Dictionary) -> Control:
 	status.add_font_override("font", ROW_FONT)
 	status.add_color_override("font_color", UiKit.STATUS_COLOR_OK if entry.ready else UiKit.STATUS_COLOR_MUTED)
 	row.add_child(status)
-	return row
+	return panel
 
 
 func _new_row_icon(texture: Texture) -> TextureRect:

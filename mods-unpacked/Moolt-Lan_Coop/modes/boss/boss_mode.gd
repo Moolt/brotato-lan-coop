@@ -19,6 +19,8 @@ const BOSS_SCALE: = 1.35
 const BOSS_TINT: = Color(1.0, 0.7, 0.7)
 const BOSS_WINS: = "boss_wins"
 const BOSS_KILLS: = "boss_kills"
+const BOSS_ICON = preload("res://ui/icons/misc/boss_icon.png")
+const BOSS_WINS_ICON = preload("res://items/all/hunting_trophy/hunting_trophy_icon.png")
 
 const STRINGS: = {
 	"en": {
@@ -30,7 +32,6 @@ const STRINGS: = {
 		"LAN_BOSS_OTHER": "{0} is the boss! Take them down.",
 		"LAN_BOSS_DOWN": "The boss is down!",
 		"LAN_BOSS_WON": "The boss wins this round!",
-		"LAN_NOTE_BOSS": "boss",
 	},
 	"de": {
 		"LAN_MODE_BOSS": "Boss-Spieler",
@@ -41,7 +42,6 @@ const STRINGS: = {
 		"LAN_BOSS_OTHER": "{0} ist der Boss! Besiegt ihn.",
 		"LAN_BOSS_DOWN": "Der Boss ist besiegt!",
 		"LAN_BOSS_WON": "Der Boss gewinnt diese Runde!",
-		"LAN_NOTE_BOSS": "Boss",
 	},
 }
 
@@ -201,11 +201,11 @@ func adjust_run_states(main: Node, states: Array) -> Array:
 # Scores
 
 func get_score_columns() -> Array:
-	return [[BOSS_WINS, "LAN_SCORE_BOSS_WINS"], [BOSS_KILLS, "LAN_SCORE_BOSS_KILLS"], [KILLS, "LAN_SCORE_KILLS"]]
+	return [[BOSS_WINS, "LAN_SCORE_BOSS_WINS", BOSS_WINS_ICON], [BOSS_KILLS, "LAN_SCORE_BOSS_KILLS", BOSS_ICON], [KILLS, "LAN_SCORE_KILLS", KILLS_ICON]]
 
 
-func get_player_note(player_index: int) -> String:
-	return tr("LAN_NOTE_BOSS") if player_index == get_boss() and is_instance_valid(_main) and not _main._cleaning_up else ""
+func get_player_status(player_index: int) -> Dictionary:
+	return {"icon": BOSS_ICON} if player_index == get_boss() and is_instance_valid(_main) and not _main._cleaning_up else {}
 
 
 func get_banner(_main_node: Node) -> String:

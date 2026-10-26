@@ -1954,9 +1954,7 @@ func _lobby_step() -> void :
 				# Teams: a click on the other team's header joins it.
 				var lobby_node = m.get_node("LanLobby")
 				var before = net.get_local_player().get("team", 0)
-				for child in lobby_node._player_list.get_children():
-					if child is Button and child.text.begins_with(tr(["LAN_TEAM_A", "LAN_TEAM_B"][1 - before]) + " ("):
-						child.emit_signal("pressed")
+				lobby_node._team_headers[1 - before].emit_signal("pressed")
 				print("[TEST] lobby_team_header before=", before, " after=", net.get_local_player().get("team", 0))
 			# Settings page: open, change the choice time, close with ui_cancel.
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)

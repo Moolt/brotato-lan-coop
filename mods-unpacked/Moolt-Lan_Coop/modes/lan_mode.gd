@@ -20,6 +20,8 @@ const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 const Scoreboard = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/scoreboard.gd")
 
 const KILLS: = "kills"
+const KILLS_ICON = preload("res://ui/icons/misc/enemy_icon.png")
+const WINNER_ICON = preload("res://items/all/crown/crown_icon.png")
 const SCOREBOARD_NAME: = "LanScoreboard"
 
 var id: = ""
@@ -243,14 +245,16 @@ func on_message(_from_index: int, _payload: Array) -> void :
 
 # Scores and results
 
-# [[score key, translation key], ...] for the scoreboard and the results; empty = no scoreboard.
+# [[score key, translation key, icon], ...] for the scoreboard and the results; empty = no
+# scoreboard. The scoreboard heads a column with its icon; the end screen's stats panel shows
+# icon, name and value, its player list the first column.
 func get_score_columns() -> Array:
 	return []
 
 
-# Players can be shown in groups (teams): the scoreboard and the end screen's list put a header
-# (title, colour) above each group's players. The ranking must keep a group's players together.
-# -1 = no groups.
+# Players can be shown in groups (teams): the scoreboard and the end screen's list put each
+# group's players in a frame or under a header in its colour, with the team flag, the group's
+# status and its totals. The ranking must keep a group's players together. -1 = no groups.
 func get_group(_player_index: int) -> int:
 	return - 1
 
@@ -263,9 +267,20 @@ func get_group_color(_group: int) -> Color:
 	return Color.white
 
 
-# What a row shows under the name ("" = nothing): out, boss, ...
-func get_player_note(_player_index: int) -> String:
-	return ""
+# Status shown next to a name instead of words: {} = none, else {"icon": Texture, "text": short
+# text or "", "muted": the row is greyed, "out": out of the run (a team's frame fades)}.
+func get_player_status(_player_index: int) -> Dictionary:
+	return {}
+
+
+# The same for a group's header (out, winner).
+func get_group_status(_group: int) -> Dictionary:
+	return {}
+
+
+# The status of a player or team that is out since a wave: "(W7)", no icon.
+func get_out_status(wave: int) -> Dictionary:
+	return {"icon": null, "text": tr("LAN_NOTE_WAVE").replace("{0}", str(wave)), "muted": true, "out": true}
 
 
 # Sort key per player, larger first (an array compares element by element).
