@@ -72,3 +72,13 @@ func on_health_regen(loop_count: int) -> void :
 	if lan_no_regen:
 		return
 	.on_health_regen(loop_count)
+
+
+# Heal over time (fruit with the DLC's jerky, for example) ticks on SceneTreeTimers that outlive
+# the wave. In the solo view between waves RunData holds only the own player, so a tick for a
+# player beyond it raised script errors (vanilla's heal reads that player's effects). A session's
+# wave is over by then: no more healing.
+func on_heal_over_time_timer_timeout() -> void :
+	if LanGame.in_session() and (player_index >= RunData.get_player_count() or Utils.get_scene_node().get("_cleaning_up") != false):
+		return
+	.on_heal_over_time_timer_timeout()

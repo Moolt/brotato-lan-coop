@@ -30,6 +30,8 @@ extends Node
 #         weapon are hovered and with nothing hovered, opens the settings page, sets the choice
 #         time to 60, closes it with ui_cancel, and quits (lobby layout)
 #   (join) in the lobby: logs the settings summary and that there is no Settings button
+#   title: screenshots the main menu after 2 s and logs its layout (containers, each left button),
+#         then again with Continue toggled (title_no_continue), and quits
 #   quit: quits once the title screen is up (cheap check for parse errors)
 #   (none): idle, for manual tests
 #   (host and join) END_STAY=1: stay on the end screen (no Exit, no quit), e.g. to look at it
@@ -89,13 +91,21 @@ extends Node
 #         net ids, the boosted and charmed counts and the scene effect behaviours on both sides
 #   (host) BOSS=path: the boss spawned at t=13 (default the rhino), e.g. a DLC elite with pivots
 #         (res://dlcs/dlc_1/enemies/giant/giant.tscn) or the eel (phase 2 at half HP, t=18)
+#   (any role) DLC_LOG=s: every s seconds in a wave, log_sync's dlc line (long waves)
+#   (host) DLC_ITEMS=k (DLC): at t=16 the DLC's items and weapons with index % 7 == k for players 0
+#         and 1 (k = 0..6 covers all)
 #   (host) BOSS_HP2=n: the bosses' HP at t=18 of 5000 (default 2500; the eel's phase 2 is below 2000)
 #   (host) SPAWN=path: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish)
+#   (host) SPAWN_NEAR=1: the SPAWN enemies 250 px around the host player (they notice it)
+#   (host) CHARM_BOOST=1: at t=13 players 0 and 1 get 200 max HP, so a Romantic charms on every
+#         hit that leaves an enemy below 25 % HP (vanilla's own charm path, both players' hits)
 #   (host) CHARM_TEST=1: at t=15 the host charms every spitter (needs a charm effect, e.g.
 #         CHAR=character_romantic); log_sync's dlc line logs charmed projectiles on both sides
 # log_sync's dlc line (both sides): every boss's pivots (direction, angle), charmed (hue-shifted)
 #   enemy projectiles, enemy projectiles the machine shot itself (clients: must stay 0), Pursuer
 #   sizes by net id, full lungs
+# log_sync's steps line (both sides): every player's steps this wave and max HP (the DLC's hiker
+#   gains gold and max HP for steps; the host must count remote players' steps)
 # log_lobby logs the active DLCs and how many zones, characters, items and weapons are loaded.
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
@@ -133,7 +143,7 @@ func _ready() -> void :
 	if OS.get_environment("LOAD_STALL") != "":
 		var _e = get_tree().connect("node_added", self, "_on_node_added")
 	for a in OS.get_cmdline_args():
-		if a in ["host", "join", "quit", "solo", "lobby"]:
+		if a in ["host", "join", "quit", "solo", "lobby", "title"]:
 			role = a
 	print("[TEST] role=", role)
 	# Quieter test sessions: the master bus at $TEST_VOLUME (default 0.2) of the saved volume.
@@ -261,6 +271,7 @@ func _process(delta: float) -> void :
 		Engine.target_fps = int(OS.get_environment("TARGET_FPS"))
 	if OS.get_environment("CURSE_ENEMIES") == "1":
 		DebugService.curse_enemy_spawn = true
+	dlc_log_watch(delta)
 	hit_log_watch()
 	target_log(delta)
 	storm_edge()
@@ -298,6 +309,9 @@ func _process(delta: float) -> void :
 		return
 	if role == "quit" or get_node_or_null("/root/LanNet") == null:
 		get_tree().quit()
+		return
+	if role == "title":
+		_title_step()
 		return
 	if role == "solo":
 		_solo_step()
@@ -1021,6 +1035,66 @@ func log_mode(tag: String) -> void :
 		print("[TEST] ", tag, " mode=", net.mode.id, " serial=", net.mode.serial, " state=", to_json(state))
 
 
+# DLC_LOG=s: every s seconds in a wave, the outlines and dlc lines (long waves).
+var dlc_log_t: = 0.0
+func dlc_log_watch(delta: float) -> void :
+	if OS.get_environment("DLC_LOG") == "":
+		return
+	var main = get_tree().current_scene
+	var sync = main.get_node_or_null("LanWaveSync") if main != null else null
+	if sync == null or main._cleaning_up:
+		dlc_log_t = 0.0
+		return
+	dlc_log_t += delta
+	if dlc_log_t >= float(OS.get_environment("DLC_LOG")):
+		dlc_log_t = 0.0
+		log_dlc(role + "_every", main, sync)
+
+
+# DLC_ITEMS=k: the DLC's items and weapons whose index % 7 == k for players 0 and 1 (weapons only
+# into free slots), so 7 runs cover all of them.
+func dlc_items_test(k: int) -> void :
+	var dlc = ProgressData.get_dlc_data("abyssal_terrors")
+	var added = []
+	for i in dlc.items.size():
+		if i % 7 == k:
+			for player_index in 2:
+				RunData.add_item(dlc.items[i], player_index)
+			added.append(dlc.items[i].my_id)
+	for i in dlc.weapons.size():
+		if i % 7 == k:
+			for player_index in 2:
+				if RunData.players_data[player_index].weapons.size() < 6:
+					var _w = RunData.add_weapon(dlc.weapons[i], player_index)
+			added.append(dlc.weapons[i].my_id)
+	print("[TEST] dlc_items k=", k, " of items=", dlc.items.size(), " weapons=", dlc.weapons.size(), ": ", added)
+
+
+# Role title: the main menu's layout (the Multiplayer button must not push it off the screen).
+func _title_step() -> void :
+	# Step 0: wait; 1: as loaded (Continue shown with a saved run); 2: Continue hidden.
+	if step == 0:
+		next_t = 2.0
+		step = 1
+		return
+	var main_menu = menus()._main_menu
+	var tag = "title" if step == 1 else "title_no_continue"
+	var out = []
+	for path in ["LogoContainer", "EmptySpace", "MarginContainer"]:
+		out.append("%s=%s" % [path, main_menu.get_node(path).get_global_rect()])
+	print("[TEST] ", tag, " continue=", main_menu.continue_button.visible, " menu=", main_menu.get_global_rect(), " ", out, " right=", main_menu.right_container.get_global_rect())
+	for button in main_menu.left_container.get_children():
+		if button is Control and button.visible:
+			print("[TEST] ", tag, "   ", button.name, " ", button.get_global_rect())
+	shot(tag)
+	if step == 1:
+		main_menu.continue_button.visible = not main_menu.continue_button.visible
+		next_t = t + 1.0
+		step = 2
+		return
+	get_tree().quit()
+
+
 # DLC enemies (see the header): pivots, charmed projectiles, local projectiles, Pursuer sizes, lungs.
 func log_dlc(tag: String, main: Node, wave_sync: Node) -> void :
 	var pivots = []
@@ -1042,6 +1116,9 @@ func log_dlc(tag: String, main: Node, wave_sync: Node) -> void :
 			local += 1
 	var sizes = []
 	var full = 0
+	var mirrored = []
+	var angry = []
+	var charmed = []
 	var ids = wave_sync._entities.keys()
 	ids.sort()
 	for net_id in ids:
@@ -1052,7 +1129,13 @@ func log_dlc(tag: String, main: Node, wave_sync: Node) -> void :
 			sizes.append("%d:%.2f" % [net_id, e.sprite.scale.y])
 		if e.get("is_full") == true:
 			full += 1
-	print("[TEST] ", tag, " dlc time_left=", stepify(main._wave_timer.time_left, 0.01), " pivots=", pivots, " enemy_projectiles=", active, " hue=", hue, " local=", local, " pursuer_sizes=", sizes, " full_lungs=", full)
+		if e is Enemy and e.has_outline(Utils.CHARM_COLOR):
+			charmed.append(net_id)
+		if e.get("sprite_full") != null and e.sprite.scale.x < 0:
+			mirrored.append(net_id)
+		if e.get("angry_sound") != null and e._current_movement_behavior == e._on_triggered_movement_behavior:
+			angry.append(net_id)
+	print("[TEST] ", tag, " dlc time_left=", stepify(main._wave_timer.time_left, 0.01), " pivots=", pivots, " enemy_projectiles=", active, " hue=", hue, " local=", local, " pursuer_sizes=", sizes, " full_lungs=", full, " mirrored_lungs=", mirrored, " angry=", angry, " charmed=", charmed)
 
 
 
@@ -1099,6 +1182,10 @@ func log_sync(tag: String) -> void :
 		cursed.sort()
 		print("[TEST] ", tag, " outlines cursed=", cursed, " boosted=", outlined.boosted, " charmed=", outlined.charmed, " scene_behaviors=", main._effect_behaviors.get_child_count())
 		log_dlc(tag, main, sync)
+		var steps = []
+		for i in RunData.get_player_count():
+			steps.append("%d:%d hp=%d" % [i, RunData.steps_taken_this_wave[i], RunData.get_player_max_health(i)])
+		print("[TEST] ", tag, " steps ", steps)
 	if sync != null:
 		var ids = sync._entities.keys()
 		ids.sort()
@@ -1256,7 +1343,14 @@ func _host_step() -> void :
 			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load(boss_scene), rect.end - Vector2(150, 150)])
 			if OS.get_environment("SPAWN") != "":
 				for i in 4:
-					spawner.queue_to_spawn.push_back([EntityType.ENEMY, load(OS.get_environment("SPAWN")), center_offset(i) + Vector2(0, 200)])
+					var spawn_pos = center_offset(i) + Vector2(0, 200)
+					if OS.get_environment("SPAWN_NEAR") == "1":
+						spawn_pos = get_tree().current_scene._players[0].global_position + Vector2(250, 0).rotated(i * PI / 2)
+					spawner.queue_to_spawn.push_back([EntityType.ENEMY, load(OS.get_environment("SPAWN")), spawn_pos])
+			if OS.get_environment("CHARM_BOOST") == "1":
+				# Romantic's charm chance is half the max HP in percent: 100 % from here on.
+				for i in 2:
+					RunData.add_stat(Keys.stat_max_hp_hash, 200, i)
 			for i in 3:
 				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
 			# An enemy spawning right on the host player: vanilla moves its marker elsewhere.
@@ -1321,6 +1415,8 @@ func _host_step() -> void :
 				gone.free()
 			contact_test(get_tree().current_scene)
 			progress_test(get_tree().current_scene)
+			if OS.get_environment("DLC_ITEMS") != "" and ProgressData.get_dlc_data("abyssal_terrors") != null:
+				dlc_items_test(int(OS.get_environment("DLC_ITEMS")))
 			if OS.get_environment("PET_TEST") == "1":
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_blazemander"), 0)
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_bonk_dog"), 1)
@@ -1756,10 +1852,20 @@ func log_run_check(tag: String) -> void :
 		var gear = []
 		for item in pd.items + pd.weapons + RunData.locked_shop_items[i]:
 			var data = item[0] if item is Array else item
-			gear.append(data.serialize())
+			var serialized = data.serialize()
+			# The host counts this during the wave (it simulates every hit); clients get it at the wave end.
+			serialized.erase("dmg_dealt_last_wave")
+			gear.append(serialized)
 			if data.is_cursed:
 				cursed.append("%s(%.2f)" % [data.my_id, data.curse_factor])
 		print("[TEST] ", tag, "   ", i, ": cursed=", cursed, " gear_md5=", to_json(gear).md5_text())
+		var per_item = []
+		for entry in gear:
+			per_item.append("%s:%s" % [entry.my_id, to_json(entry).md5_text().substr(0, 6)])
+			# GEAR_DUMP=id,id: those items' serialized data in full.
+			if entry.my_id in OS.get_environment("GEAR_DUMP").split(","):
+				print("[TEST] ", tag, "   ", i, ": dump ", to_json(entry))
+		print("[TEST] ", tag, "   ", i, ": items ", per_item)
 	shot(tag)
 
 

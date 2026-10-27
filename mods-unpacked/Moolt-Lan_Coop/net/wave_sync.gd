@@ -106,8 +106,12 @@ const ENTITY_FLAG_BURNING: = 1
 const ENTITY_FLAG_BOOSTED: = 2
 const ENTITY_FLAG_CURSED: = 4
 const ENTITY_FLAG_CHARMED: = 8
-# The DLC's iron and spiky lungs: a stargazer filled them (another sprite).
+# The DLC's iron and spiky lungs: a stargazer filled them (another sprite); mirrored (random per
+# machine at _ready).
 const ENTITY_FLAG_FULL: = 16
+const ENTITY_FLAG_MIRRORED: = 32
+# The DLC's stargazers: angry (lung died or full); clients play the angry sound when it turns on.
+const ENTITY_FLAG_ANGRY: = 64
 const MAX_NET_ID: = 65535
 
 const EVENT_SPAWN: = 0
@@ -719,15 +723,19 @@ func _move_remote_player(player: Node, target: Vector2) -> void :
 		return
 	if motion == Vector2.ZERO:
 		return
+	var start: Vector2 = player.global_position
 	if not player.test_motion(motion, true, REMOTE_MOTION_MARGIN, _motion_result):
 		player.global_position = target
-		return
-	player.global_position += _motion_result.motion
-	var slide: Vector2 = _motion_result.motion_remainder.slide(_motion_result.collision_normal)
-	if not player.test_motion(slide, true, REMOTE_MOTION_MARGIN, _motion_result):
-		player.global_position += slide
 	else:
 		player.global_position += _motion_result.motion
+		var slide: Vector2 = _motion_result.motion_remainder.slide(_motion_result.collision_normal)
+		if not player.test_motion(slide, true, REMOTE_MOTION_MARGIN, _motion_result):
+			player.global_position += slide
+		else:
+			player.global_position += _motion_result.motion
+	# As Unit._physics_process after its own move: effect behaviours count the distance (the DLC's
+	# steps: the hiker's gold and max HP, lifetime steps). A jump (snap) isn't walking.
+	player._on_moved(player.global_position - start)
 
 
 func _build_snapshot() -> PoolByteArray:
@@ -778,6 +786,10 @@ func _build_snapshot() -> PoolByteArray:
 					flags |= outline[0]
 			if entity.get("is_full") == true:
 				flags |= ENTITY_FLAG_FULL
+			if entity.get("sprite_full") != null and entity.sprite.scale.x < 0:
+				flags |= ENTITY_FLAG_MIRRORED
+			if entity.get("angry_sound") != null and entity._current_movement_behavior == entity._on_triggered_movement_behavior:
+				flags |= ENTITY_FLAG_ANGRY
 		buffer.put_u8(flags)
 		if entity is Pursuer and _entity_sizes.get(net_id) != entity.sprite.scale.y:
 			_entity_sizes[net_id] = entity.sprite.scale.y
@@ -916,6 +928,15 @@ func _apply_entity_flags(entity, flags: int) -> void :
 			if entity.is_full != full:
 				entity.is_full = full
 				entity.sprite.texture = entity.sprite_full if full else entity._original_texture
+			var mirrored: = (flags & ENTITY_FLAG_MIRRORED) != 0
+			if (entity.sprite.scale.x < 0) != mirrored:
+				entity.sprite.scale.x = - entity.sprite.scale.x
+		if entity.get("angry_sound") != null:
+			var angry: = (flags & ENTITY_FLAG_ANGRY) != 0
+			if angry and entity._current_movement_behavior != entity._on_triggered_movement_behavior:
+				# As Stargazer.get_angry; the movement itself comes from the host.
+				entity._current_movement_behavior = entity._on_triggered_movement_behavior
+				SoundManager2D.play(entity.angry_sound, entity.global_position, 5, 0.1, true)
 
 
 func _count_events(events: Array) -> void :

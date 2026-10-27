@@ -69,6 +69,21 @@ func _add_multiplayer_button() -> void :
 	_multiplayer_button.focus_neighbour_left = mods_path
 	_multiplayer_button.focus_neighbour_right = mods_path
 	var _e = _multiplayer_button.connect("pressed", self, "_on_MainMenu_multiplayer_button_pressed")
+	_e = _main_menu.continue_button.connect("visibility_changed", self, "_lan_fit_main_menu")
+	_lan_fit_main_menu()
+
+
+# Vanilla's main menu just fits the screen when Continue is shown (a saved run); the Multiplayer
+# button (90 px with its gap) would push Quit and the right column off the bottom. Then the left
+# column gets compact: Multiplayer as tall as Profile, no spacer above Profile, 4 px gaps (73 px).
+func _lan_fit_main_menu() -> void :
+	var compact: bool = _main_menu.continue_button.visible
+	var container: Control = _main_menu.left_container
+	var spacer: Control = container.get_node_or_null("empty_space")
+	_multiplayer_button.rect_min_size.y = (_main_menu.profile_button if compact else _main_menu.start_button).rect_min_size.y
+	if spacer != null:
+		spacer.visible = not compact
+	container.add_constant_override("separation", 4 if compact else 10)
 
 
 # Runs after TitleScreen._ready, which focuses the main menu.

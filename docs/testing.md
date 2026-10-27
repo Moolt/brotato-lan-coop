@@ -37,6 +37,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `host` / `join` | the two sides of a session |
 | `solo` | `RunBuilder.build_run` with one entry, `set_coop_run(false)`, `change_scene(MenuData.game_scene)`: vanilla solo play still works without a session |
 | `lobby` | hosts alone; screenshots the lobby with a character hovered, a starting item's popup, a weapon hovered, nothing hovered; then focuses Mage and its first starting item with the keyboard and logs that the preview keeps Mage until Ready has the focus; opens the settings page (screenshot, focus chain), sets the choice time to 60 and the scaling to Tough (knobs, the help box with the scaling row focused, summary, config), closes it with `ui_cancel` (focus on Settings) and sets 90 and Normal again. The `join` role logs and screenshots its lobby (summary, Settings button) and its read-only settings page (note, every zone entry disabled, a pick leaves the zone unchanged) |
+| `title` | screenshots the main menu after 2 s and logs its layout (containers, each left button's rect), then again with Continue toggled (`title_no_continue`); the menu must end within the 1080 px screen |
 | `quit` | quits as soon as the title screen loads (parse-error check) |
 | none | idle, for manual tests |
 
@@ -91,6 +92,11 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `ZONE=n` | host: the run's zone (`lobby_settings.zone`, 1 = the DLC's Abyss), not remembered |
 | `CHAR=id` | host and join: pick that character (e.g. `character_diver`) instead of the nth |
 | `CURSE_TEST=1` | host and join (DLC): every item in the first shop is cursed before the buy and the lock; `log_run_check` logs each player's cursed gear and a hash of all its gear's effects (must match on both sides) |
+| `SPAWN_NEAR=1` | host: the `SPAWN` enemies 250 px around the host player |
+| `CHARM_BOOST=1` | host: at t=13 players 0 and 1 get 200 max HP: a Romantic then charms on every hit that leaves an enemy below 25 % HP (vanilla's charm path, from both players' hits) |
+| `DLC_ITEMS=k` | host (DLC): at t=16 the DLC's items and weapons with index % 7 == k for players 0 and 1; k = 0..6 covers all (with `WAVES=2`, the shop merge and a wave with them) |
+| `DLC_LOG=s` | any role: every s seconds in a wave, `log_sync`'s `dlc` line (long waves) |
+| `GEAR_DUMP=id,id` | host and join: `log_run_check` prints those items' serialized data in full (to diff a `gear_md5` mismatch; the per-item hashes are always logged). `dmg_dealt_last_wave` is left out of the hashes: the host counts it during the wave |
 | `BOSS=path`, `BOSS_HP2=n` | host: the boss spawned at t=13 instead of the rhino (e.g. `res://dlcs/dlc_1/enemies/giant/giant.tscn`, `…/eel/eel.tscn`); its HP at t=18 of 5000 (default 2500; the eel's phase 2, which adds pivots, is below 2000) |
 | `SPAWN=path` | host: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish, stargazer, viperfish) |
 | `CHARM_TEST=1` | host: at t=15 charms every spitter (needs a charm effect: `CHAR=character_romantic`) |
@@ -144,14 +150,17 @@ Each takes about 1–2 min.
 | `LOAD_STALL=8`, `LOAD_STALL=20` | the host waits for a slow client ("every client loaded" after ~8 s) and starts after 15 s without it ("timed out"); the late client plays on |
 | `RELOAD_RACE=1`, `RELOAD_RACE=1 FAKES=5 WAVES=2` | no script errors when stats reloads are pending at the solo view |
 | `MODE=coop ZONE=1 WAVES=3 CURSE_TEST=1` with `CHAR=` DLC characters, `ZONE=1 START_WAVE=20`, `ZONE=1 CURSE_ENEMIES=1` | DLC: Abyss waves, cursed gear through the shop merge (equal `gear_md5`), the Abyss boss and run won, cursed enemies' outlines on the client |
-| `MODE=coop ZONE=1` with `BOSS=…/giant/giant.tscn SPAWN=…/viperfish/viperfish.tscn`, `BOSS=…/eel/eel.tscn BOSS_HP2=1500`, `CHARM_TEST=1 SPAWN=…/pufferfish/pufferfish.tscn` (host `CHAR=character_romantic`), `SPAWN=…/stargazer/stargazer.tscn` | DLC enemies on the client (`dlc` line, compare at the same `time_left`): pivot directions equal and angles ~0.1 s behind, Pursuer sizes equal, `hue` > 0 on both after the charm, `local=0` on the client, full lungs |
+| `MODE=coop ZONE=1` with `BOSS=…/giant/giant.tscn SPAWN=…/viperfish/viperfish.tscn`, `BOSS=…/eel/eel.tscn BOSS_HP2=1500`, `CHARM_TEST=1 SPAWN=…/pufferfish/pufferfish.tscn` (host `CHAR=character_romantic`), `SPAWN=…/stargazer/stargazer.tscn` | DLC enemies on the client (`dlc` line, compare at the same `time_left`: also mirrored lungs, angry stargazers, charmed enemies): pivot directions equal and angles ~0.1 s behind, Pursuer sizes equal, `hue` > 0 on both after the charm, `local=0` on the client, full lungs |
+| `MODE=coop ZONE=1 WAVES=2 START_WAVE=6 DLC_ITEMS=k` for k = 0..6, each with two DLC characters (`CHAR`, `JOIN_ENV="CHAR=… CLIENT_WALK=1"`) | DLC characters and all DLC items and weapons: no script errors, equal digests and `gear_md5` |
+| `CHAR=character_hiker JOIN_ENV="CLIENT_WALK=1"` | `steps` line: the host counts the client's steps (about the client's own count) |
+| `CHAR=character_romantic CHARM_BOOST=1 START_WAVE=8 ENEMY_MULT=2 WAVE_DURATION=40 DLC_LOG=5` | charm in a real fight: charmed enemies on both sides |
 | host in a DLC copy, `join` in a `NO_DLC=1` copy | the client is turned away ("different set of DLCs") |
 
 ## Log check
 - `grep -a "SCRIPT\|ERROR"` the logs. Nothing from mod code is allowed: any `ERROR:` mentioning `mods-unpacked` makes the crash reporter disable mods on the next launch.
 - Ignore (vanilla prints them too, check with `--disable-mods`): engine shutdown errors (`_first != nullptr`, `self_list.h`, resources/MemoryPool still in use, ObjectDB leaks) and `WARNING: Node './Attach' was modified from inside an instance` on wave load.
 - A stray background instance from an earlier run can mix into results; check `ps` first.
-- Twice (2026-10-23/24, once each on the code before and after the run-over hint) a test client quit cleanly mid-run without a driver step or error (normal shutdown lines, the host logs "left"); a rerun passed. Cause unknown; rerun before suspecting a change.
+- Twice (2026-10-23/24, once each on the code before and after the run-over hint) a test client quit cleanly mid-run without a driver step or error (normal shutdown lines, the host logs "left"); a rerun passed. Cause unknown; rerun before suspecting a change. Also seen in back-to-back runs (2026-10-27): the client never finds the host's game (no `join first row` line), the host starts without it and the client quits normally; a rerun passed.
 
 ## Two machines
 Host here, join on the second PC (same layout, its own test copy from `tools/make_test_copy.sh`, the driver copied over with `scp`). Start the client over `ssh` with `DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.*)` (GNOME Wayland session), pass the test options in that environment too, and start the host 1 s later; discovery finds the host across the LAN. Run `ping` alongside for RTT. Interface byte counters are useless for bandwidth when the other PC syncs files in the background; work it out from `snapshot_bytes` × 20 Hz.
