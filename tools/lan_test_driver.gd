@@ -87,6 +87,15 @@ extends Node
 #   (host and join) CURSE_ENEMIES=1 (DLC): vanilla's debug flag that curses every spawned enemy, on
 #         both sides (only the host's curse may count); log_sync logs the cursed enemies'
 #         net ids, the boosted and charmed counts and the scene effect behaviours on both sides
+#   (host) BOSS=path: the boss spawned at t=13 (default the rhino), e.g. a DLC elite with pivots
+#         (res://dlcs/dlc_1/enemies/giant/giant.tscn) or the eel (phase 2 at half HP, t=18)
+#   (host) BOSS_HP2=n: the bosses' HP at t=18 of 5000 (default 2500; the eel's phase 2 is below 2000)
+#   (host) SPAWN=path: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish)
+#   (host) CHARM_TEST=1: at t=15 the host charms every spitter (needs a charm effect, e.g.
+#         CHAR=character_romantic); log_sync's dlc line logs charmed projectiles on both sides
+# log_sync's dlc line (both sides): every boss's pivots (direction, angle), charmed (hue-shifted)
+#   enemy projectiles, enemy projectiles the machine shot itself (clients: must stay 0), Pursuer
+#   sizes by net id, full lungs
 # log_lobby logs the active DLCs and how many zones, characters, items and weapons are loaded.
 # log_perf (with log_sync): FPS, frame times, physics load, the mod's per-frame cost and, on
 # clients, snapshot arrivals, losses and interpolation cushion.
@@ -1012,6 +1021,49 @@ func log_mode(tag: String) -> void :
 		print("[TEST] ", tag, " mode=", net.mode.id, " serial=", net.mode.serial, " state=", to_json(state))
 
 
+# DLC enemies (see the header): pivots, charmed projectiles, local projectiles, Pursuer sizes, lungs.
+func log_dlc(tag: String, main: Node, wave_sync: Node) -> void :
+	var pivots = []
+	for boss in main._entity_spawner.bosses:
+		for pivot in find_pivots(boss, []).slice(0, 1):
+			pivots.append("%s:%d/%.2f" % [boss.enemy_id, pivot.direction, fposmod(pivot.rotation, TAU)])
+		pivots.append("%s:n=%d" % [boss.enemy_id, find_pivots(boss, []).size()])
+	var hue = 0
+	var local = 0
+	var active = 0
+	for projectile in main._enemy_projectiles.get_children():
+		if not projectile is Projectile or not projectile._hitbox.active:
+			continue
+		active += 1
+		var material = projectile._sprite.material
+		if material is ShaderMaterial and material.shader == load("res://resources/shaders/hue_shift_shadermat.tres").shader:
+			hue += 1
+		if projectile.lan_net_id == 0 and projectile.get_parent() == main._enemy_projectiles:
+			local += 1
+	var sizes = []
+	var full = 0
+	var ids = wave_sync._entities.keys()
+	ids.sort()
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if not is_instance_valid(e) or e.dead:
+			continue
+		if e is Pursuer:
+			sizes.append("%d:%.2f" % [net_id, e.sprite.scale.y])
+		if e.get("is_full") == true:
+			full += 1
+	print("[TEST] ", tag, " dlc time_left=", stepify(main._wave_timer.time_left, 0.01), " pivots=", pivots, " enemy_projectiles=", active, " hue=", hue, " local=", local, " pursuer_sizes=", sizes, " full_lungs=", full)
+
+
+
+func find_pivots(node: Node, result: Array = []) -> Array:
+	if node is Pivot:
+		result.append(node)
+	for child in node.get_children():
+		var _r = find_pivots(child, result)
+	return result
+
+
 func log_sync(tag: String) -> void :
 	var main = get_tree().current_scene
 	if main == null or main.filename != MenuData.game_scene:
@@ -1046,6 +1098,7 @@ func log_sync(tag: String) -> void :
 					outlined.charmed += 1
 		cursed.sort()
 		print("[TEST] ", tag, " outlines cursed=", cursed, " boosted=", outlined.boosted, " charmed=", outlined.charmed, " scene_behaviors=", main._effect_behaviors.get_child_count())
+		log_dlc(tag, main, sync)
 	if sync != null:
 		var ids = sync._entities.keys()
 		ids.sort()
@@ -1199,7 +1252,11 @@ func _host_step() -> void :
 			# A boss and three trees, which wave 1 doesn't have.
 			var spawner = get_tree().current_scene._entity_spawner
 			var rect = ZoneService.get_current_zone_rect()
-			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load("res://entities/units/enemies/rhino/rhino.tscn"), rect.end - Vector2(150, 150)])
+			var boss_scene = OS.get_environment("BOSS") if OS.get_environment("BOSS") != "" else "res://entities/units/enemies/rhino/rhino.tscn"
+			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load(boss_scene), rect.end - Vector2(150, 150)])
+			if OS.get_environment("SPAWN") != "":
+				for i in 4:
+					spawner.queue_to_spawn.push_back([EntityType.ENEMY, load(OS.get_environment("SPAWN")), center_offset(i) + Vector2(0, 200)])
 			for i in 3:
 				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
 			# An enemy spawning right on the host player: vanilla moves its marker elsewhere.
@@ -1211,8 +1268,17 @@ func _host_step() -> void :
 		6:
 			Input.action_release("button_move_left_0")
 			log_sync("host_w14")
-			next_t = 16.0
+			next_t = 15.0
 		7:
+			if OS.get_environment("CHARM_TEST") == "1":
+				var charmed = 0
+				for enemy in get_tree().current_scene._entity_spawner.enemies:
+					if not enemy.dead and enemy.enemy_id == "spitter":
+						enemy.set_charmed(0)
+						charmed += 1 if enemy.get_charmed_by_player_index() == 0 else 0
+				print("[TEST] charm_test charmed=", charmed)
+			next_t = 16.0
+		8:
 			var main7 = get_tree().current_scene
 			# A level-up for the host player and the client's, and three crates right next to the
 			# host (vanilla hands each to a player with the fewest, so everyone gets one).
@@ -1261,7 +1327,7 @@ func _host_step() -> void :
 				print("[TEST] pet_test items added: player 0 blazemander, player 1 bonk_dog")
 			log_sync("host_w16")
 			next_t = 18.0
-		8:
+		9:
 			if OS.get_environment("HOST_QUITS") == "1":
 				# The game is closed mid-run: the client must see the host's goodbye, not reconnect.
 				print("[TEST] host closing the game at t=", stepify(t, 0.1))
@@ -1277,16 +1343,16 @@ func _host_step() -> void :
 			if not spawner.neutrals.empty():
 				spawner.neutrals[0].die()
 			for boss in spawner.bosses:
-				boss.current_stats.health = 2500
+				boss.current_stats.health = int(OS.get_environment("BOSS_HP2")) if OS.get_environment("BOSS_HP2") != "" else 2500
 				boss.emit_signal("health_updated", boss, boss.current_stats.health, boss.max_stats.health)
 			next_t = 20.0
-		9:
+		10:
 			log_sync("host_w20")
 			# Pause menu on the host: the wave keeps running everywhere.
 			get_tree().current_scene._pause_menu.pause(0)
 			print("[TEST] host_pause open=", get_tree().current_scene._pause_menu.visible, " tree_paused=", get_tree().paused)
 			next_t = 23.0
-		10:
+		11:
 			log_sync("host_w23")
 			var main = get_tree().current_scene
 			if main.filename != MenuData.game_scene:
@@ -1300,7 +1366,7 @@ func _host_step() -> void :
 					if not p.dead:
 						p.die(Entity.DieArgs.new())
 			next_t = 24.0
-		11:
+		12:
 			if waves_target() > 1 or OS.get_environment("IDLE_CHOICE") != "":
 				if wait_for_wave(waves_target() + 1):
 					log_run_check("host_next_wave")
@@ -1312,11 +1378,11 @@ func _host_step() -> void :
 					return
 			else:
 				next_t = 55.0 if OS.get_environment("KILL_ALL") != "1" else 40.0
-		12:
+		13:
 			log_lobby("host_after_wave_end")
 			log_wave_end("host_wave_end")
 			next_t = t + 2.0
-		13:
+		14:
 			if next_round():
 				# Pick and ready again (step 2), then Start (step 4).
 				step = 1

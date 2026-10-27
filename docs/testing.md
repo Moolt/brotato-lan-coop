@@ -91,6 +91,9 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `ZONE=n` | host: the run's zone (`lobby_settings.zone`, 1 = the DLC's Abyss), not remembered |
 | `CHAR=id` | host and join: pick that character (e.g. `character_diver`) instead of the nth |
 | `CURSE_TEST=1` | host and join (DLC): every item in the first shop is cursed before the buy and the lock; `log_run_check` logs each player's cursed gear and a hash of all its gear's effects (must match on both sides) |
+| `BOSS=path`, `BOSS_HP2=n` | host: the boss spawned at t=13 instead of the rhino (e.g. `res://dlcs/dlc_1/enemies/giant/giant.tscn`, `…/eel/eel.tscn`); its HP at t=18 of 5000 (default 2500; the eel's phase 2, which adds pivots, is below 2000) |
+| `SPAWN=path` | host: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish, stargazer, viperfish) |
+| `CHARM_TEST=1` | host: at t=15 charms every spitter (needs a charm effect: `CHAR=character_romantic`) |
 | `CURSE_ENEMIES=1` | host and join (DLC): vanilla's `DebugService.curse_enemy_spawn` on both sides; `log_sync`'s `outlines` line: cursed enemies' net ids, boosted and charmed counts, scene effect behaviours (clients: 0) |
 | `RELOAD_RACE=1` | host and join: when the wave-end state arrives, every player is queued for a stats reload in main's `StatsManager` (as a stat change in the wave's last frames leaves it); without the drop before the solo view this raised script errors under the mod's path |
 
@@ -141,6 +144,7 @@ Each takes about 1–2 min.
 | `LOAD_STALL=8`, `LOAD_STALL=20` | the host waits for a slow client ("every client loaded" after ~8 s) and starts after 15 s without it ("timed out"); the late client plays on |
 | `RELOAD_RACE=1`, `RELOAD_RACE=1 FAKES=5 WAVES=2` | no script errors when stats reloads are pending at the solo view |
 | `MODE=coop ZONE=1 WAVES=3 CURSE_TEST=1` with `CHAR=` DLC characters, `ZONE=1 START_WAVE=20`, `ZONE=1 CURSE_ENEMIES=1` | DLC: Abyss waves, cursed gear through the shop merge (equal `gear_md5`), the Abyss boss and run won, cursed enemies' outlines on the client |
+| `MODE=coop ZONE=1` with `BOSS=…/giant/giant.tscn SPAWN=…/viperfish/viperfish.tscn`, `BOSS=…/eel/eel.tscn BOSS_HP2=1500`, `CHARM_TEST=1 SPAWN=…/pufferfish/pufferfish.tscn` (host `CHAR=character_romantic`), `SPAWN=…/stargazer/stargazer.tscn` | DLC enemies on the client (`dlc` line, compare at the same `time_left`): pivot directions equal and angles ~0.1 s behind, Pursuer sizes equal, `hue` > 0 on both after the charm, `local=0` on the client, full lungs |
 | host in a DLC copy, `join` in a `NO_DLC=1` copy | the client is turned away ("different set of DLCs") |
 
 ## Log check

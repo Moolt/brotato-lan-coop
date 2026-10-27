@@ -23,6 +23,7 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("weapons/weapon.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("projectiles/projectile.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/enemies/enemy.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/enemies/attack_behaviors/shooting_attack_behavior.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/structures/turret/turret.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("overlap/hurtbox.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("particles/burning/burning_particles.gd"))

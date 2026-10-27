@@ -31,8 +31,8 @@ extends Node
 #   - The end of the wave goes out with the host's verdict (wave failed, run lost, run won).
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
 #     wave time left, whether the wave still waits for clients; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
-#     excluded, they don't move) position, HP ratio (0-255), burning and the enemy outlines
-#     (boosted, cursed, charmed).
+#     excluded, they don't move) position, HP ratio (0-255), burning, the enemy outlines
+#     (boosted, cursed, charmed) and full lungs (DLC).
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
 #     spawned through the normal spawner (and its pools), then made inert: no physics, kinematic,
@@ -106,6 +106,8 @@ const ENTITY_FLAG_BURNING: = 1
 const ENTITY_FLAG_BOOSTED: = 2
 const ENTITY_FLAG_CURSED: = 4
 const ENTITY_FLAG_CHARMED: = 8
+# The DLC's iron and spiky lungs: a stargazer filled them (another sprite).
+const ENTITY_FLAG_FULL: = 16
 const MAX_NET_ID: = 65535
 
 const EVENT_SPAWN: = 0
@@ -123,6 +125,10 @@ const EVENT_ITEM_PICKUP: = 11
 const EVENT_CRATE_TO_PROCESS: = 12
 const EVENT_ITEM_SCALE: = 13
 const EVENT_BIRTH_MOVED: = 14
+const EVENT_PIVOTS: = 15
+const EVENT_ENTITY_SIZE: = 16
+# Charmed enemies' projectiles use it with the charm's hue.
+const HUE_SHIFT_MATERIAL = preload("res://resources/shaders/hue_shift_shadermat.tres")
 const ITEM_GOLD: = 0
 const ITEM_CONSUMABLE: = 1
 const NO_TARGET: = - 1
@@ -149,6 +155,13 @@ var _frame: = 0
 var _entities: = {}
 # Built in _ready: Utils isn't a constant.
 var _enemy_outlines: = []
+# Host: net id -> the Pursuer's sprite scale last sent (it grows when boosted).
+var _entity_sizes: = {}
+# Client: net id -> pivot directions and angles from the host, until the copy has as many pivots
+# (the DLC's eel adds its own when its phase changes).
+var _pending_pivots: = {}
+# Client: hue -> the projectile material, shared like the charm shares its own.
+var _hue_materials: = {}
 
 # Host: latest state per remote player_index: {pos, time (client msec), move, aim, manual_aim,
 # fresh (not applied yet), since (its age in s: estimated at arrival, then counted up),
@@ -352,7 +365,39 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 			_e = entity.connect("took_damage", self, "_on_host_entity_took_damage")
 		if entity is Enemy or entity is Turret:
 			_e = entity._animation_player.connect("animation_started", self, "_on_host_entity_animation", [entity])
+		if entity is Boss:
+			_e = entity.connect("state_changed", self, "_on_host_boss_state_changed")
 	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by])
+	if entity is Pursuer:
+		_entity_sizes[net_id] = entity.sprite.scale.y
+	_send_pivots(entity)
+
+
+# Bullets circling a boss on pivots (vanilla's predator, the DLC's giant, jellyfish and eel) turn
+# a random way on each machine: the host sends each pivot's direction and angle at the spawn and
+# whenever the boss changes phase (the eel adds pivots then), after the phase's own changes.
+func _on_host_boss_state_changed(boss: Node) -> void :
+	call_deferred("_send_pivots", boss)
+
+
+func _send_pivots(entity: Node) -> void :
+	if not is_instance_valid(entity) or entity.dead or not entity.has_meta("lan_net_id"):
+		return
+	var pivots: = _find_pivots(entity, [])
+	if pivots.empty():
+		return
+	var data: = []
+	for pivot in pivots:
+		data.append([pivot.direction, pivot.rotation])
+	_events.append([EVENT_PIVOTS, entity.get_meta("lan_net_id"), data])
+
+
+func _find_pivots(node: Node, result: Array) -> Array:
+	if node is Pivot:
+		result.append(node)
+	for child in node.get_children():
+		var _r = _find_pivots(child, result)
+	return result
 
 
 # Called by the entity_spawner.gd extension right after vanilla started a spawn marker, which is
@@ -487,7 +532,12 @@ func _flush_pending_projectiles() -> void :
 		var direction: = Vector2.ZERO
 		if projectile is BulletHellProjectile and typeof(projectile.direction) == TYPE_VECTOR2:
 			direction = projectile.direction
-		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy, projectile.sinusoidal_motion, projectile.sinusoidal_motion_speed, direction])
+		# Charmed enemies shoot in the charm's hue (set_sprite_material); -1: no hue shift.
+		var hue: = - 1.0
+		var material = projectile._sprite.material
+		if material is ShaderMaterial and material.shader == HUE_SHIFT_MATERIAL.shader:
+			hue = material.get_shader_param("hue")
+		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy, projectile.sinusoidal_motion, projectile.sinusoidal_motion_speed, direction, hue])
 	_pending_projectiles.clear()
 
 
@@ -599,6 +649,7 @@ func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 	if net_id == null or _entities.get(net_id) != entity:
 		return
 	var _erased = _entities.erase(net_id)
+	_erased = _entity_sizes.erase(net_id)
 	# The clients' own clean_up_room kills everything at the end of the wave.
 	if not args.cleaning_up:
 		_events.append([EVENT_DIE, net_id, args.knockback_vector])
@@ -725,7 +776,12 @@ func _build_snapshot() -> PoolByteArray:
 			for outline in _enemy_outlines:
 				if entity.has_outline(outline[1]):
 					flags |= outline[0]
+			if entity.get("is_full") == true:
+				flags |= ENTITY_FLAG_FULL
 		buffer.put_u8(flags)
+		if entity is Pursuer and _entity_sizes.get(net_id) != entity.sprite.scale.y:
+			_entity_sizes[net_id] = entity.sprite.scale.y
+			_events.append([EVENT_ENTITY_SIZE, net_id, entity.sprite.scale.y])
 	return buffer.data_array
 
 
@@ -784,6 +840,8 @@ func on_snapshot(data: PoolByteArray) -> void :
 		var entity = _entities.get(net_id)
 		_apply_entity_health(entity, buffer.get_u8())
 		_apply_entity_flags(entity, buffer.get_u8())
+		if _pending_pivots.has(net_id):
+			_apply_pivots(net_id)
 
 	_snapshots.append({"time": host_time, "players": positions, "entities": entity_positions})
 	if _snapshots.size() > MAX_BUFFERED_SNAPSHOTS:
@@ -853,6 +911,11 @@ func _apply_entity_flags(entity, flags: int) -> void :
 				entity.add_outline(outline[1], outline[2], outline[3])
 			elif not shown and entity.has_outline(outline[1]):
 				entity.remove_outline(outline[1])
+		if entity.get("sprite_full") != null:
+			var full: = (flags & ENTITY_FLAG_FULL) != 0
+			if entity.is_full != full:
+				entity.is_full = full
+				entity.sprite.texture = entity.sprite_full if full else entity._original_texture
 
 
 func _count_events(events: Array) -> void :
@@ -878,12 +941,16 @@ func on_events(events: Array) -> void :
 			_client_item_scale(event)
 		elif event[0] == EVENT_WEAPON and event.size() == 6:
 			_client_weapon_shot(event)
-		elif event[0] == EVENT_PROJECTILE and event.size() == 12:
+		elif event[0] == EVENT_PROJECTILE and event.size() == 13:
 			_client_projectile(event)
 		elif event[0] == EVENT_PROJECTILE_STOP and event.size() == 3:
 			_client_projectile_stop(event)
 		elif event[0] == EVENT_ANIMATION and event.size() == 4:
 			_client_animation(event)
+		elif event[0] == EVENT_PIVOTS and event.size() == 3:
+			_client_pivots(event)
+		elif event[0] == EVENT_ENTITY_SIZE and event.size() == 3:
+			_client_entity_size(event)
 		elif event[0] == EVENT_DAMAGE and event.size() == 8:
 			_client_damage(event)
 		elif event[0] == EVENT_EXPLOSION and event.size() == 6:
@@ -947,6 +1014,9 @@ func _make_inert(entity: Node) -> void :
 	entity.set_physics_process(false)
 	entity.mode = RigidBody2D.MODE_KINEMATIC
 	entity.collision_mask &= Utils.OBSTACLES_BIT
+	# Pursuers grow on their own timer; the host's growth comes as EVENT_ENTITY_SIZE.
+	if entity is Pursuer:
+		entity._boost_timer.stop()
 	for area in _find_areas(entity, []):
 		area.set_deferred("monitoring", false)
 		area.set_deferred("monitorable", false)
@@ -1074,12 +1144,14 @@ func _client_ranged_recoil(weapon: Node) -> void :
 
 func _client_projectile(event: Array) -> void :
 	# [EVENT_PROJECTILE, net_id, scene path, pos, velocity, rotation, speed, max range, is_enemy,
-	#  sinusoidal motion, sinusoidal motion speed, bullet-hell direction]
+	#  sinusoidal motion, sinusoidal motion speed, bullet-hell direction, hue (-1: none)]
 	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_VECTOR2:
 		return
 	if typeof(event[9]) != TYPE_VECTOR2 or typeof(event[10]) != TYPE_VECTOR2 or typeof(event[11]) != TYPE_VECTOR2:
 		return
 	if typeof(event[5]) != TYPE_REAL or typeof(event[6]) != TYPE_REAL or typeof(event[7]) != TYPE_INT or typeof(event[8]) != TYPE_BOOL:
+		return
+	if typeof(event[12]) != TYPE_REAL:
 		return
 	if _main._cleaning_up:
 		return
@@ -1116,12 +1188,22 @@ func _client_projectile(event: Array) -> void :
 		stats.max_range = event[7]
 		projectile.set_weapon_stats(stats)
 		projectile.spawn_position = event[3]
+	if event[12] >= 0.0:
+		projectile.set_sprite_material(_get_hue_material(event[12]))
 	projectile.shoot()
 	for area in _find_areas(projectile, []):
 		area.set_deferred("monitoring", false)
 		area.set_deferred("monitorable", false)
 	projectile.lan_net_id = event[1]
 	_projectiles[event[1]] = projectile
+
+
+func _get_hue_material(hue: float) -> ShaderMaterial:
+	if not _hue_materials.has(hue):
+		var material: ShaderMaterial = HUE_SHIFT_MATERIAL.duplicate()
+		material.set_shader_param("hue", hue)
+		_hue_materials[hue] = material
+	return _hue_materials[hue]
 
 
 func _client_projectile_stop(event: Array) -> void :
@@ -1146,6 +1228,45 @@ func _client_animation(event: Array) -> void :
 	if player.has_animation(event[2]):
 		player.playback_speed = event[3]
 		player.play(event[2])
+
+
+func _client_pivots(event: Array) -> void :
+	# [EVENT_PIVOTS, net_id, [[direction, rotation], ...]]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_ARRAY:
+		return
+	for entry in event[2]:
+		if typeof(entry) != TYPE_ARRAY or entry.size() != 2 or typeof(entry[0]) != TYPE_REAL or typeof(entry[1]) != TYPE_REAL:
+			return
+	_pending_pivots[event[1]] = event[2]
+	_apply_pivots(event[1])
+
+
+# Applies the host's pivots once the copy has as many (else again with the next snapshot).
+func _apply_pivots(net_id: int) -> void :
+	var entity = _entities.get(net_id)
+	if entity == null or not is_instance_valid(entity) or entity.dead:
+		var _erased = _pending_pivots.erase(net_id)
+		return
+	var data: Array = _pending_pivots[net_id]
+	var pivots: = _find_pivots(entity, [])
+	if pivots.size() != data.size():
+		return
+	for i in pivots.size():
+		pivots[i].direction = data[i][0]
+		pivots[i].rotation = data[i][1]
+	var _erased = _pending_pivots.erase(net_id)
+
+
+# A Pursuer grown (or shrunk back, the DLC's anglerfish) on the host. set_size adds to the size.
+func _client_entity_size(event: Array) -> void :
+	# [EVENT_ENTITY_SIZE, net_id, sprite scale]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_REAL:
+		return
+	var entity = _entities.get(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead or not entity is Pursuer:
+		return
+	if abs(event[2] - entity.sprite.scale.y) > 0.001:
+		entity.set_size(event[2] - entity.sprite.scale.y)
 
 
 func _client_damage(event: Array) -> void :
