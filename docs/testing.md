@@ -76,6 +76,7 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `TIMING=1` | with `PERF_LOG`: times all enemy scripts and weapon target scans once a second |
 | `ENEMY_CAP=n`, `PHYS_ITER=n`, `NO_ENEMY_COLLIDE=1`, `NO_SYNC=1` | perf experiments: the wave's enemy cap (solo: exactly n), solver iterations, no enemy–enemy collision, host `LanWaveSync` per-tick work off |
 | `JOIN_ADDR=ip:port`, `PLAYER_NAME=s`, `PICK=n` | join: join that address instead of the first discovered game (e.g. through `tools/netsim.py`), the client's name, its nth character |
+| `HOST_NAME=s`, `FAKE_NAMES=a,b,…` | host: its name and the fake players' names (screenshots, as in the README: `RES=1920x1080` windows, 7 players, `START_WAVE=20 ZONE=1` and `MODE=last_potato`) |
 | `EXPECT=n` | host: wait (up to t=120) until n players are in the lobby and ready before Start; the later steps keep their timing relative to Start, and the host's and client's first wave step wait until 3 s into the wave |
 | `TARGET_FPS=n` | any role: `Engine.target_fps`, enforced every frame (the game sets its own limit after startup). For many instances on one PC |
 | `CLIENT_WALK=2` | join: stop and go (0.6 s walking, 0.6 s standing, the next direction each time) |
