@@ -66,6 +66,7 @@ extends Node
 #         without it). choice_watch logs and screenshots the countdown at 13, 8 and 3 s left
 #   (join) JOIN_ADDR=ip:port: joins that address instead of the first discovered game (e.g. through
 #         a delay/jitter proxy); PLAYER_NAME=s: the client's name; PICK=n: its nth character
+#   (host) HOST_NAME=s: the host's name; FAKE_NAMES=a,b,...: the fake players' names (screenshots)
 #   (host) EXPECT=n: waits (up to t=120) for n players, all ready, before Start; later steps keep
 #         their timing relative to the Start
 #   (host and join) WAVES=n counts from the run's first wave, so it combines with START_WAVE
@@ -950,7 +951,9 @@ func add_fake_players(net, count: int) -> void :
 	var characters = LobbyRules.get_unlocked_characters()
 	for i in count:
 		var index = net.players.size()
-		var entry = NetProtocol.new_player_entry(1000 + index, index, "Fake%d" % index)
+		# FAKE_NAMES=a,b,...: their names (screenshots), else Fake<index>.
+		var names = OS.get_environment("FAKE_NAMES").split(",", false)
+		var entry = NetProtocol.new_player_entry(1000 + index, index, names[i] if i < names.size() else "Fake%d" % index)
 		var character = characters[(index * 7) % characters.size()]
 		if i == 0:
 			# Engineer: starts with a turret, so structures get tested.
@@ -1261,8 +1264,9 @@ func _host_step() -> void :
 				ProgressData.saved_run_state = {"has_run_state": true, "current_wave": 7}
 			log_saved_run("host_before_session")
 			m._main_menu.left_container.get_node("LanMultiplayerButton").emit_signal("pressed")
-			m.get_node("LanMultiplayerMenu")._name_edit.text = "HostPlayer"
-			m.get_node("LanMultiplayerMenu")._on_NameEdit_text_changed("HostPlayer")
+			var host_name = OS.get_environment("HOST_NAME") if OS.get_environment("HOST_NAME") != "" else "HostPlayer"
+			m.get_node("LanMultiplayerMenu")._name_edit.text = host_name
+			m.get_node("LanMultiplayerMenu")._on_NameEdit_text_changed(host_name)
 			m.get_node("LanMultiplayerMenu")._host_button.emit_signal("pressed")
 			next_t = t + 0.5
 		2:
