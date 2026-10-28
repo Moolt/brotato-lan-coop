@@ -131,7 +131,6 @@ var _mode_state_sent_msec: = 0
 func _ready() -> void :
 	pause_mode = PAUSE_MODE_PROCESS
 	LanGame.grow_autoload_arrays()
-	ModLoaderLog.info("Reloaded subclasses of extended scripts: %s" % to_json(LanGame.reload_stale_subclasses()), NetProtocol.MOD_ID)
 	config.load_config()
 	mode = ModeRegistry.create(ModeRegistry.DEFAULT, self)
 	discovery = NetDiscovery.new()

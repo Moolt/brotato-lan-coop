@@ -1,6 +1,6 @@
 # Testing the mod
 
-How to run and check the mod: a throwaway game copy, the test driver (`tools/lan_test_driver.gd`), the regression set, and the manual test. Open test coverage is tracked in [lan-coop-plan.md](lan-coop-plan.md#tests).
+How to run and check the mod: a throwaway game copy, the test driver (`tools/lan_test_driver.gd`), the regression set, the shipped game and Windows, and the manual test. Open test coverage is tracked in [lan-coop-plan.md](lan-coop-plan.md#tests).
 
 ## Workflow
 1. Implement, then run the driver's `quit` role once (catches parse errors cheaply; a parse error makes an extension silently absent).
@@ -156,6 +156,7 @@ Each takes about 1–2 min.
 | `CHAR=character_hiker JOIN_ENV="CLIENT_WALK=1"` | `steps` line: the host counts the client's steps (about the client's own count) |
 | `CHAR=character_romantic CHARM_BOOST=1 START_WAVE=8 ENEMY_MULT=2 WAVE_DURATION=40 DLC_LOG=5` | charm in a real fight: charmed enemies on both sides |
 | host in a DLC copy, `join` in a `NO_DLC=1` copy | the client is turned away ("different set of DLCs") |
+| shipped build ([below](#shipped-game-and-windows)): `quit`, `solo`, host + join `WAVES=2` | the mod in compiled vanilla scripts: no script errors, every extended base's subclasses inherit the extension |
 
 ## Log check
 - `grep -a "SCRIPT\|ERROR"` the logs. Nothing from mod code is allowed: any `ERROR:` mentioning `mods-unpacked` makes the crash reporter disable mods on the next launch.
@@ -165,6 +166,14 @@ Each takes about 1–2 min.
 
 ## Two machines
 Host here, join on the second PC (same layout, its own test copy from `tools/make_test_copy.sh`, the driver copied over with `scp`). Start the client over `ssh` with `DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.*)` (GNOME Wayland session), pass the test options in that environment too, and start the host 1 s later; discovery finds the host across the LAN. Run `ping` alongside for RTT. Interface byte counters are useless for bandwidth when the other PC syncs files in the background; work it out from `snapshot_bytes` × 20 Hz.
+
+## Shipped game and Windows
+The test copy runs the decompiled `.gd` sources. The shipped game (Steam/GOG, any OS) runs compiled `.gdc` scripts, and some script handling differs there (the 1.12.0 zip didn't start in it at all: [lan-coop-mod.md](lan-coop-mod.md#pitfalls-learned), early extensions). Run the shipped build after changing `mod_main.gd`, adding an extension, or touching script loading, and before a release.
+- **The driver as a mod:** `tools/make_driver_mod.sh <zip>` packs `tools/lan_test_driver.gd` as `Moolt-LanTestDriver.zip` (it adds the driver to the root as `LanTestDriver`). Put it next to `dist/Moolt-Lan_Coop.zip` (`./build.sh`) in the game's `mods/`. Roles and options work as in the test copy.
+- **Shipped build on Linux:** the GOG Windows `.pck` (e.g. `~/Downloads/Brotato - Multiplayer/Brotato.pck`) runs with this repo's Godot binary: copy it as `Brotato.x86_64` next to the `.pck`, then `XDG_DATA_HOME=<dir>/xdg ./Brotato.x86_64 --main-pack Brotato.pck --mods-path=<mods dir> -- <role>`. `--mods-path` is needed: the editor binary has the `editor` feature tag, so ModLoader looks in `res://mods` and loads nothing. No DLC there (`dlcs=[]`: ownership isn't detected off-store), and two instances on one PC run with vsync on, which stalls covered windows under XWayland (the join page's entry comes and goes, the client is choppy, the first join can fail); use one instance per PC for anything about smoothness.
+- **Windows PC** over OpenSSH (cmd.exe login shell; send PowerShell as `powershell -NoProfile -EncodedCommand <base64 of UTF-16LE>` to avoid cmd quoting): a test copy of the shipped game in `<dir>\game` (`Brotato.exe`, both `.pck`, the store's dlls, `mods\` with both zips). `tools/win_run.ps1` copied to `<dir>` (`<dir>\win_run.ps1 <name> <role> "K=V …" "--resolution 1280x720"`) starts the game as a scheduled task in the logged-in desktop session (a process started from ssh has no window or OpenGL), with its own `APPDATA` per name (the real save in `%APPDATA%\Brotato` stays untouched) and stdout in `logs\<name>.log`, ending with `exit <code>` when the game quit. Wait for that line, then `scp` the log. The user must be logged in on the desktop.
+- Don't use an `override.cfg` next to `Brotato.exe` (e.g. for the user dir): ModLoader then believes it was installed through it ("override.cfg setup detected, ModLoader will be the last autoload loaded") and loads differently from players' games.
+- **Cross-platform:** host here (test copy) and `join` on Windows started 1 s earlier, or the other way round; both copies have the DLC, so they match. Windows Firewall didn't ask (2026-10-28).
 
 ## Many real players
 `tools/run12.sh` (with `SCRATCH=<scratchpad>`) runs the host and `ND` clients (default 6) on this PC and `NN` (default 5) on the second PC, every client in its own user dir (`XDG_DATA_HOME`) and joining by `JOIN_ADDR` through `tools/netsim.py`, a UDP proxy with one port and link profile per client: `lan`, `wifi` (2–8 ms, 0.3 % loss, occasional 20–60 ms holds), `wifips` (power saving: a 50–170 ms hold about every second, 1 % loss), `bad` (15–45 ms, 3 % loss, 80–250 ms holds, 1 % reorder). Packets of a flow stay in order, so jitter arrives as bursts like on WiFi. Clients walk (`CLIENT_WALK=1`) and log `JITTER_LOG`; pass `PERF_LOG=1`, `WAVES=n`, `HOST_EXTRA="START_WAVE=18 WAVE_DURATION=60"`, `CLIENT_ENV=TARGET_FPS=60`. `DIRECT=1` lets the second PC's clients join the host without the proxy. With `WAVES=20` the driver plays a whole run: after wave 20's end screen both sides note the run is over and leave. Results of 2026-10-24 are in [lan-coop-plan.md](lan-coop-plan.md#performance).
