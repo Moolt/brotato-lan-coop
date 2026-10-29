@@ -11,7 +11,7 @@ signal games_changed()
 const NetProtocol = preload("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 
 const BEACON_INTERVAL: = 1.0
-const GAME_TIMEOUT: = 3.5
+const GAME_TIMEOUT: = 10.0
 
 # "ip:port" -> {ip, port, name, players, max_players, compatible, last_seen}
 var games: = {}
