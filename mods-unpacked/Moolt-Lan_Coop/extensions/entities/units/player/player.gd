@@ -7,6 +7,7 @@ extends "res://entities/units/player/player.gd"
 # - lan_move_speed (client): the speed the host reports, which includes in-wave buffs and
 #   slows the client doesn't simulate. Negative = vanilla.
 # - lan_no_regen (client): HP comes from the host, so no local regeneration.
+# Clients don't fire alien eyes (the host's projectiles come as events).
 # The game mode decides on the host which hits hurt a player (LanMode.can_hit) and how much
 # (scale_player_damage); in PvP modes the hurtbox also takes player hits.
 
@@ -48,6 +49,14 @@ func take_damage(value: int, args: TakeDamageArgs) -> Array:
 			hitbox.from = from
 		return result
 	return .take_damage(value, args)
+
+
+# Clients get the host's alien eyes projectiles as events; their own would be a second volley.
+func on_alien_eyes_timeout() -> void :
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and not wave_sync.is_host:
+		return
+	.on_alien_eyes_timeout()
 
 
 func get_movement() -> Vector2:

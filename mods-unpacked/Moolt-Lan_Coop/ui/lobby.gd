@@ -191,7 +191,10 @@ func _build_ui() -> void :
 	_settings_label.add_font_override("font", ROW_FONT)
 	left.add_child(_settings_label)
 
+	# Wraps like the summary; unwrapped, a long hint widened the left column off the screen.
 	_hint_label = Label.new()
+	_hint_label.autowrap = true
+	_hint_label.max_lines_visible = 2
 	_hint_label.add_font_override("font", ROW_FONT)
 	_hint_label.add_color_override("font_color", UiKit.STATUS_COLOR_MUTED)
 	left.add_child(_hint_label)
@@ -283,6 +286,15 @@ func _build_ui() -> void :
 	_ready_button = UiKit.new_button("LAN_READY", Vector2(0, READY_HEIGHT))
 	_e = _ready_button.connect("pressed", self, "_on_ReadyButton_pressed")
 	weapon_column.add_child(_ready_button)
+
+	# Left and right move along the bottom row only: Leave, Start, Ready. A hidden Start or a
+	# disabled Ready passes the move on to its own neighbour in that direction.
+	_leave_button.focus_neighbour_left = NodePath(".")
+	_leave_button.focus_neighbour_right = _leave_button.get_path_to(_start_button)
+	_start_button.focus_neighbour_left = _start_button.get_path_to(_leave_button)
+	_start_button.focus_neighbour_right = _start_button.get_path_to(_ready_button)
+	_ready_button.focus_neighbour_left = _ready_button.get_path_to(_start_button)
+	_ready_button.focus_neighbour_right = NodePath(".")
 
 	# Last children, so they draw over the page.
 	_starting_item_popup = ITEM_POPUP_SCENE.instance()
@@ -441,8 +453,8 @@ func _refresh_settings() -> void :
 
 
 # Marks the picked character and weapon, and makes "left" from the weapon grid's first column
-# and from Ready (and "up" from Ready, when there are no weapons) return to the picked character
-# instead of the nearest one.
+# (and "up" from Ready, when there are no weapons) return to the picked character instead of the
+# nearest one.
 func _update_selection(me: Dictionary) -> void :
 	var color: = UiKit.get_player_color(me.player_index)
 	var character_element: = _mark_selected(_character_grid, me.character_id, color)
@@ -451,13 +463,9 @@ func _update_selection(me: Dictionary) -> void :
 	_weapon_grid.set_neighbour_left = character_element != null
 	_weapon_grid.focus_neighbour_left = _weapon_grid.get_path_to(character_element) if character_element != null else NodePath("")
 	_weapon_grid.queue_set_focus_neighbours()
-	var ready_left: = NodePath("")
 	var ready_up: = NodePath("")
-	if character_element != null:
-		ready_left = _ready_button.get_path_to(character_element)
-		if not _weapon_scroll.visible:
-			ready_up = ready_left
-	_ready_button.focus_neighbour_left = ready_left
+	if character_element != null and not _weapon_scroll.visible:
+		ready_up = _ready_button.get_path_to(character_element)
 	_ready_button.focus_neighbour_top = ready_up
 
 
