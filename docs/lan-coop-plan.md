@@ -4,6 +4,8 @@ Goals, design decisions, progress and **open work**. How the mod is built (files
 
 Keep this file current: tick items when they are done (with a one-line note of where it lives), add new gaps and todos as they come up, and move as-built detail to [lan-coop-mod.md](lan-coop-mod.md) rather than here.
 
+**Game 1.2.0.1 / Primal Dread:** the port is tracked in [game-1.2.0.1-migration.md](game-1.2.0.1-migration.md).
+
 ## Goal
 Brotato 1.1.15.4 (Godot 3.7, ModLoader 6.3.0, which has no hooks, only `install_script_extension` / `take_over_path`) ships local couch co-op for up to 4 players. The mod turns it into LAN co-op:
 - [x] up to 12 players, one per machine
