@@ -8,8 +8,13 @@ extends "res://singletons/zone_service.gd"
 
 const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 
+# The zone's size (tiles) as vanilla sets it, before the session grows it: things drawn for
+# vanilla's map (the jungle's hole layouts) scale by the difference.
+var lan_vanilla_zone_size: = Vector2.ZERO
+
 
 func set_current_zone(p_current_zone: ZoneData) -> void :
+	lan_vanilla_zone_size = Vector2(p_current_zone.width, p_current_zone.height)
 	if LanGame.in_session():
 		var size: Vector2 = LanGame.get_mode().get_arena_size(Vector2(p_current_zone.width, p_current_zone.height), RunData.get_player_count())
 		p_current_zone.width = int(size.x)

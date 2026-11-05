@@ -1267,6 +1267,21 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 			holes.append(child.filename.get_file())
 		elif child is Hole:
 			holes.append("single:%s" % child.global_position.round())
+	# Where the holes lie in the arena (the layouts are drawn for vanilla's map sizes).
+	var hole_rect = null
+	var hole_nodes = []
+	for child in main._gpe_container.get_children():
+		if child is Hole:
+			hole_nodes.append(child)
+		for grandchild in child.get_children():
+			if grandchild is Hole:
+				hole_nodes.append(grandchild)
+	for hole in hole_nodes:
+		if hole_rect == null:
+			hole_rect = Rect2(hole.global_position, Vector2.ZERO)
+		else:
+			hole_rect = hole_rect.expand(hole.global_position)
+	print("[TEST] ", tag, " gpe arena=", ZoneService.get_current_zone_rect(), " holes=", hole_nodes.size(), " hole_span=", hole_rect)
 	var puddles = {"AcidPuddle": 0, "PetrolPuddle": 0, "FirePuddle": 0}
 	var monitoring = 0
 	for container in [main._gpe_container, main._fire_puddles_container]:

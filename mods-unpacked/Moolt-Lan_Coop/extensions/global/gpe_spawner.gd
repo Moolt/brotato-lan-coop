@@ -4,7 +4,9 @@ extends "res://global/gpe_spawner.gd"
 # - The holes of a jungle wave come from one of several prepared layouts, picked at random. In a
 #   session every machine picks the same one, from the host's wave seed
 #   (lobby_settings.wave_seed, new for each run the host sends) and the wave number: holes are
-#   obstacles, so the own player must meet the same ones as on the host.
+#   obstacles, so the own player must meet the same ones as on the host. The layouts are drawn
+#   for vanilla's map size; in the session's bigger arena the holes' places stretch with it
+#   (same holes, further apart), else they all lay in one corner.
 # - Acid, petrol and fire puddles: only the host spawns them and reports each one to LanWaveSync,
 #   which shows a copy without areas on the clients. Clients don't spawn their own: evolved enemy
 #   copies, projectile copies and the fire trail would leave puddles there that the host doesn't
@@ -34,8 +36,23 @@ func spawn_holes_full_scene() -> void :
 	var rng: = RandomNumberGenerator.new()
 	rng.seed = hash([lan_net.lobby_settings.get("wave_seed", 0), RunData.current_wave])
 	var hole_instance = scenes[rng.randi() % scenes.size()].instance()
+	_lan_stretch_holes(hole_instance)
 	hole_instance.global_position = Vector2.ONE
 	_gpe_container.add_child(hole_instance)
+
+
+# Before the holes enter the tree: each one marks its circle as off limits for spawns in _ready.
+func _lan_stretch_holes(layout: Node) -> void :
+	var vanilla_size: Vector2 = ZoneService.lan_vanilla_zone_size
+	var zone = ZoneService.current_zone
+	if zone == null or vanilla_size.x <= 0 or vanilla_size.y <= 0:
+		return
+	var factor: = Vector2(zone.width / vanilla_size.x, zone.height / vanilla_size.y)
+	if factor == Vector2.ONE:
+		return
+	for child in layout.get_children():
+		if child is Node2D:
+			child.position *= factor
 
 
 func spawn_single_hole_at_position(position: Vector2) -> void :

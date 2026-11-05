@@ -6,7 +6,7 @@ What each release changed, for players. The newest release is at the top. Each r
 
 ### Added
 - Survivor picks two starting weapons in the lobby, as in the base game.
-- Primal Dread support: the jungle, its enemies, bosses and items play the same for everyone. Everyone has the same holes, map decoration, dig sites and poacher zones, and sees the puddles, mutant and meca enemies, charging dinosaurs, the brachiosaurus and T-rex, lasers, warning lines and jumps, deflected bullets, boomerangs, carbon bow arrows, pet attacks and the slowed enemy time of the time shifter and pocket watch.
+- Primal Dread support: the jungle, its enemies, bosses and items play the same for everyone. Its holes spread over the bigger arena of a session. Everyone has the same holes, map decoration, dig sites and poacher zones, and sees the puddles, mutant and meca enemies, charging dinosaurs, the brachiosaurus and T-rex, lasers, warning lines and jumps, deflected bullets, boomerangs, carbon bow arrows, pet attacks and the slowed enemy time of the time shifter and pocket watch.
 
 ### Changed
 - Works with Brotato **1.2.0.1** and no longer with 1.1.15.4 (the last release for 1.1.15.4 is 1.12.3). Everyone in a session needs 1.2.0.1.
