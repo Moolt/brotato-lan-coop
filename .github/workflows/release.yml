@@ -1,7 +1,9 @@
 name: Release
 
 # Push a tag like v1.0.0 to publish a GitHub release with the mod zip attached.
-# The tag must match "version_number" in the manifest.
+# The tag must match "version_number" in the manifest, and CHANGELOG.md must have a section for
+# the version ("## [1.0.0] - <date>"): it becomes the release notes, followed by GitHub's
+# generated "Full Changelog" link.
 on:
   push:
     tags:
@@ -24,6 +26,9 @@ jobs:
             exit 1
           fi
 
+      - name: Release notes from CHANGELOG.md
+        run: tools/changelog_section.sh "${GITHUB_REF_NAME}" > release-notes.md
+
       - name: Build zip
         run: ./build.sh
 
@@ -33,4 +38,5 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/Moolt-Lan_Coop.zip \
             --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
             --generate-notes

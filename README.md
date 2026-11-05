@@ -148,10 +148,13 @@ Build the zip yourself with `./build.sh`, which creates `dist/Moolt-Lan_Coop.zip
 
 ### Releasing
 
-1. Bump `version_number` in `mods-unpacked/Moolt-Lan_Coop/manifest.json` and commit.
-2. Tag and push: `git tag v1.0.0 && git push origin v1.0.0` (the tag must match the manifest version).
+Every change players notice goes into [CHANGELOG.md](CHANGELOG.md) under `## [Unreleased]` as it is made (Added, Changed, Fixed, Known issues).
 
-The `Release` workflow builds the zip and publishes a GitHub release with it attached. The `Build` workflow also builds the zip on every push to `master` and on pull requests; you can download it from the run's Artifacts section.
+1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [1.0.0] - <date>`, start a new empty `## [Unreleased]` above it, and update the compare links at the bottom. `tools/changelog_section.sh 1.0.0` prints what the release notes will say.
+2. Bump `version_number` in `mods-unpacked/Moolt-Lan_Coop/manifest.json` and commit both.
+3. Tag and push: `git tag v1.0.0 && git push origin v1.0.0` (the tag must match the manifest version).
+
+The `Release` workflow builds the zip and publishes a GitHub release with it attached. Its notes are that version's section of `CHANGELOG.md`, followed by GitHub's "Full Changelog" link; without a section the release fails. The `Build` workflow also builds the zip on every push to `master` and on pull requests; you can download it from the run's Artifacts section.
 
 ## License
 

@@ -13,6 +13,7 @@ Since 1.2.0.1 the DLCs are inside the main `Brotato.pck` (`dlcs/dlc_1`, `dlcs/dl
 ## Rules
 - **Don't edit vanilla files.** Change behaviour through ModLoader script extensions in `mods-unpacked/Moolt-Lan_Coop/extensions/<mirrored vanilla path>.gd` (`extends "res://<vanilla>.gd"`).
 - Code style follows the decompiled code: tabs, `var x: = ...`, `func f() -> void :`.
+- Every change players notice gets a line in [CHANGELOG.md](CHANGELOG.md) under `## [Unreleased]` (Added / Changed / Fixed / Known issues), written for players, in the same commit. A release's section becomes its GitHub release notes (README, "Releasing").
 - Mod code must not raise `push_error` or script errors. Any `ERROR:` log line that mentions `mods-unpacked` makes the crash reporter disable mods on the next launch (see modding.md).
 
 ## Topic docs (read only the one you need)
