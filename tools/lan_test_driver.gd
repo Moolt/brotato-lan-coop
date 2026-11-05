@@ -1281,7 +1281,26 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 			hole_rect = Rect2(hole.global_position, Vector2.ZERO)
 		else:
 			hole_rect = hole_rect.expand(hole.global_position)
-	print("[TEST] ", tag, " gpe arena=", ZoneService.get_current_zone_rect(), " holes=", hole_nodes.size(), " hole_span=", hole_rect)
+	# Holes per play region (Team Race: the same count in each half, none in the wall) and dig
+	# sites, poacher zones or structures in the wall (must be 0).
+	var mode = get_node("/root/LanNet").mode
+	var per_region = []
+	for region in mode.get_play_regions():
+		var count = 0
+		for hole in hole_nodes:
+			if region.has_point(hole.global_position):
+				count += 1
+		per_region.append(count)
+	var out_of_play = 0
+	for node in hole_nodes + wave_sync._dig_sites + wave_sync._poacher_zones + main._entity_spawner.structures:
+		if is_instance_valid(node) and not mode.is_in_play_area(node.global_position):
+			out_of_play += 1
+	var poacher_wrong_half = 0
+	for zone in wave_sync._poacher_zones:
+		var owner_region = mode.get_player_region(zone.player_index) if is_instance_valid(zone) else null
+		if owner_region != null and not owner_region.has_point(zone.global_position):
+			poacher_wrong_half += 1
+	print("[TEST] ", tag, " gpe arena=", ZoneService.get_current_zone_rect(), " holes=", hole_nodes.size(), " per_region=", per_region, " out_of_play=", out_of_play, " poacher_wrong_half=", poacher_wrong_half, " hole_span=", hole_rect)
 	var puddles = {"AcidPuddle": 0, "PetrolPuddle": 0, "FirePuddle": 0}
 	var monitoring = 0
 	for container in [main._gpe_container, main._fire_puddles_container]:
@@ -1318,7 +1337,7 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 	for net_id in ids:
 		var e = wave_sync._entities[net_id]
 		if is_instance_valid(e) and e is Enemy and not e.dead and e._current_movement_behavior is GoTowardsBorderOppositeMovementBehavior:
-			chargers.append("%d:%s:%d" % [net_id, "shown" if e.visible else "hidden", int(round(rad2deg(e.rotation)))])
+			chargers.append("%d:%s:%d@%s" % [net_id, "shown" if e.visible else "hidden", int(round(rad2deg(e.rotation))), e.global_position.round()])
 	print("[TEST] ", tag, " gpe chargers=", chargers)
 	# Dig sites (position, progress, dug up) and poacher zones (owner, position), in list order.
 	var sites = []

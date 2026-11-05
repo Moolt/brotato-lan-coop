@@ -178,6 +178,36 @@ func get_arena_size(size: Vector2, player_count: int) -> Vector2:
 	return (size * LanGame.get_arena_factor(player_count)).round()
 
 
+# The parts of the arena play happens in, each a whole map of its own for things vanilla lays
+# out over the map (the jungle's holes, charging dinosaurs' runs). Default: the whole arena.
+func get_play_regions() -> Array:
+	return [ZoneService.get_current_zone_rect()]
+
+
+# False where nothing may be placed (random spots for dig sites, structures, wander targets):
+# outside every play region. Called often; keep it cheap.
+func is_in_play_area(_pos: Vector2) -> bool:
+	return true
+
+
+# The play region a player belongs in (their own half in Team Race); null: anywhere.
+func get_player_region(_player_index: int):
+	return null
+
+
+# The play region pos lies in (the nearest one if none).
+func get_play_region(pos: Vector2) -> Rect2:
+	var regions: = get_play_regions()
+	var best: Rect2 = regions[0]
+	var best_distance: = INF
+	for region in regions:
+		var distance: float = abs(clamp(pos.x, region.position.x, region.end.x) - pos.x)
+		if distance < best_distance:
+			best_distance = distance
+			best = region
+	return best
+
+
 # Where a player starts the wave; default is the session's spawn circle.
 func get_player_spawn_position(_player_index: int, default_position: Vector2) -> Vector2:
 	return default_position

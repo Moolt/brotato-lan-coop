@@ -6,7 +6,8 @@ extends "res://global/gpe_spawner.gd"
 #   (lobby_settings.wave_seed, new for each run the host sends) and the wave number: holes are
 #   obstacles, so the own player must meet the same ones as on the host. The layouts are drawn
 #   for vanilla's map size; in the session's bigger arena the holes' places stretch with it
-#   (same holes, further apart), else they all lay in one corner.
+#   (same holes, further apart), else they all lay in one corner. Each play region of the mode
+#   gets its own copy (Team Race: the same holes in each half).
 # - Acid, petrol and fire puddles: only the host spawns them and reports each one to LanWaveSync,
 #   which shows a copy without areas on the clients. Clients don't spawn their own: evolved enemy
 #   copies, projectile copies and the fire trail would leave puddles there that the host doesn't
@@ -35,19 +36,21 @@ func spawn_holes_full_scene() -> void :
 		return
 	var rng: = RandomNumberGenerator.new()
 	rng.seed = hash([lan_net.lobby_settings.get("wave_seed", 0), RunData.current_wave])
-	var hole_instance = scenes[rng.randi() % scenes.size()].instance()
-	_lan_stretch_holes(hole_instance)
-	hole_instance.global_position = Vector2.ONE
-	_gpe_container.add_child(hole_instance)
+	var scene: PackedScene = scenes[rng.randi() % scenes.size()]
+	# One copy per play region (Team Race: the same holes in each half).
+	for region in lan_net.mode.get_play_regions():
+		var hole_instance = scene.instance()
+		_lan_stretch_holes(hole_instance, region.size)
+		hole_instance.global_position = region.position + Vector2.ONE
+		_gpe_container.add_child(hole_instance)
 
 
 # Before the holes enter the tree: each one marks its circle as off limits for spawns in _ready.
-func _lan_stretch_holes(layout: Node) -> void :
-	var vanilla_size: Vector2 = ZoneService.lan_vanilla_zone_size
-	var zone = ZoneService.current_zone
-	if zone == null or vanilla_size.x <= 0 or vanilla_size.y <= 0:
+func _lan_stretch_holes(layout: Node, size: Vector2) -> void :
+	var vanilla_size: Vector2 = ZoneService.lan_vanilla_zone_size * Utils.TILE_SIZE
+	if vanilla_size.x <= 0 or vanilla_size.y <= 0:
 		return
-	var factor: = Vector2(zone.width / vanilla_size.x, zone.height / vanilla_size.y)
+	var factor: = size / vanilla_size
 	if factor == Vector2.ONE:
 		return
 	for child in layout.get_children():

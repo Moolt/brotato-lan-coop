@@ -126,6 +126,27 @@ func get_arena_size(size: Vector2, player_count: int) -> Vector2:
 	return Vector2(half.x * 2 + GAP_TILES, half.y)
 
 
+# The two halves; the wall between them is out of play.
+func get_play_regions() -> Array:
+	if not is_split():
+		return .get_play_regions()
+	var height: float = ZoneService.current_zone_max_position.y
+	var half: = _get_half_width()
+	return [Rect2(0, 0, half, height), Rect2(_get_offset(), 0, half, height)]
+
+
+func get_player_region(player_index: int):
+	if not is_split():
+		return null
+	return get_play_regions()[get_team(player_index)]
+
+
+func is_in_play_area(pos: Vector2) -> bool:
+	if not is_split():
+		return true
+	return pos.x <= _get_half_width() or pos.x >= _get_offset()
+
+
 func get_player_spawn_position(player_index: int, default_position: Vector2) -> Vector2:
 	if not is_split():
 		return default_position

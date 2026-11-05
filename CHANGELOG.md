@@ -18,6 +18,7 @@ What each release changed, for players. The newest release is at the top. Each r
 - Script errors on the end screen.
 - Enemies that leave the map without dying (e.g. at its edge) now disappear for every player.
 - Poisoned fruit (Abyssal Terrors) now shows up for every player, not only for the host.
+- Team Race in the jungle: both halves get the same holes; dinosaurs charging from the side stay in their half instead of crossing the wall into the other team's; dig sites, poacher zones and turrets no longer land inside the wall, and a poacher zone stays in its owner's half.
 - Lobby: the mouse wheel scrolls the character and weapon lists again (since the game update it only scrolled a description).
 - Lobby settings: with a controller or keyboard, the focus now moves through the settings in the order they are shown.
 - The evil mob now evolves (look, health bar) for every player, and the materials it eats disappear for everyone.

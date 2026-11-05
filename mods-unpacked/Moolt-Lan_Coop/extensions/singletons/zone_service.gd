@@ -13,6 +13,15 @@ const LanGame = preload("res://mods-unpacked/Moolt-Lan_Coop/game/lan_game.gd")
 var lan_vanilla_zone_size: = Vector2.ZERO
 
 
+# Random spots (dig sites, poacher zones, structures, wander targets) stay out of what the game
+# mode leaves out of play (Team Race's wall).
+func is_in_forbidden_zone(pos: Vector2) -> bool:
+	if .is_in_forbidden_zone(pos):
+		return true
+	var mode = LanGame.get_mode()
+	return mode != null and not mode.is_in_play_area(pos)
+
+
 func set_current_zone(p_current_zone: ZoneData) -> void :
 	lan_vanilla_zone_size = Vector2(p_current_zone.width, p_current_zone.height)
 	if LanGame.in_session():
