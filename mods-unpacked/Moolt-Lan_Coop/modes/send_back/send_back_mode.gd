@@ -75,7 +75,9 @@ func _send(scene_path: String, sender: int, target: int) -> void :
 	var pos: Vector2 = player.global_position + Vector2(SEND_DISTANCE, 0).rotated(rand_range( - PI, PI))
 	pos = Vector2(clamp(pos.x, rect.position.x, rect.end.x), clamp(pos.y, rect.position.y, rect.end.y))
 	# As a summon: through vanilla's spawn marker. Its data marks it as sent (on_entity_spawned).
-	_main._entity_spawner.queue_to_spawn_summons.push_back([EntityType.ENEMY, scene, pos, _sent_marker])
+	var request: = SpawnRequest.new(EntityType.ENEMY, scene, pos)
+	request.data = _sent_marker
+	_main._entity_spawner.queue_to_spawn_summons.push_back(request)
 	add_score(SENT, sender, 1)
 	add_score(RECEIVED, target, 1)
 	send_message_to(target, [MSG_SENT, sender])

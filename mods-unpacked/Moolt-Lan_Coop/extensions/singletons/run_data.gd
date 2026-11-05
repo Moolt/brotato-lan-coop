@@ -26,9 +26,24 @@ func reset_run_caches() -> void :
 	_lan_grow_player_arrays()
 
 
+# Vanilla builds the item pool before it sets current_difficulty, so items with a
+# minimum_difficulty would stay in the pool of a run from the host. Built again once it is set.
 func resume_from_state(state: Dictionary) -> void :
 	.resume_from_state(state)
 	_lan_grow_player_arrays()
+	if LanGame.in_session():
+		ItemService.init_unlocked_pool()
+
+
+
+# main._ready rolls whether this wave's elite evolves (meca or mutant, Primal Dread zones) and
+# writes the result into elites_spawn. Only the host spawns, and its elites_spawn reaches the
+# clients with the next run state, so clients don't roll their own.
+func apply_evolution_to_current_elite() -> void :
+	var lan_net = LanGame.get_lan_net()
+	if lan_net != null and lan_net.active and not lan_net.is_host:
+		return
+	.apply_evolution_to_current_elite()
 
 
 # Vanilla credits every player's character (one save in couch coop). In a session each machine
@@ -55,3 +70,4 @@ func _lan_grow_player_arrays() -> void :
 	LanGame.grow(current_charmed_enemies, 0)
 	LanGame.grow(steps_taken_this_wave, 0)
 	LanGame.grow(locked_shop_items, [])
+	LanGame.grow(dino_egg_destroyed, false)

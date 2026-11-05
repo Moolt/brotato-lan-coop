@@ -211,7 +211,7 @@ func _fill_options() -> void :
 	for i in ModeRegistry.MODES.size():
 		_mode_option.add_item(tr(ModeRegistry.MODES[i].name), i)
 	_zone_option.clear()
-	for zone in ZoneService.zones:
+	for zone in LobbyRules.get_zones():
 		_zone_option.add_item(tr(zone.name), zone.my_id)
 	_difficulty_option.clear()
 	for difficulty in ItemService.difficulties:

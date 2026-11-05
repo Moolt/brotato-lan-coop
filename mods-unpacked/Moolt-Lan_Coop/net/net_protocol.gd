@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 23
+const PROTOCOL_VERSION: = 24
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -99,7 +99,7 @@ static func get_mod_version() -> String:
 
 
 static func get_sorted_dlc_ids() -> Array:
-	var ids: Array = ProgressData.get_active_dlc_ids().duplicate()
+	var ids: Array = ProgressData.available_dlc_ids.duplicate()
 	ids.sort()
 	return ids
 
@@ -210,7 +210,8 @@ static func get_multiplayer_unlocks() -> Dictionary:
 	for key in UNLOCK_KEYS:
 		unlocks[key] = []
 	for zone in ZoneService.zones:
-		unlocks.zones_unlocked.append(zone.my_id)
+		if zone.dlc_id == "" or ProgressData.available_dlc_ids.has(zone.dlc_id):
+			unlocks.zones_unlocked.append(zone.my_id)
 	for character in ItemService.characters:
 		unlocks.characters_unlocked.append(character.my_id_hash)
 	for upgrade in ItemService.upgrades:

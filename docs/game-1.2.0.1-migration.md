@@ -23,15 +23,15 @@ Brotato 1.2.0.1 shipped together with the Primal Dread DLC. The mod (1.12.3) was
    - Tag the current `master` commit (`eead844`, Release 1.12.3) as `last-1.1.15.4` (local, not pushed: a pushed tag may trigger the release CI).
    - Create the branch `game-1.2.0.1` from it; all work below happens there.
    - This file, linked from `CLAUDE.md` and `docs/lan-coop-plan.md`.
-- [ ] 1. Set up `Game/1.2.0.1/Decompiled` as the new vanilla baseline:
+- [x] 1. Set up `Game/1.2.0.1/Decompiled` as the new vanilla baseline:
    - `git init`, then commit it unchanged.
    - Symlink `mods-unpacked/Moolt-Lan_Coop`, `CLAUDE.md` and `docs` into it.
-   - The old symlinks in `Game/1.1.15.4/Decompiled` are relative and now dangling; repoint them or leave them.
-- [ ] 2. `tools/make_test_copy.sh`: `vanilla=$repo/../Game/1.2.0.1/Decompiled`, and drop the AT-sources merge (the DLCs are in the tree now).
-   - `NO_DLC=1` becomes per-DLC ownership. The test copy runs on the Local platform, where ownership is `DebugService.owned_dlc_ids` (an export defaulting to both). Set it with `DLCS=abyssal_terrors,primal_dread|none` in the copy's `debug_service.tscn`, or through the driver.
-- [ ] 3. `play2.sh` and `run12.sh`: change the Godot path to `../Godot` (unchanged location) and check the defaults. `win_run.ps1` and the Windows test copy: rebuild from `C:\Program Files\GOG Galaxy\Games\Brotato` (1.2.0.1, both markers).
-- [ ] 4. Update the paths and version in `CLAUDE.md`, `docs/testing.md` and `docs/brotato/*.md`, and the memory note for the Windows machine.
-- [ ] 5. `tools/lan_test_driver.gd`:
+   - The old symlinks in `Game/1.1.15.4/Decompiled` were repointed (they were relative and dangling after the move).
+- [x] 2. `tools/make_test_copy.sh`: `vanilla=$repo/../Game/1.2.0.1/Decompiled`, and drop the AT-sources merge (the DLCs are in the tree now).
+   - `NO_DLC=1` became `DLCS=<ids>|none`. The project has the custom feature `gog`, so the copy runs as GOG: ownership is the marker file `<copy>/<id>.dlc`, which the script writes.
+- [x] 3. `play2.sh` and `run12.sh`: the Godot path `../Godot` is unchanged (the second PC needs its own 1.2.0.1 tree for `run12.sh` when booted into Linux). The Windows test copy was rebuilt from `C:\Program Files\GOG Galaxy\Games\Brotato` (1.2.0.1, both markers).
+- [x] 4. Update the paths and version in `CLAUDE.md`, `docs/testing.md` and `docs/brotato/*.md`, and the memory note for the Windows machine. README: at the release (Phase 4).
+- [x] 5. `tools/lan_test_driver.gd`:
    - New enemy paths (`crash_zone/elites/rhino`, `crash_zone/basic/spitter`, `abyss/elites/giant`, `abyss/bosses/eel`), `items/all/00_base_game/...`.
    - DLC calls: `ProgressData.available_dlc_ids`, `ItemService.get_dlc_data_by_id`.
    - DLC item lists through `ItemService.update_data_list[*].item_set` instead of `dlc.items`.
@@ -39,35 +39,44 @@ Brotato 1.2.0.1 shipped together with the Primal Dread DLC. The mod (1.12.3) was
 
 ## Phase 1: make it load and run (base game + Abyssal Terrors parity)
 Hard breaks (script errors or a failed handshake):
-- [ ] 1. **DLC API** (`net/net_protocol.gd:102`, `net/run_builder.gd:42,150`):
+- [x] 1. **DLC API** (`net/net_protocol.gd:102`, `net/run_builder.gd:42,150`):
    - Use `ProgressData.available_dlc_ids`.
    - Curse through `ItemService.get_dlc_data_by_id("abyssal_terrors")` when `"abyssal_terrors" in RunData.enabled_dlcs`, as in vanilla `base_shop.gd:~1050`.
    - Use `ItemService.can_item_be_cursed` instead of only `is_cursed` (it excludes meca and mutant items).
-- [ ] 2. **Moved icons:** the preload paths in `ui/ui_kit.gd:9`, `modes/lan_mode.gd:24`, `modes/boss/boss_mode.gd:23` and `extensions/main.gd:45` now point to `items/all/00_base_game/...`.
-- [ ] 3. **`extensions/projectiles/projectile.gd`:** `stop(from_screen_border: bool = false)` and pass the argument on.
-- [ ] 4. **The spawn pipeline uses `SpawnRequest`** (`global/spawn_request.gd`):
+- [x] 2. **Moved icons:** the preload paths in `ui/ui_kit.gd:9`, `modes/lan_mode.gd:24`, `modes/boss/boss_mode.gd:23` and `extensions/main.gd:45` now point to `items/all/00_base_game/...`.
+- [x] 3. **`extensions/projectiles/projectile.gd`:** `stop(from_screen_border: bool = false)` and pass the argument on.
+- [x] 4. **The spawn pipeline uses `SpawnRequest`** (`global/spawn_request.gd`):
    - `extensions/global/entity_spawner.gd`: override `spawn_entity_birth(request)` and read `birth.request`.
    - `net/wave_sync.gd:~1078` `_client_birth`: build `SpawnRequest.new(type, null, pos)` plus `charmed_by`.
    - `modes/team_race/team_race_mode.gd:174-190`: use `entry.position` and a copied request.
    - `modes/send_back/send_back_mode.gd:78`: push a `SpawnRequest`.
-- [ ] 5. **New 4-slot arrays** (more than 4 players):
+- [x] 5. **New 4-slot arrays** (more than 4 players):
    - Grow `RunData.dino_egg_destroyed` (also after `_reset_per_wave_properties`), `main._displayed_consumables_picked_up` and `DebugService.perf_scenario_damage_added`.
    - Override `main._get_least_served_player_able_to_pick_up`, which hard-codes `[0,0,0,0]`.
-- [ ] 6. **`wave_sync._client_explosion`:** `player_index = -1` now reaches `RunData.get_player_effect` in `PlayerExplosion.start_explosion`. Give it a valid index and keep the fire-explosion path off on clients.
-- [ ] 7. **`Entity.despawn()`** emits `died` with `cleaning_up = true`, so `_on_host_entity_died` sends no die event. Send a die/remove event for despawns too.
+- [x] 6. **`wave_sync._client_explosion`:** `player_index = -1` now reaches `RunData.get_player_effect` in `PlayerExplosion.start_explosion`. Give it a valid index and keep the fire-explosion path off on clients.
+- [x] 7. **`Entity.despawn()`** emits `died` with `cleaning_up = true`, so `_on_host_entity_died` sends no die event. Send a die/remove event for despawns too.
 
 Silent changes that affect every run:
-- [ ] 8. **`run_builder.apply_go`** (copied host Go logic) is stale against `base_shop.gd:393-418`:
+- [x] 8. **`run_builder.apply_go`** (copied host Go logic) is stale against `base_shop.gd:393-418`:
    - Use `get_random_neutral_elite_id_hash_from_zone` and `RunData.current_wave = RunData.get_next_wave()`.
    - Add the lifeform-scanner `switch_next_elite_to_horde` loop.
-- [ ] 9. **`main._ready` rolls on every machine.** `RunData.apply_evolution_to_current_elite()` changes `elites_spawn` at random. Run it on the host only and send the result, or keep `elites_spawn` out of the digest until the next sync. `main._on_EndWaveTimer_timeout` also needs the new `_clear_displayed_consumables_ui()` / `set_process_input_where_defined` lines in the mod's copy.
-- [ ] 10. **Item pool and difficulty:** `RunData.reset()` now calls `ItemService.init_unlocked_pool()` with difficulty 0. After `apply_run`, re-init the pool, so items with a `minimum_difficulty` stay out.
-- [ ] 11. Title screen: the new `ItemSetButton` sits in `ButtonsLeft`. Fix the `_lan_fit_main_menu` height and the focus chain, and check with the driver's `title` role.
+- [x] 9. **`main._ready` rolls on every machine.** `RunData.apply_evolution_to_current_elite()` changes `elites_spawn` at random. Run it on the host only and send the result, or keep `elites_spawn` out of the digest until the next sync. `main._on_EndWaveTimer_timeout` also needs the new `_clear_displayed_consumables_ui()` / `set_process_input_where_defined` lines in the mod's copy.
+- [x] 10. **Item pool and difficulty:** `RunData.reset()` now calls `ItemService.init_unlocked_pool()` with difficulty 0. After `apply_run`, re-init the pool, so items with a `minimum_difficulty` stay out.
+- [x] 11. Title screen: the new `ItemSetButton` sits in `ButtonsLeft`. Fix the `_lan_fit_main_menu` height and the focus chain, and check with the driver's `title` role. (Checked: it fits as is, Quit ends at y 1024 of 1080 with Continue; no change.)
+
+Found while testing Phase 1 (not in the audit):
+- [x] `base_shop.gd` (vanilla) failed to parse when the mod loads it early: since 1.2.0.1 it infers a type from the `RunData` autoload, which has no type yet in mod `_init`. It is now installed in `mod_main._ready` (`READY_EXTENSIONS`); the shipped build loads it too.
+- [x] The end screen's stat rows (`ui/menus/shop/stat_container.tscn`) got a `VBoxContainer` level: `extensions/ui/menus/run/end_run.gd` paths updated (script errors on every end screen before).
+- [x] Test driver: a crate taken from the pool was connected twice (`picked_up` "already connected").
+- [x] Engine `grab_focus` "!is_inside_tree()" in the shop (first seen with DLC_ITEMS=4): it comes from **vanilla**. Buying a weapon when every slot is taken merges it into one of the same kind (`buy_weapon` → `_combine_weapon`), and a deferred `grab_focus` then lands on a node that left the tree. Reproduced with the driver's `FULL_SLOTS` option in a session and in the `solo` role, which plays vanilla's solo flow without a session (2026-11-05). No script frame, doesn't mention the mod (the crash reporter ignores it), no effect on play.
+- [x] Windows, shipped 1.2.0.1: the first `join` with a fresh APPDATA crashed natively once (exit 0xC0000005) after joining the lobby (2026-11-04). Not reproduced since: the rerun with that profile and two more joins with fresh profiles (2026-11-05) passed. Watch for it in manual tests; if it comes back, note what the player did.
+- Team Race: the driver's `next_wave` digests differ by a pickup or two (gold/XP); they are logged a few seconds into the wave on each side. The run sync itself matched (no mismatch warning).
 
 **Gate to Phase 2:** the regression set from `docs/testing.md` passes on 1.2.0.1 with `DLCS=none` and `DLCS=abyssal_terrors` (crash zone and abyss, AT bosses, curse, charm, pets), and the logs are clean.
+Status 2026-11-04: the regression set passed in a copy with both DLCs: 30 cases, among them the crash zone and the Abyss, AT bosses, curse, charm, pets, `DLC_ITEMS` 0–6, Team Race and Send Back, 7 players. Also the title and lobby screenshots, a DLC-mismatch rejection, the shipped build (`quit`, `solo`), and host here + join on Windows (shipped). A copy with `DLCS=none` passed 2 waves too (no DLC sets, the remembered Abyss zone falls back to the crash zone). **Gate passed.**
 
 ## Phase 2: new base mechanics in lobby and run setup
-- [ ] 1. **Zones:** the lobby, settings page and `net_protocol.gd:212` list only zones with `dlc_id == ""` or `dlc_id in available_dlc_ids`, as in vanilla `zone_selection_button.gd`. Add the jungle as zone 2. `get_zone_data(id)` now looks up `my_id`.
+- [x] 1. **Zones:** the lobby, settings page and `net_protocol.gd:212` list only zones with `dlc_id == ""` or `dlc_id in available_dlc_ids`, as in vanilla `zone_selection_button.gd`. Add the jungle as zone 2. `get_zone_data(id)` now looks up `my_id`. (Done: `LobbyRules.get_zones`. The jungle is selectable now, but plays badly until Phase 3 items 1–4; a release before then should hide it.)
 - [ ] 2. **Item sets:**
    - The handshake also compares the active item sets (`ProgressData.active_update_data` ids), or the host's set applies to the run: `RunData.active_update_data_ids` already travels in the run state through `ProgressData.apply_run_update_data`.
    - `lobby_rules.gd` and `lobby.gd:356` refuse characters whose `required_item_set` is off (`ItemService.get_disabled_required_update`).
@@ -88,7 +97,7 @@ Each item gets a driver scenario (`ZONE=2`, `SPAWN=…`, `BOSS=…`, `DLC_ITEMS`
 | [ ] | 6 | **Player bullets deflected by enemies** (pachycephalosaurus, ankylosaurus) and **boomerang** (velocity 0 at spawn, position-driven) | Client bullets fly straight on or sit still | Send a projectile redirect event, or send these projectiles' positions in the snapshot |
 | [ ] | 7 | **Brachiosaurus boss** (own state timer, tweened edge movement, pivots without `state_changed`, `EnemyLaser` following `_hitbox.from`, `BrachiosaurusFoot`) | Wrong spin direction, no lasers, no foot visuals, tween jitter | Dedicated handling: block the local timer and tweens, send pivots on its state change, send laser start/stop/angle, spawn the foot as an entity |
 | [ ] | 8 | **Player-side effects that run on clients**: fire trail, `release_spines_on_hit`, acid DoT (`update_acid_damage`), `_start_time_shift`, `on_weapon_wanted_to_spawn_structure` in `extensions/entities/units/player/player.gd` | Local spawns and damage that the host doesn't have (desync) | Turn them off on clients in the player extension, as the existing regen block does; the host's results arrive through the snapshot and events |
-| [ ] | 9 | **Group spawn markers** (`spawn_group_entity_birth`, `EntityGroupBirth`) | No warning marker | Hook `spawn_group_entity_birth` → `on_birth` for each position |
+| [x] | 9 | **Group spawn markers** (`spawn_group_entity_birth`, `EntityGroupBirth`) | No warning marker | Hook `spawn_group_entity_birth` → `on_birth` for each position |
 | [ ] | 10 | **Hungry hungry dinosaur** eats fruit through `main.despawn_consumable` | Fruit stays on client floors | Send the existing item-removed event from the `despawn_consumable` override |
 | [ ] | 11 | **Archaeologist dig sites, poacher zones and marks** (scene effect behaviours, freed on clients) | Objectives invisible | Spawn and progress events for those objects |
 | [ ] | 12 | Cosmetic: velociraptor warning line, jump shadow and landing marker (dimetrodon, carnotaurus), T-rex facing and mouth anim, carbon bow textures, mosquitor and blood turret outlines, ammosaurus melee swings, jungle ground decoration (seed it from the host) | Missing or different visuals | Small events and snapshot flags; last |

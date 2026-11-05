@@ -6,7 +6,7 @@ extends Reference
 const BASE_THEME = preload("res://resources/themes/base_theme.tres")
 const TITLE_FONT = preload("res://resources/fonts/actual/base/font_60_outline.tres")
 const BACK_ICON = preload("res://ui/menus/global/arrow_left_border.png")
-const TEAM_ICON = preload("res://items/all/white_flag/white_flag_icon.png")
+const TEAM_ICON = preload("res://items/all/00_base_game/white_flag/white_flag_icon.png")
 const FitLabel = preload("res://mods-unpacked/Moolt-Lan_Coop/ui/fit_label.gd")
 
 const PLAYER_BAR_WIDTH: = 5.0

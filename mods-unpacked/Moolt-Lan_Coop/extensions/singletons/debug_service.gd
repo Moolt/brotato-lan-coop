@@ -10,6 +10,7 @@ func _init() -> void :
 	LanGame.grow(debug_items_added, false)
 	LanGame.grow(debug_weapons_added, false)
 	LanGame.grow(starting_weapons_removed, false)
+	LanGame.grow(perf_scenario_damage_added, false)
 
 
 func log_run_info(upgrades: Array = [], consumables: Array = []) -> void :

@@ -95,13 +95,13 @@ func _lan_new_stat_row(icon: Texture, label_key: String) -> Control:
 	var row: Control = STAT_ROW_SCENE.instance()
 	row.focus_mode = Control.FOCUS_NONE
 	_stats_container._general_stats.add_child(row)
-	row.get_node("HBoxContainer/Icon").texture = icon
+	row.get_node("VBoxContainer/HBoxContainer/Icon").texture = icon
 	# No hover or focus: vanilla's handlers would look up a stat for the row.
-	row.get_node("HBoxContainer").mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.get_node("HBoxContainer/Label").mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.get_node("HBoxContainer/Label").focus_mode = Control.FOCUS_NONE
-	row.get_node("HBoxContainer/Label").text = label_key
-	row.get_node("HBoxContainer/Value").text = ""
+	row.get_node("VBoxContainer/HBoxContainer").mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.get_node("VBoxContainer/HBoxContainer/Label").mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.get_node("VBoxContainer/HBoxContainer/Label").focus_mode = Control.FOCUS_NONE
+	row.get_node("VBoxContainer/HBoxContainer/Label").text = label_key
+	row.get_node("VBoxContainer/HBoxContainer/Value").text = ""
 	return row
 
 
@@ -116,7 +116,7 @@ func _lan_update_stat_rows(player_index: int) -> void :
 	title.add_color_override("font_color", EndRunUiKit.get_player_color(player_index))
 	var character = solo_view.get_player_data(player_index).current_character
 	if character != null:
-		_lan_character_row.get_node("HBoxContainer/Icon").texture = character.icon
-		_lan_character_row.get_node("HBoxContainer/Label").text = character.name
+		_lan_character_row.get_node("VBoxContainer/HBoxContainer/Icon").texture = character.icon
+		_lan_character_row.get_node("VBoxContainer/HBoxContainer/Label").text = character.name
 	for score_row in _lan_score_rows:
-		score_row[0].get_node("HBoxContainer/Value").text = str(mode.get_score(score_row[1], player_index))
+		score_row[0].get_node("VBoxContainer/HBoxContainer/Value").text = str(mode.get_score(score_row[1], player_index))

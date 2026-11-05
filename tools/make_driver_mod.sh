@@ -27,7 +27,7 @@ cat > "$dir/manifest.json" <<'EOF'
       "load_before": [],
       "incompatibilities": [],
       "compatible_mod_loader_version": ["6.3.0"],
-      "compatible_game_version": ["1.1.15.4"],
+      "compatible_game_version": ["1.2.0.1"],
       "config_schema": {}
     }
   }

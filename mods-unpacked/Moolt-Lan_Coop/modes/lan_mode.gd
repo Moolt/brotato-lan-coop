@@ -21,7 +21,7 @@ const Scoreboard = preload("res://mods-unpacked/Moolt-Lan_Coop/modes/scoreboard.
 
 const KILLS: = "kills"
 const KILLS_ICON = preload("res://ui/icons/misc/enemy_icon.png")
-const WINNER_ICON = preload("res://items/all/crown/crown_icon.png")
+const WINNER_ICON = preload("res://items/all/00_base_game/crown/crown_icon.png")
 const SCOREBOARD_NAME: = "LanScoreboard"
 
 var id: = ""

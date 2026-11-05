@@ -131,6 +131,7 @@ const EVENT_ITEM_SCALE: = 13
 const EVENT_BIRTH_MOVED: = 14
 const EVENT_PIVOTS: = 15
 const EVENT_ENTITY_SIZE: = 16
+const EVENT_DESPAWN: = 17
 # Charmed enemies' projectiles use it with the charm's hue.
 const HUE_SHIFT_MATERIAL = preload("res://resources/shaders/hue_shift_shadermat.tres")
 const ITEM_GOLD: = 0
@@ -654,10 +655,13 @@ func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 		return
 	var _erased = _entities.erase(net_id)
 	_erased = _entity_sizes.erase(net_id)
-	# The clients' own clean_up_room kills everything at the end of the wave.
+	# The clients' own clean_up_room kills everything at the end of the wave. Entity.despawn()
+	# (an enemy leaving the map, a puddle evicted) also says cleaning_up, mid-wave.
 	if not args.cleaning_up:
 		_events.append([EVENT_DIE, net_id, args.knockback_vector])
 		_net.mode.on_entity_died(_main, entity, args)
+	elif not _main._cleaning_up:
+		_events.append([EVENT_DESPAWN, net_id])
 
 
 # Structures and pets get their data (StructureEffect, PetEffect) from the player's effects,
@@ -954,6 +958,8 @@ func on_events(events: Array) -> void :
 			_client_spawn(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
 			_client_die(event)
+		elif event[0] == EVENT_DESPAWN and event.size() == 2:
+			_client_despawn(event)
 		elif event[0] == EVENT_BIRTH and event.size() == 5:
 			_client_birth(event)
 		elif event[0] == EVENT_BIRTH_MOVED and event.size() == 3:
@@ -1069,13 +1075,26 @@ func _client_die(event: Array) -> void :
 	entity.die(args)
 
 
+
+func _client_despawn(event: Array) -> void :
+	# [EVENT_DESPAWN, net_id]
+	if typeof(event[1]) != TYPE_INT:
+		return
+	var entity = _entities.get(event[1])
+	var _erased = _entities.erase(event[1])
+	if entity != null and is_instance_valid(entity) and not entity.dead and entity.has_method("despawn"):
+		entity.despawn()
+
+
 func _client_birth(event: Array) -> void :
 	# [EVENT_BIRTH, birth id, type, pos, charmed_by]
 	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_INT:
 		return
 	if _main._cleaning_up:
 		return
-	_main._entity_spawner.spawn_entity_birth(event[2], null, event[3], null, - 1, null, event[4])
+	var request: = SpawnRequest.new(event[2], null, event[3])
+	request.charmed_by = event[4]
+	_main._entity_spawner.spawn_entity_birth(request)
 	var container: Node = _main._births_container
 	if container.get_child_count() > 0:
 		var birth: Node = container.get_child(container.get_child_count() - 1)
@@ -1352,7 +1371,12 @@ func _client_explosion(event: Array) -> void :
 	for area in _find_areas(instance, []):
 		area.set_deferred("monitoring", false)
 		area.set_deferred("monitorable", false)
-	instance.start_explosion()
+	# PlayerExplosion.start_explosion without its fire puddle (it reads the player's effects, and
+	# player -1 has none): the host's puddles reach clients on their own.
+	instance._hitbox.enable()
+	instance._hitbox.from = instance
+	instance._sprite.modulate.a = ProgressData.settings.explosion_opacity
+	instance._animation_player.play("explode")
 
 
 func _client_item_drop(event: Array) -> void :

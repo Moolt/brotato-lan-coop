@@ -2,7 +2,8 @@ extends "res://main.gd"
 
 # LAN session changes to the wave scene.
 # - Per-player arrays grow to 12 slots (see LanGame). on_gold_picked_up splits gold over a local
-#   4-slot array, so it has a copy for more than 4 players.
+#   4-slot array, so it has a copy for more than 4 players; the consumable counts of
+#   _get_least_served_player_able_to_pick_up get 12 slots before vanilla adds 4.
 # - main.tscn has HUD nodes for P1-P4 only. In a session, _enter_tree copies the P4 sets as
 #   P5-P12 before vanilla's _ready looks them up by unique name. Only the local player's screen
 #   HUD is shown, in the P1 slot (top left).
@@ -42,7 +43,7 @@ const OffscreenArrows = preload("res://mods-unpacked/Moolt-Lan_Coop/game/offscre
 const ChoiceCountdown = preload("res://mods-unpacked/Moolt-Lan_Coop/game/choice_countdown.gd")
 
 const NAME_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
-const DEAD_ICON = preload("res://items/all/goat_skull/goat_skull_icon.png")
+const DEAD_ICON = preload("res://items/all/00_base_game/goat_skull/goat_skull_icon.png")
 
 const VANILLA_HUD_SLOTS: = 4
 
@@ -75,6 +76,18 @@ func _init() -> void :
 	LanGame.grow(_consumables_to_process, [])
 	LanGame.grow(_proj_on_death_stat_caches, null)
 	LanGame.grow(_player_is_under_half_health, false)
+	LanGame.grow(_displayed_consumables_picked_up, [])
+
+
+
+# Vanilla starts each consumable's count with 4 slots ([0, 0, 0, 0]) and indexes it by player.
+func _get_least_served_player_able_to_pick_up(consumable: Consumable, players: Array, received: Dictionary) -> Player:
+	var id_hash: int = consumable.consumable_data.my_id_hash
+	if not received.has(id_hash):
+		var counts: = []
+		LanGame.grow(counts, 0)
+		received[id_hash] = counts
+	return ._get_least_served_player_able_to_pick_up(consumable, players, received)
 
 
 func _enter_tree() -> void :
@@ -578,6 +591,7 @@ func _on_EndWaveTimer_timeout() -> void :
 		_camera.zoom_in_speed_factor = 0.0
 		_camera.zoom_out_speed_factor = 0.0
 		MusicManager.tween( - 8)
+		_clear_displayed_consumables_ui()
 		if lan_net.enter_solo_view():
 			_lan_set_up_solo_upgrades_ui()
 			_lan_start_choice_countdown()

@@ -91,10 +91,15 @@ extends Node
 #         both sides (only the host's curse may count); log_sync logs the cursed enemies'
 #         net ids, the boosted and charmed counts and the scene effect behaviours on both sides
 #   (host) BOSS=path: the boss spawned at t=13 (default the rhino), e.g. a DLC elite with pivots
-#         (res://dlcs/dlc_1/enemies/giant/giant.tscn) or the eel (phase 2 at half HP, t=18)
+#         (res://entities/units/enemies/abyss/elites/giant/giant.tscn) or the eel
+#         (…/abyss/bosses/eel/eel.tscn; phase 2 at half HP, t=18)
+#   (host and join) FULL_SLOTS=1: at t=16 the host fills players 0 and 1's weapon slots with
+#         knives; in the shop each buys a knife first (vanilla merges it into one of theirs) and
+#         presses Go in the same frame (=2: a second later)
 #   (any role) DLC_LOG=s: every s seconds in a wave, log_sync's dlc line (long waves)
 #   (host) DLC_ITEMS=k (DLC): at t=16 the DLC's items and weapons with index % 7 == k for players 0
-#         and 1 (k = 0..6 covers all)
+#         and 1 (k = 0..6 covers all); DLC_SET=id picks the DLC (default abyssal_terrors,
+#         or primal_dread)
 #   (host) BOSS_HP2=n: the bosses' HP at t=18 of 5000 (default 2500; the eel's phase 2 is below 2000)
 #   (host) SPAWN=path: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish)
 #   (host) SPAWN_NEAR=1: the SPAWN enemies 250 px around the host player (they notice it)
@@ -199,7 +204,7 @@ func log_lobby(tag: String) -> void :
 	var lobby = m.get_node("LanLobby")
 	print("[TEST] ", tag, " page=", m._current_page.name, " joined=", net.joined, " index=", net.local_player_index, " reconnecting=", net.is_reconnecting(), " run_in_progress=", net.run_in_progress, " settings=", net.lobby_settings, " players=", net.players.size(), " coop_players=", CoopService.connected_players)
 	print("[TEST] ", tag, " hint='", tr(lobby._hint_label.text), "' start_disabled=", lobby._start_button.disabled)
-	print("[TEST] ", tag, " dlcs=", ProgressData.get_active_dlc_ids(), " zones=", ZoneService.zones.size(), " characters=", ItemService.characters.size(), " items=", ItemService.items.size(), " weapons=", ItemService.weapons.size())
+	print("[TEST] ", tag, " dlcs=", ProgressData.available_dlc_ids, " sets=", ProgressData.active_update_data, " zones=", ZoneService.zones.size(), " characters=", ItemService.characters.size(), " items=", ItemService.items.size(), " weapons=", ItemService.weapons.size())
 
 
 func log_wave(tag: String) -> void :
@@ -1054,10 +1059,21 @@ func dlc_log_watch(delta: float) -> void :
 		log_dlc(role + "_every", main, sync)
 
 
+# The item set of DLC_SET (default abyssal_terrors), null when it isn't owned.
+func dlc_item_set():
+	var id: = OS.get_environment("DLC_SET") if OS.get_environment("DLC_SET") != "" else "abyssal_terrors"
+	if not ProgressData.is_dlc_available(id):
+		return null
+	for update_data in ItemService.update_data_list:
+		if update_data != null and update_data.id == id:
+			return update_data.item_set
+	return null
+
+
 # DLC_ITEMS=k: the DLC's items and weapons whose index % 7 == k for players 0 and 1 (weapons only
 # into free slots), so 7 runs cover all of them.
 func dlc_items_test(k: int) -> void :
-	var dlc = ProgressData.get_dlc_data("abyssal_terrors")
+	var dlc = dlc_item_set()
 	var added = []
 	for i in dlc.items.size():
 		if i % 7 == k:
@@ -1343,25 +1359,25 @@ func _host_step() -> void :
 			# A boss and three trees, which wave 1 doesn't have.
 			var spawner = get_tree().current_scene._entity_spawner
 			var rect = ZoneService.get_current_zone_rect()
-			var boss_scene = OS.get_environment("BOSS") if OS.get_environment("BOSS") != "" else "res://entities/units/enemies/rhino/rhino.tscn"
-			spawner.queue_to_spawn_bosses.push_back([EntityType.BOSS, load(boss_scene), rect.end - Vector2(150, 150)])
+			var boss_scene = OS.get_environment("BOSS") if OS.get_environment("BOSS") != "" else "res://entities/units/enemies/crash_zone/elites/rhino/rhino.tscn"
+			spawner.queue_to_spawn_bosses.push_back(SpawnRequest.new(EntityType.BOSS, load(boss_scene), rect.end - Vector2(150, 150)))
 			if OS.get_environment("SPAWN") != "":
 				for i in 4:
 					var spawn_pos = center_offset(i) + Vector2(0, 200)
 					if OS.get_environment("SPAWN_NEAR") == "1":
 						spawn_pos = get_tree().current_scene._players[0].global_position + Vector2(250, 0).rotated(i * PI / 2)
-					spawner.queue_to_spawn.push_back([EntityType.ENEMY, load(OS.get_environment("SPAWN")), spawn_pos])
+					spawner.queue_to_spawn.push_back(SpawnRequest.new(EntityType.ENEMY, load(OS.get_environment("SPAWN")), spawn_pos))
 			if OS.get_environment("CHARM_BOOST") == "1":
 				# Romantic's charm chance is half the max HP in percent: 100 % from here on.
 				for i in 2:
 					RunData.add_stat(Keys.stat_max_hp_hash, 200, i)
 			for i in 3:
-				spawner.queue_to_spawn_trees.push_back([EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)])
+				spawner.queue_to_spawn_trees.push_back(SpawnRequest.new(EntityType.NEUTRAL, load("res://entities/units/neutral/tree.tscn"), Vector2(150 + i * 120, rect.end.y - 150)))
 			# An enemy spawning right on the host player: vanilla moves its marker elsewhere.
-			spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), get_tree().current_scene._players[0].global_position])
+			spawner.queue_to_spawn.push_back(SpawnRequest.new(EntityType.ENEMY, load("res://entities/units/enemies/crash_zone/basic/spitter/spitter.tscn"), get_tree().current_scene._players[0].global_position))
 			# Spitters shoot enemy projectiles.
 			for i in 4:
-				spawner.queue_to_spawn.push_back([EntityType.ENEMY, load("res://entities/units/enemies/spitter/spitter.tscn"), center_offset(i)])
+				spawner.queue_to_spawn.push_back(SpawnRequest.new(EntityType.ENEMY, load("res://entities/units/enemies/crash_zone/basic/spitter/spitter.tscn"), center_offset(i)))
 			next_t = 14.0
 		6:
 			Input.action_release("button_move_left_0")
@@ -1391,7 +1407,7 @@ func _host_step() -> void :
 				if crate == null:
 					crate = main7.consumable_scene.instance()
 					main7._consumables_container.add_child(crate)
-				var _c = crate.connect("picked_up", main7, "on_consumable_picked_up")
+					var _c = crate.connect("picked_up", main7, "on_consumable_picked_up")
 				crate.already_picked_up = false
 				crate.consumable_data = ItemService.get_element_safe(ItemService.consumables, "consumable_item_box")
 				crate.set_texture(crate.consumable_data.icon)
@@ -1405,7 +1421,7 @@ func _host_step() -> void :
 			explode_args.accuracy = 1.0
 			explode_args.crit_damage = 1.5
 			explode_args.from_player_index = 0
-			var _explosion = WeaponService.explode(load("res://items/all/landmines/landmine_exploding_effect.tres"), explode_args)
+			var _explosion = WeaponService.explode(load("res://items/all/00_base_game/landmines/landmine_exploding_effect.tres"), explode_args)
 			# The injected boss has 1 HP in wave 1.
 			for boss in get_tree().current_scene._entity_spawner.bosses:
 				boss.max_stats.health = 5000
@@ -1419,7 +1435,14 @@ func _host_step() -> void :
 				gone.free()
 			contact_test(get_tree().current_scene)
 			progress_test(get_tree().current_scene)
-			if OS.get_environment("DLC_ITEMS") != "" and ProgressData.get_dlc_data("abyssal_terrors") != null:
+			if OS.get_environment("FULL_SLOTS") != "":
+				# Every weapon slot of players 0 and 1 holds a knife (the shop then buys one more).
+				var knife = ItemService.get_element_safe(ItemService.weapons, "weapon_knife_1")
+				for player_index in 2:
+					while RunData.players_data[player_index].weapons.size() < RunData.get_player_effect(Keys.weapon_slot_hash, player_index):
+						var _w = RunData.add_weapon(knife, player_index)
+				print("[TEST] full_slots weapons=", RunData.players_data[0].weapons.size(), ",", RunData.players_data[1].weapons.size())
+			if OS.get_environment("DLC_ITEMS") != "" and dlc_item_set() != null:
 				dlc_items_test(int(OS.get_environment("DLC_ITEMS")))
 			if OS.get_environment("PET_TEST") == "1":
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_blazemander"), 0)
@@ -1783,10 +1806,18 @@ func shop_actions(delta: float) -> void :
 		var gold_before = own.gold
 		var bought = "-"
 		var locked = "-"
-		if OS.get_environment("CURSE_TEST") == "1" and ProgressData.get_dlc_data("abyssal_terrors") != null:
+		if OS.get_environment("CURSE_TEST") == "1" and ProgressData.is_dlc_available("abyssal_terrors"):
 			for item in container._shop_items:
 				if item.active:
-					item.set_shop_item(ProgressData.get_dlc_data("abyssal_terrors").curse_item(item.item_data, 0))
+					item.set_shop_item(ItemService.get_dlc_data_by_id("abyssal_terrors").curse_item(item.item_data, 0))
+		if OS.get_environment("FULL_SLOTS") != "":
+			# Buying a weapon with every slot taken: vanilla merges it into one of the same kind.
+			for item in container._shop_items:
+				if item.active:
+					item.set_shop_item(ItemService.get_element_safe(ItemService.weapons, "weapon_knife_1"))
+					own.gold = max(own.gold, 100)
+					gold_before = own.gold
+					break
 		for item in container._shop_items:
 			if not item.active:
 				continue
@@ -1801,8 +1832,18 @@ func shop_actions(delta: float) -> void :
 				locked = item.item_data.my_id
 		print("[TEST] ", tag, " count=", RunData.get_player_count(), " coop=", RunData.is_coop_run, " scene=", shop.filename, " bought=", bought, " gold=", gold_before, "->", own.gold, " locked=", locked, " locked_slot0=", RunData.locked_shop_items[0].size(), " items=", own.items.size(), " weapons=", own.weapons.size())
 		shot(tag)
+		if OS.get_environment("FULL_SLOTS") == "2":
+			# Go a second after the buy, as a player would.
+			shop_step = 4
+			shop_wait = 0.0
+			return
 		shop._on_GoButton_pressed(0)
 		print("[TEST] ", tag, " go overlay=", overlay.visible if overlay != null else "none", " done=", net.shop_done, " waiting=", net.shop_waiting_names)
+		shop_step = 1
+		shop_wait = 0.0
+	elif shop_step == 4 and shop_wait >= 1.0:
+		shop._on_GoButton_pressed(0)
+		print("[TEST] ", tag, " go (late) overlay=", overlay.visible if overlay != null else "none", " done=", net.shop_done, " waiting=", net.shop_waiting_names)
 		shop_step = 1
 		shop_wait = 0.0
 	elif shop_step == 1 and shop_wait >= 1.0:
@@ -2097,6 +2138,8 @@ func _solo_step() -> void :
 			# Invulnerable, so the wave ends cleared ($SOLO_MORTAL=1 lets it die).
 			DebugService.invulnerable = OS.get_environment("SOLO_MORTAL") != "1"
 			DebugService.custom_wave_duration = 20
+			# Vanilla solo pauses when the window loses focus (someone using the desktop meanwhile).
+			ProgressData.settings.pause_on_focus_lost = false
 			if OS.get_environment("START_WAVE") != "":
 				DebugService.starting_wave = int(OS.get_environment("START_WAVE"))
 			if OS.get_environment("ENEMY_MULT") != "":
@@ -2104,6 +2147,11 @@ func _solo_step() -> void :
 			RB.build_run([entry], {"zone": 0, "difficulty": 0})
 			RunData.set_coop_run(false)
 			RunData.play_mode = RunData.PlayMode.SOLO
+			if OS.get_environment("FULL_SLOTS") != "":
+				var knife = ItemService.get_element_safe(ItemService.weapons, "weapon_knife_1")
+				while RunData.players_data[0].weapons.size() < RunData.get_player_effect(Keys.weapon_slot_hash, 0):
+					var _w = RunData.add_weapon(knife, 0)
+				print("[TEST] full_slots weapons=", RunData.players_data[0].weapons.size())
 			var _e = get_tree().change_scene(MenuData.game_scene)
 			next_t = t + 3.0
 		2:

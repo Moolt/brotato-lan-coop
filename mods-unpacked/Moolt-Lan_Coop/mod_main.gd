@@ -30,6 +30,12 @@ const EARLY_EXTENSIONS: = [
 	"entities/units/enemies/enemy.gd",
 	"entities/structures/turret/turret.gd",
 	"entities/units/player/player.gd",
+]
+# Installed the same way, but in _ready: since 1.2.0.1 base_shop.gd infers types from the
+# RunData autoload (var next_wave: = RunData.get_next_wave()), and an autoload's name only has a
+# type once every autoload is instanced, after ModLoader's _init (where mods run _init).
+# Nothing loads the shop scripts before then.
+const READY_EXTENSIONS: = [
 	"ui/menus/shop/base_shop.gd",
 ]
 
@@ -75,6 +81,8 @@ func _install_early_extension(extension_path: String) -> void :
 
 
 func _ready() -> void :
+	for path in READY_EXTENSIONS:
+		_install_early_extension(ext_dir.plus_file(path))
 	load(mod_dir_path.plus_file("net/net_translations.gd")).register()
 	load(mod_dir_path.plus_file("modes/mode_registry.gd")).register_translations()
 

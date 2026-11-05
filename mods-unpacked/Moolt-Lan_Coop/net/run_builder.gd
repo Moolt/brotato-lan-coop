@@ -39,7 +39,9 @@ static func build_run(players: Array, settings: Dictionary) -> void :
 	RunData.reset_elites_spawn()
 	RunData.init_elites_spawn()
 	RunData.init_events_nightmare()
-	RunData.enabled_dlcs = ProgressData.get_active_dlc_ids()
+	RunData.enabled_dlcs = ProgressData.available_dlc_ids.duplicate()
+	RunData.active_update_data_ids = ProgressData.active_update_data.duplicate()
+	ItemService.init_unlocked_pool()
 	for effect in difficulty.effects:
 		effect.apply(0)
 	for player_data in RunData.players_data:
@@ -111,21 +113,33 @@ static func merge_solo_run(player_index: int, run_json: String) -> bool:
 # Go (base_shop.gd _on_GoButton_pressed; the candy-bag locking ran on each machine) and when
 # the shop closes (_on_tree_exited: cursing locked items). Ends with the next wave number.
 static func apply_go() -> void :
-	var wave_reset_count: = 0
+	var next_wave: = RunData.get_next_wave()
 	for player_index in RunData.get_player_count():
 		var effects = RunData.get_player_effects(player_index)
 		var hourglass_count = effects[Keys.item_hourglass_hash] if effects.has(Keys.item_hourglass_hash) else 0
 		if hourglass_count > 0:
-			wave_reset_count += hourglass_count
 			var source_item = RunData.get_player_item(Keys.item_hourglass_hash, player_index)
 			RunData.remove_item(source_item, player_index)
 
 		var extra_elite_spawn_chance = effects[Keys.extra_elite_next_wave_chance_hash] if effects.has(Keys.extra_elite_next_wave_chance_hash) else 0
 		if Utils.get_chance_success(float(extra_elite_spawn_chance) / 100):
-			var rand_elite_id = ItemService.get_random_elite_id_hash_from_zone(ZoneService.current_zone.my_id)
+			var rand_elite_id = ItemService.get_random_neutral_elite_id_hash_from_zone(ZoneService.current_zone.my_id)
 			effects[Keys.extra_enemies_next_wave_hash].append(["res://zones/common/elite/group_elite.tres", 1, rand_elite_id])
 
-	RunData.current_wave += 1 - wave_reset_count
+	RunData.current_wave = next_wave
+
+	for player_index in RunData.get_player_count():
+		var effects = RunData.get_player_effects(player_index)
+		var lifeform_scanner_count = effects[Keys.item_lifeform_scanner_hash] if effects.has(Keys.item_lifeform_scanner_hash) else 0
+		while lifeform_scanner_count > 0:
+			var source_item = RunData.get_player_item(Keys.item_lifeform_scanner_hash, player_index)
+			if source_item == null:
+				break
+			if RunData.switch_next_elite_to_horde(RunData.current_wave):
+				RunData.remove_item(source_item, player_index)
+				lifeform_scanner_count -= 1
+			else:
+				break
 
 	for player_index in RunData.get_player_count():
 		_curse_locked_items(player_index)
@@ -145,15 +159,18 @@ static func _curse_locked_items(player_index: int) -> void :
 	randomized_positions.shuffle()
 
 	for i in randomized_positions:
-		if not locked_items[i][0].is_cursed and Utils.get_chance_success((RunData.players_data[player_index].curse_locked_shop_items_pity + curse_locked_items) / 100.0):
-			for dlc_id in RunData.enabled_dlcs:
-				var dlc_data = ProgressData.get_dlc_data(dlc_id)
-				if dlc_data and dlc_data.has_method("curse_item"):
+		if not ItemService.can_item_be_cursed(locked_items[i][0]):
+			continue
+
+		if Utils.get_chance_success((RunData.players_data[player_index].curse_locked_shop_items_pity + curse_locked_items) / 100.0):
+			if "abyssal_terrors" in RunData.enabled_dlcs:
+				var dlc_data = ItemService.get_dlc_data_by_id("abyssal_terrors")
+				if dlc_data:
 					has_cursed_an_item = true
 					RunData.players_data[player_index].curse_locked_shop_items_pity = 0
 					RunData.set_tracked_value(player_index, Keys.item_fish_hook_hash, RunData.players_data[player_index].curse_locked_shop_items_pity)
 					locked_items[i][0] = dlc_data.curse_item(locked_items[i][0], player_index)
-		elif not locked_items[i][0].is_cursed:
+		else:
 			nb_locked_items_that_didnt_get_cursed += 1
 
 	if curse_locked_items > 0 and locked_items.size() > 0 and not has_cursed_an_item and nb_locked_items_that_didnt_get_cursed > 0:

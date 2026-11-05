@@ -179,15 +179,27 @@ func on_group_queued(spawner: Node, sizes_before: Array) -> void :
 		var added: Array = queue.slice(sizes_before[i], queue.size() - 1) if queue.size() > sizes_before[i] else []
 		queue.resize(sizes_before[i])
 		for entry in added:
-			var pos: Vector2 = entry[2]
+			var pos: Vector2 = entry.position
 			if pos.x > half + (offset - half) / 2.0:
 				pos.x -= offset
 			pos.x = clamp(pos.x, SPAWN_EDGE, half - SPAWN_EDGE)
 			for team in 2:
 				if not is_team_out(team):
-					var copy: Array = entry.duplicate()
-					copy[2] = pos + Vector2(team * offset, 0)
+					var copy: SpawnRequest = _copy_request(entry)
+					copy.position = pos + Vector2(team * offset, 0)
 					queue.append(copy)
+
+
+static func _copy_request(request: SpawnRequest) -> SpawnRequest:
+	var copy: = SpawnRequest.new(request.type, request.scene, request.position)
+	copy.data = request.data
+	copy.player_index = request.player_index
+	copy.charmed_by = request.charmed_by
+	copy.group_count = request.group_count
+	copy.source = request.source
+	copy.is_mutant = request.is_mutant
+	copy.is_meca = request.is_meca
+	return copy
 
 
 # Enemies queued for a half before its team went out (summons, births under way) die at once.

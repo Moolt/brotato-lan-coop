@@ -37,11 +37,19 @@ func spawn_entity(scene: PackedScene, args: SpawnEntityArgs, data: Resource = nu
 	return entity
 
 
-func spawn_entity_birth(type: int, scene: PackedScene, pos: Vector2, data: Resource = null, player_index: = - 1, source = null, charmed_by: = - 1) -> void :
-	.spawn_entity_birth(type, scene, pos, data, player_index, source, charmed_by)
+func spawn_entity_birth(request: SpawnRequest) -> void :
+	.spawn_entity_birth(request)
 	var wave_sync = LanGame.get_wave_sync()
 	if wave_sync != null and wave_sync.is_host:
-		wave_sync.on_birth(type, pos, charmed_by)
+		wave_sync.on_birth(request.type, request.position, request.charmed_by)
+
+
+# One marker for several enemies (spawn_edge_of_map_together). Clients show a plain marker.
+func spawn_group_entity_birth(request: SpawnRequest) -> void :
+	.spawn_group_entity_birth(request)
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host:
+		wave_sync.on_birth(request.type, request.position, request.charmed_by)
 
 
 func on_entity_birth_timeout(birth: EntityBirth) -> void :

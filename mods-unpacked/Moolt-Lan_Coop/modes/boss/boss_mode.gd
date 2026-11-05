@@ -20,7 +20,7 @@ const BOSS_TINT: = Color(1.0, 0.7, 0.7)
 const BOSS_WINS: = "boss_wins"
 const BOSS_KILLS: = "boss_kills"
 const BOSS_ICON = preload("res://ui/icons/misc/boss_icon.png")
-const BOSS_WINS_ICON = preload("res://items/all/hunting_trophy/hunting_trophy_icon.png")
+const BOSS_WINS_ICON = preload("res://items/all/00_base_game/hunting_trophy/hunting_trophy_icon.png")
 
 const STRINGS: = {
 	"en": {

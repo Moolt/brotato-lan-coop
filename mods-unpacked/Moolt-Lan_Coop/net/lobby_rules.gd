@@ -65,12 +65,25 @@ static func is_entry_complete(entry: Dictionary) -> bool:
 	return get_starting_choice(character, entry.get("weapon_id")) != null
 
 
-# Zones and difficulties the host can pick: every zone in ZoneService (as vanilla's zone
-# button lists them) and every difficulty, regardless of the host's save progress.
+# Zones and difficulties the host can pick: every zone in ZoneService whose DLC this machine
+# owns (as vanilla's zone button lists them; every peer owns the same DLCs) and every
+# difficulty, regardless of the host's save progress.
+static func get_zones() -> Array:
+	var zones: = []
+	for zone in ZoneService.zones:
+		if is_zone_available(zone):
+			zones.append(zone)
+	return zones
+
+
+static func is_zone_available(zone: ZoneData) -> bool:
+	return zone.dlc_id == "" or ProgressData.available_dlc_ids.has(zone.dlc_id)
+
+
 static func get_zone(zone_id) -> ZoneData:
 	if typeof(zone_id) != TYPE_INT:
 		return null
-	for zone in ZoneService.zones:
+	for zone in get_zones():
 		if zone.my_id == zone_id:
 			return zone
 	return null
