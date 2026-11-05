@@ -331,6 +331,10 @@ func _new_preview_panel(parent: Control, min_size: Vector2) -> Control:
 	var panel: Control = ITEM_PANEL_SCENE.instance()
 	var description: Node = panel.get_node("MarginContainer/VBoxContainer/ItemDescription")
 	description.expand_indefinitely = false
+	# Since 1.2.0.1 the panel's description takes every mouse wheel event on the screen while its
+	# text is long (allow_scroll_when_crowded), so the grids never scrolled. Off: the wheel scrolls
+	# whatever is under the mouse, the description too; the right stick still scrolls it.
+	description.allow_scroll_when_crowded = false
 	description.get_node("HBoxContainer/IconPanel").hide()
 	description.get_node("HBoxContainer/ScrollContainer").rect_min_size.y = PREVIEW_HEADER_HEIGHT
 	description.size_flags_vertical = SIZE_EXPAND_FILL

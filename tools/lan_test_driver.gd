@@ -2493,6 +2493,9 @@ func _solo_step() -> void :
 			get_tree().quit()
 
 
+var lobby_scroll_before = [0, 0]
+
+
 func _lobby_step() -> void :
 	var m = menus()
 	match step:
@@ -2537,10 +2540,25 @@ func _lobby_step() -> void :
 		6:
 			shot("lobby_weapon_hovered")
 			var lobby = m.get_node("LanLobby")
+			# The mouse wheel over the character grid must scroll the grid, not a description
+			# (since 1.2.0.1 vanilla's item panel took every wheel event).
+			var grid_center: Vector2 = lobby._character_scroll.get_global_rect().get_center()
+			get_viewport().warp_mouse(grid_center)
+			lobby_scroll_before = [lobby._character_scroll.scroll_vertical, lobby._item_panel.get_node("MarginContainer/VBoxContainer/ItemDescription").get_scroll_container().scroll_vertical]
+			for _i in 3:
+				for pressed in [true, false]:
+					var wheel = InputEventMouseButton.new()
+					wheel.button_index = BUTTON_WHEEL_DOWN
+					wheel.pressed = pressed
+					wheel.position = grid_center
+					wheel.global_position = grid_center
+					Input.parse_input_event(wheel)
 			lobby._hovered_weapon = null
 			lobby._update_previews()
 			next_t = t + 0.5
 		7:
+			var wheel_lobby = m.get_node("LanLobby")
+			print("[TEST] lobby_wheel character_grid=", lobby_scroll_before[0], "->", wheel_lobby._character_scroll.scroll_vertical, " weapon_description=", lobby_scroll_before[1], "->", wheel_lobby._item_panel.get_node("MarginContainer/VBoxContainer/ItemDescription").get_scroll_container().scroll_vertical)
 			shot("lobby_nothing_hovered")
 			# Keyboard: focus a character, then its first starting item; the preview keeps it.
 			Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
@@ -2582,6 +2600,16 @@ func _lobby_step() -> void :
 			next_t = t + 0.5
 		11:
 			var page = m.get_node("LanLobby")._settings_page
+			# The focus chain top to bottom: each row must sit below the previous one.
+			var chain = []
+			var control: Control = page._mode_option
+			for _i in 10:
+				chain.append("%s@%d" % [control.get_meta("setting") if control.has_meta("setting") else control.name, int(control.get_global_rect().position.y)])
+				var below = control.get_node_or_null(control.focus_neighbour_bottom)
+				if below == null or below == control:
+					break
+				control = below
+			print("[TEST] lobby_settings_focus_chain ", chain)
 			print("[TEST] lobby_settings_page visible=", page.visible, " focus=", get_viewport().gui_get_focus_owner().get_path(), " disabled=", page._zone_option.disabled, " zone_left=", page._zone_option.focus_neighbour_left, " back_down=", page._back_button.focus_neighbour_bottom)
 			shot("lobby_settings_page")
 			# A mode that fixes the loot settings, then co-op with the page open: the loot rows get

@@ -226,8 +226,9 @@ func _fill_options() -> void :
 		option.clear()
 
 
+# In the page's order, top to bottom (the focus chain follows it).
 func _get_options() -> Array:
-	return [_mode_option, _zone_option, _difficulty_option, _choice_time_option, _scaling_option, _share_materials_option, _share_crates_option]
+	return [_mode_option, _zone_option, _difficulty_option, _scaling_option, _choice_time_option, _share_materials_option, _share_crates_option]
 
 
 func _get_mode_index(mode_id: String) -> int:
