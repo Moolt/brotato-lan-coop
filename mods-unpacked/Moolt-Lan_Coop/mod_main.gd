@@ -67,6 +67,7 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/movement_behaviors/stay_edges_of_map_movement_behavior.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/generation_zone_manager.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("weapons/ranged/carbon_bow/carbon_bow.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("entities/units/enemies/crash_zone/basic/evil_mob/evil_mob.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/stats_manager.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/coop_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/debug_service.gd"))

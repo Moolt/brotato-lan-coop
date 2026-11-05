@@ -108,6 +108,8 @@ extends Node
 #   (host) SPAWN=path: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish)
 #   (host) SPAWN_EVOLVE=meca|mutant (Primal Dread zone): the SPAWN enemies come evolved (meca
 #         jungle enemies shoot lasers)
+#   (host) MOB_TEST=1: at t=15 materials at every evil mob (SPAWN=…/evil_mob/evil_mob.tscn), which
+#         eats them and evolves; log_gpe's evil_mobs (evolution, health bar) on both sides
 #   (host) SPAWN_NEAR=1: the SPAWN enemies 250 px around the host player (they notice it)
 #   (host) CHARM_BOOST=1: at t=13 players 0 and 1 get 200 max HP, so a Romantic charms on every
 #         hit that leaves an enemy below 25 % HP (vanilla's own charm path, both players' hits)
@@ -1365,6 +1367,13 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 		if projectile is Projectile and projectile._hitbox.active and projectile.lan_net_id != 0 and projectile.filename.find("carbon_bow") >= 0:
 			carbon_flying.append("%d:%s" % [projectile.lan_net_id, projectile._sprite.texture.resource_path.get_file().get_basename().replace("carbon_bow_projectile_", "")])
 	print("[TEST] ", tag, " gpe visuals warning_lines=", warning_lines, " jumps=", jumps, " extra_outlined=", extra_outlined, " trex=", trex, " carbon_next=", arrows, " carbon_flying=", carbon_flying, " pet_weapon_events=", wave_sync.event_counts.get(32, 0), " arrow_events=", wave_sync.event_counts.get(33, 0), " outline_events=", wave_sync.event_counts.get(31, 0), " look_events=", wave_sync.event_counts.get(34, 0))
+	# Evil mobs (SPAWN=…/evil_mob/evil_mob.tscn, MOB_TEST=1): evolution, health bar shown, gold eaten.
+	var mobs = []
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if is_instance_valid(e) and not e.dead and e is EvilMob:
+			mobs.append("%d:evo=%d bar=%s" % [net_id, e.evolution, e.life_bar.visible])
+	print("[TEST] ", tag, " gpe evil_mobs=", mobs, " golds=", main._active_golds.size())
 	print("[TEST] ", tag, " gpe brachiosaurus=", brachio, " feet=", feet, " lasers=", lasers, " following=", lasers_from)
 	# A hash of the zone decoration's places in 20 px steps (the same on every machine; trampled
 	# ferns change their texture, shaken ones move a few px).
@@ -1662,6 +1671,14 @@ func _host_step() -> void :
 				print("[TEST] charm_test charmed=", charmed)
 			if OS.get_environment("GPE_TEST") == "1":
 				gpe_test(get_tree().current_scene)
+			if OS.get_environment("MOB_TEST") == "1":
+				# Materials right at every evil mob, which eats them and evolves.
+				var mob_main = get_tree().current_scene
+				for enemy in mob_main._entity_spawner.enemies:
+					if enemy is EvilMob and not enemy.dead:
+						for _i in 10:
+							mob_main.spawn_gold(10, enemy.global_position, 20)
+				print("[TEST] mob_test golds=", mob_main._active_golds.size())
 			next_t = 16.0
 		8:
 			var main7 = get_tree().current_scene

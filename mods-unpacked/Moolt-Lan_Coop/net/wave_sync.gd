@@ -184,6 +184,8 @@ const EVENT_ENTITY_WEAPON: = 32
 const EVENT_CARBON_ARROW: = 33
 # [code, id, texture path, sprite scale]: a projectile's texture set at the shot (carbon bow).
 const EVENT_PROJECTILE_LOOK: = 34
+# [code, net id, evolution]: an evil mob ate enough materials and evolved.
+const EVENT_EVOLVE_MOB: = 35
 # A warning line's end point is sent again when it turned more than this (radians).
 const WARNING_LINE_RESEND_ANGLE: = 0.05
 # Puddle kinds (extensions/global/gpe_spawner.gd).
@@ -946,8 +948,9 @@ func on_item_picked_up(item: Node, player_index: int) -> void :
 	var _erased = _items.erase(net_id)
 	_erased = _item_targets.erase(net_id)
 	_erased = _item_scales.erase(net_id)
-	# The gold bag (player -1) collects everything at the end of the wave, on every machine.
-	if is_host and player_index >= 0:
+	# The gold bag (player -1) collects everything at the end of the wave, on every machine. Mid-
+	# wave, player -1 is an entity that ate the item (the evil mob eats materials).
+	if is_host and (player_index >= 0 or not _main._cleaning_up):
 		_events.append([EVENT_ITEM_PICKUP, net_id, player_index])
 
 
@@ -971,6 +974,11 @@ func on_carbon_bow_arrow(weapon: Node) -> void :
 	var weapon_index: int = player.current_weapons.find(weapon)
 	if weapon_index >= 0:
 		_events.append([EVENT_CARBON_ARROW, player.player_index, weapon_index, weapon._next_stat_hash])
+
+
+func on_evil_mob_evolved(mob: Node, evolution: int) -> void :
+	if mob.has_meta("lan_net_id") and _entities.get(mob.get_meta("lan_net_id")) == mob and not _main._cleaning_up:
+		_events.append([EVENT_EVOLVE_MOB, mob.get_meta("lan_net_id"), evolution])
 
 
 func on_crate_to_process(player_index: int, consumable_data: Resource) -> void :
@@ -1406,6 +1414,8 @@ func on_events(events: Array) -> void :
 			_client_carbon_arrow(event)
 		elif event[0] == EVENT_PROJECTILE_LOOK and event.size() == 4:
 			_client_projectile_look(event)
+		elif event[0] == EVENT_EVOLVE_MOB and event.size() == 3:
+			_client_evolve_mob(event)
 		elif event[0] == EVENT_ITEM_DESPAWN and event.size() == 2:
 			_client_item_despawn(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
@@ -2246,6 +2256,16 @@ func _client_item_pickup(event: Array) -> void :
 		return
 	item.already_picked_up = true
 	item.lan_net_id = 0
+	if event[2] < 0:
+		# Eaten by an entity (evil mob): it just goes, without a player's pickup effects.
+		if item is Gold:
+			_main._active_golds.erase(item)
+			_main.add_node_to_pool(item, _main._gold_pool_id)
+		else:
+			_main._consumables.erase(item)
+			_main.add_node_to_pool(item, _main._consumable_pool_id)
+		item.reset()
+		return
 	# What main.on_gold_picked_up / on_consumable_picked_up and Item.pickup show.
 	if item is Gold:
 		_main._active_golds.erase(item)
@@ -2262,6 +2282,21 @@ func _client_item_pickup(event: Array) -> void :
 			SoundManager.play(Utils.get_rand_element(item.consumable_data.pickup_sounds))
 		_main.add_node_to_pool(item, _main._consumable_pool_id)
 	item.reset()
+
+
+func _client_evolve_mob(event: Array) -> void :
+	# [EVENT_EVOLVE_MOB, net id, evolution]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT:
+		return
+	var mob = _entities.get(event[1])
+	if mob == null or not is_instance_valid(mob) or mob.dead or not mob is EvilMob:
+		return
+	if event[2] > mob.evolution and event[2] < mob.quantity_to_evolve.size() and event[2] < mob.textures_evolution.size():
+		mob.evolve(event[2])
+		# Its HP is the host's ratio (_apply_entity_health); evolve multiplied the copy's.
+		mob.max_stats.health = int(HP_SCALE)
+		mob.current_stats.health = int(min(mob.current_stats.health, HP_SCALE))
+		mob.emit_signal("health_updated", mob, mob.current_stats.health, mob.max_stats.health)
 
 
 func _client_item_despawn(event: Array) -> void :

@@ -148,7 +148,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | 8 | explosion | scene path, pos, scale, smoke amount, sound db |
 | 9 | item drop | id, kind (0 gold, 1 consumable), gold texture path, consumable id (resolved with `LanGame.get_consumable`: `ItemService.consumables` holds only fruit and crates, the DLCs keep poisoned fruit, meca parts and the mutation, meca and mutant fruit in their `DLCData`), pos, rotation, push-back target, scale, boosted |
 | 10 | item attract | id, target kind (1 player, 0 entity, -1 none), target id |
-| 11 | item pickup | id, player_index (players only; the gold bag stays local) |
+| 11 | item pickup | id, player_index; -1 mid-wave: an entity ate it (the evil mob eats materials), clients pool their copy without pickup effects. The end-of-wave gold bag (also -1, while `_cleaning_up`) stays local |
 | 12 | crate to process | player_index, consumable id; also for mutation fruit and meca parts (Primal Dread), which apply at once and stay in the picker's things-to-process icons until the wave ends (clients add them to `main._displayed_consumables_picked_up` for vanilla's clearing) |
 | 13 | item scale | id, scale |
 | 14 | birth moved | birth id, pos |
@@ -171,6 +171,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | 32 | entity weapon | net id, rotation, distance, attack type: an attack of the weapon a synced entity holds (`_weapon`: Primal Dread's ammosaurus), shown like a player's |
 | 33 | carbon arrow | player_index, weapon index, stat hash: the carbon bow's next arrow (`carbon_bow.gd` extension) |
 | 34 | projectile look | id, texture path, sprite scale: a carbon bow arrow's texture |
+| 35 | evolve mob | net id, evolution: the evil mob (crash zone, jungle) ate enough materials (`evil_mob.gd` extension); the copy evolves too (texture, health bar), HP stays the host's ratio |
 | 28 | projectile from | id, shooter net id, target kind, target id: enemy lasers (`EnemyLaser` stays with its shooter, `EnemyLaserFollow` turns towards the target). Client projectile copies start with `_hitbox.from = null` (pooled ones kept the last shooter) |
 
 `LanWaveSync.event_counts` counts sent (host) / received (client) events per code.
@@ -206,6 +207,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `entities/gpe/dig_site/dig_site.gd` | clients don't dig; `lan_apply_host_state` shows the host's digging and completes without the crate |
 | `entities/units/enemies/jungle/bosses/brachiosaurus/brachiosaurus.gd` | state timer only on the host, which reports each state; `lan_apply_host_state` on clients (pivots). Uses the enemy extension's `LanGame` (a second const fails to parse) |
 | `entities/units/movement_behaviors/stay_edges_of_map_movement_behavior.gd` | no edge tweens on clients |
+| `entities/units/enemies/crash_zone/basic/evil_mob/evil_mob.gd` | host reports each evolution. Uses the enemy extension's `LanGame` |
 | `weapons/ranged/carbon_bow/carbon_bow.gd` | host reports the next arrow. Uses the weapon extension's `LanGame` |
 | `global/gpe_spawner.gd` | Primal Dread ground effects: the hole layout from the shared wave seed; puddles only on the host, each reported to `LanWaveSync` (clients get null); single holes host-only and sent (`lan_from_host` while a client spawns the host's) |
 | `global/entity_spawner.gd` | 12-slot arrays, spawn circle (then the mode's `get_player_spawn_position`), enemy cap (the mode's `get_enemy_cap_factor`), reports spawns and markers (host; also `mode.on_entity_spawned`; group markers, one for several enemies, show as a plain marker on clients), `mode.on_group_queued` after each wave group (host; the queues hold `SpawnRequest`s since 1.2.0.1), markers only show (client) |

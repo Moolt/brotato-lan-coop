@@ -18,6 +18,7 @@ What each release changed, for players. The newest release is at the top. Each r
 - Script errors on the end screen.
 - Enemies that leave the map without dying (e.g. at its edge) now disappear for every player.
 - Poisoned fruit (Abyssal Terrors) now shows up for every player, not only for the host.
+- The evil mob now evolves (look, health bar) for every player, and the materials it eats disappear for everyone.
 
 ## [1.12.3] - 2026-10-29
 
