@@ -4,14 +4,19 @@ What each release changed, for players. The newest release is at the top. Each r
 
 ## [Unreleased]
 
+### Added
+- Survivor picks two starting weapons in the lobby, as in the base game.
+
 ### Changed
 - Works with Brotato **1.2.0.1** and no longer with 1.1.15.4 (the last release for 1.1.15.4 is 1.12.3). Everyone in a session needs 1.2.0.1.
 - The lobby offers only the zones whose DLC you own.
+- The host's item sets (main menu) apply to everyone in the session. Characters and starting weapons from a set the host switched off don't show in the lobby.
 
 ### Fixed
 - Joining failed on 1.2.0.1, and several parts of the mod didn't load.
 - Script errors on the end screen.
 - Enemies that leave the map without dying (e.g. at its edge) now disappear for every player.
+- Poisoned fruit (Abyssal Terrors) now shows up for every player, not only for the host.
 
 ### Known issues
 - Primal Dread content (the jungle zone, its enemies and items) isn't synced between players yet.

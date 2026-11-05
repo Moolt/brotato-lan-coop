@@ -92,6 +92,9 @@ Reads the role from `OS.get_cmdline_args()`. In `_process` it waits for the titl
 | `PET_TEST=1` | host: at t=16 a Blazemander for player 0 and a Bonk Dog for player 1; 5 s into the next wave both sides log every pet (owner, position, net id) |
 | `ZONE=n` | host: the run's zone (`lobby_settings.zone`, 1 = the DLC's Abyss), not remembered |
 | `CHAR=id` | host and join: pick that character (e.g. `character_diver`) instead of the nth |
+| `ITEM_SETS_OFF=id,...` | host: switches those item sets off before hosting (in memory, e.g. `primal_dread`). Both log `lobby_item_sets` (the sets in use, the characters left out of the grid and the picked character's left-out weapons, the weapon label) after their pick; `CHAR=character_survivor` picks two weapons (`picked` line) |
+| `TRY_CHAR=id` | join (with `EXPECT=2` on the host, it takes a second): asks the host for that character before the pick and logs what it got (`try_char`; a character from a set that is off: `got=''`) |
+| `MECA_TEST=1` | host and join, Primal Dread on: at t=16 meca parts at the host's player and a mutation fruit at the client's; 1.5 s later both log each player's things-to-process consumables (`meca_test`: player 0 `meca_parts_consumable`, player 1 `mutation_consumable_fruit`, on both sides) and the meca parts count |
 | `CURSE_TEST=1` | host and join (DLC): every item in the first shop is cursed before the buy and the lock; `log_run_check` logs each player's cursed gear and a hash of all its gear's effects (must match on both sides) |
 | `SPAWN_NEAR=1` | host: the `SPAWN` enemies 250 px around the host player |
 | `CHARM_BOOST=1` | host: at t=13 players 0 and 1 get 200 max HP: a Romantic then charms on every hit that leaves an enemy below 25 % HP (vanilla's charm path, from both players' hits) |

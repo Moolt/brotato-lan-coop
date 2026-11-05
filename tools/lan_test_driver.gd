@@ -246,6 +246,13 @@ func client_settings_check(lobby) -> void :
 
 
 func pick_and_ready(lobby, nth: = 0) -> void :
+	var net0 = get_node("/root/LanNet")
+	# TRY_CHAR=id: asks the host for that character directly (an item set that is off: refused).
+	# Takes a second: the host needs EXPECT=2 to wait for it.
+	if OS.get_environment("TRY_CHAR") != "":
+		net0.set_local_player_info({"character_id": OS.get_environment("TRY_CHAR")})
+		yield(get_tree().create_timer(1.0), "timeout")
+		print("[TEST] try_char ", OS.get_environment("TRY_CHAR"), " got='", net0.get_local_player().character_id, "'")
 	var character = first_element(lobby._character_grid, nth)
 	if OS.get_environment("CHAR") != "":
 		for e in lobby._character_grid.get_children():
@@ -260,13 +267,38 @@ func pick_and_ready(lobby, nth: = 0) -> void :
 			break
 	yield(get_tree().create_timer(0.2), "timeout")
 	# Characters with a fixed weapon have no weapon to pick.
-	var weapon = first_element(lobby._weapon_grid)
-	if weapon != null:
+	# Characters with several picks (Survivor, CHAR=character_survivor) take the first ones in a row.
+	var LobbyRules = load("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
+	var pick_count = LobbyRules.get_pick_count(LobbyRules.get_character(net.get_local_player().character_id))
+	for pick in pick_count:
+		var weapon = first_element(lobby._weapon_grid, pick)
+		if weapon == null:
+			break
 		lobby._on_WeaponGrid_element_pressed(weapon)
 		for _i in 25:
 			yield(get_tree().create_timer(0.2), "timeout")
-			if net.get_local_player().weapon_id == weapon.item.my_id:
+			if net.get_local_player().weapon_ids.size() > pick:
 				break
+	print("[TEST] picked ", net.get_local_player().character_id, " ", net.get_local_player().weapon_ids)
+	# The host's item sets (a client has them from its welcome) and the characters they leave out
+	# of the grid; weapons of the picked character the grid leaves out.
+	var shown = []
+	for e in lobby._character_grid.get_children():
+		if not e.is_random and e.item != null:
+			shown.append(e.item.my_id)
+	var hidden = []
+	for c in ItemService.characters:
+		if not shown.has(c.my_id):
+			hidden.append(c.my_id)
+	var hidden_weapons = []
+	var shown_weapons = []
+	for e in lobby._weapon_grid.get_children():
+		if not e.is_random and e.item != null:
+			shown_weapons.append(e.item.my_id)
+	for w in LobbyRules.get_all_starting_choices(LobbyRules.get_character(net.get_local_player().character_id)):
+		if not shown_weapons.has(w.my_id):
+			hidden_weapons.append(w.my_id)
+	print("[TEST] lobby_item_sets ", ProgressData.active_update_data, " hidden_characters=", hidden, " hidden_weapons=", hidden_weapons, " weapon_label='", lobby._weapon_label.text, "'")
 	lobby._on_ReadyButton_pressed()
 
 
@@ -953,7 +985,7 @@ func log_perf(tag: String) -> void :
 func add_fake_players(net, count: int) -> void :
 	var LobbyRules = load("res://mods-unpacked/Moolt-Lan_Coop/net/lobby_rules.gd")
 	var NetProtocol = load("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
-	var characters = LobbyRules.get_unlocked_characters()
+	var characters = LobbyRules.get_available_characters()
 	for i in count:
 		var index = net.players.size()
 		# FAKE_NAMES=a,b,...: their names (screenshots), else Fake<index>.
@@ -967,8 +999,9 @@ func add_fake_players(net, count: int) -> void :
 					character = c
 		entry.character_id = character.my_id
 		var choices = LobbyRules.get_starting_choices(character)
-		if not choices.empty():
-			entry.weapon_id = choices[0].my_id
+		for pick in LobbyRules.get_pick_count(character):
+			if pick < choices.size():
+				entry.weapon_ids.append(choices[pick].my_id)
 		entry.ready = true
 		net.players.append(entry)
 	net._broadcast_lobby_state()
@@ -1279,6 +1312,10 @@ func _host_step() -> void :
 				# without saving).
 				ProgressData.saved_run_state = {"has_run_state": true, "current_wave": 7}
 			log_saved_run("host_before_session")
+			# ITEM_SETS_OFF=id,...: item sets the host switches off (in memory, not saved).
+			for item_set_id in OS.get_environment("ITEM_SETS_OFF").split(",", false):
+				ProgressData.remove_item_set(item_set_id)
+			print("[TEST] host_item_sets ", ProgressData.active_update_data)
 			m._main_menu.left_container.get_node("LanMultiplayerButton").emit_signal("pressed")
 			var host_name = OS.get_environment("HOST_NAME") if OS.get_environment("HOST_NAME") != "" else "HostPlayer"
 			m.get_node("LanMultiplayerMenu")._name_edit.text = host_name
@@ -1435,6 +1472,7 @@ func _host_step() -> void :
 				gone.free()
 			contact_test(get_tree().current_scene)
 			progress_test(get_tree().current_scene)
+			meca_test(get_tree().current_scene)
 			if OS.get_environment("FULL_SLOTS") != "":
 				# Every weapon slot of players 0 and 1 holds a knife (the shop then buys one more).
 				var knife = ItemService.get_element_safe(ItemService.weapons, "weapon_knife_1")
@@ -1531,6 +1569,35 @@ func _host_step() -> void :
 # its angle against the wave time 2 s later.
 var progress_reward_chal = null
 var progress_client_chal = null
+
+
+# MECA_TEST=1 (host and join, Primal Dread on): at t=16 the host drops meca parts at its player
+# (evolution > 0) and a mutation fruit at the client's (evolution < 0); both log each player's
+# things-to-process consumables 1.5 s later. Player 0 must show meca parts, player 1 the fruit, on
+# both sides; the host logs the meca parts count.
+func meca_test(main) -> void :
+	if OS.get_environment("MECA_TEST") != "1" or main == null or main.filename != MenuData.game_scene:
+		return
+	if role == "host":
+		var dlc_data = ItemService.get_dlc_data_by_id("primal_dread")
+		if dlc_data != null and main._players.size() > 1:
+			RunData.get_player_effects(0)[Keys.stat_evolution_hash] = 1
+			RunData.get_player_effects(1)[Keys.stat_evolution_hash] = -1
+			main.spawn_consumable(dlc_data.meca_parts_consumable.duplicate(), main._players[0].global_position, main._players[0].global_position)
+			main.spawn_consumable(dlc_data.mutation_fruit.duplicate(), main._players[1].global_position, main._players[1].global_position)
+	yield(get_tree().create_timer(1.5), "timeout")
+	if not is_instance_valid(main) or main != get_tree().current_scene:
+		return
+	var shown = []
+	for i in RunData.get_player_count():
+		var ids = []
+		for data in main._things_to_process_player_containers[i].consumables._elements:
+			ids.append(data.my_id)
+		shown.append(ids)
+	var meca_parts = []
+	for player_data in RunData.players_data:
+		meca_parts.append(player_data.meca_parts)
+	print("[TEST] meca_test ", role, " things=", shown, " displayed=", main._displayed_consumables_picked_up.slice(0, 1), " meca_parts=", meca_parts)
 
 
 func progress_test(main) -> void :
@@ -2040,6 +2107,7 @@ func _client_step() -> void :
 			start_pos = main._players[local_index].global_position
 			Input.action_press("button_move_down_0")
 			progress_test(main)
+			meca_test(main)
 			print("[TEST] client_pause open=", main._pause_menu.visible, " tree_paused=", get_tree().paused, " net_flag=", get_node("/root/LanNet").pause_menu_open, " time_left=", stepify(main._wave_timer.time_left, 0.1))
 			next_t = 17.0
 		7:
@@ -2134,7 +2202,7 @@ func _solo_step() -> void :
 			var NetProtocol = load("res://mods-unpacked/Moolt-Lan_Coop/net/net_protocol.gd")
 			var entry = NetProtocol.new_player_entry(1, 0, "Solo")
 			entry.character_id = "character_well_rounded"
-			entry.weapon_id = "weapon_knife_1"
+			entry.weapon_ids = ["weapon_knife_1"]
 			# Invulnerable, so the wave ends cleared ($SOLO_MORTAL=1 lets it die).
 			DebugService.invulnerable = OS.get_environment("SOLO_MORTAL") != "1"
 			DebugService.custom_wave_duration = 20

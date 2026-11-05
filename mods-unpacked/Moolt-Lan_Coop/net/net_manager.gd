@@ -196,6 +196,7 @@ func host(port: int = - 1) -> int:
 	players = [NetProtocol.new_player_entry(HOST_PEER_ID, 0, config.player_name)]
 	lobby_settings = NetProtocol.default_lobby_settings()
 	lobby_settings.scaling = config.scaling.duplicate()
+	lobby_settings.item_sets = ProgressData.active_update_data.duplicate()
 	_apply_lobby_settings({"zone": config.last_zone, "difficulty": config.last_difficulty, "choice_time": config.last_choice_time, "scaling_preset": config.last_scaling_preset, "mode": config.last_mode, "share_materials": config.last_share_materials, "share_crates": config.last_share_crates})
 	_apply_multiplayer_unlocks()
 	progress.start()
@@ -663,7 +664,7 @@ remote func _rpc_hello(hello) -> void :
 	players.append(entry)
 	_rejoin_tokens[sender] = _new_rejoin_token()
 	ModLoaderLog.info("%s joined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
-	rpc_id(sender, "_rpc_welcome", entry.player_index, _rejoin_tokens[sender])
+	rpc_id(sender, "_rpc_welcome", entry.player_index, _rejoin_tokens[sender], lobby_settings.item_sets)
 	_broadcast_lobby_state()
 
 
@@ -684,7 +685,7 @@ func _rejoin(entry: Dictionary, peer_id: int) -> void :
 		if wave_sync != null:
 			wave_sync.on_player_left(entry.player_index, old_peer_id)
 	ModLoaderLog.info("%s rejoined as player %d" % [entry.name, entry.player_index], NetProtocol.MOD_ID)
-	rpc_id(peer_id, "_rpc_welcome", entry.player_index, token)
+	rpc_id(peer_id, "_rpc_welcome", entry.player_index, token, lobby_settings.item_sets)
 	_broadcast_lobby_state(true)
 	rpc_id(peer_id, "_rpc_mode_state", mode.serial, mode.id, mode.state)
 	# The next wave's run is waiting for acks.
@@ -723,7 +724,9 @@ remote func _rpc_update_player(changes) -> void :
 
 # RPCs: host -> client
 
-remote func _rpc_welcome(player_index, rejoin_token) -> void :
+# item_sets: the host's (lobby_settings.item_sets), so the lobby opens with the session's
+# characters; the lobby state that follows carries them too.
+remote func _rpc_welcome(player_index, rejoin_token, item_sets) -> void :
 	if not is_client or get_tree().get_rpc_sender_id() != HOST_PEER_ID or typeof(rejoin_token) != TYPE_INT:
 		return
 	joined = true
@@ -732,6 +735,7 @@ remote func _rpc_welcome(player_index, rejoin_token) -> void :
 	config.rejoin_token = rejoin_token
 	config.save_config()
 	_apply_multiplayer_unlocks()
+	_apply_host_item_sets(item_sets)
 	progress.start()
 	ModLoaderLog.info("Joined lobby as player %d" % local_player_index, NetProtocol.MOD_ID)
 	emit_signal("joined_lobby")
@@ -868,6 +872,7 @@ remote func _rpc_lobby_state(new_players, new_settings) -> void :
 		return
 	players = new_players
 	lobby_settings = new_settings
+	_apply_host_item_sets(lobby_settings.get("item_sets"))
 	var me = _get_player_by_peer(get_tree().get_network_unique_id())
 	if me != null:
 		local_player_index = me.player_index
@@ -1039,17 +1044,19 @@ func _apply_player_changes(entry: Dictionary, changes: Dictionary) -> bool:
 		elif key == "team":
 			if typeof(value) != TYPE_INT or value < 0 or value >= NetProtocol.TEAM_COUNT:
 				continue
+		elif key == "weapon_ids":
+			if not LobbyRules.are_valid_picks(LobbyRules.get_character(entry.character_id), value):
+				continue
+			value = value.duplicate()
 		elif typeof(value) != TYPE_STRING:
 			continue
-		elif key == "character_id" and not value.empty() and not LobbyRules.is_character_unlocked(LobbyRules.get_character(value)):
-			continue
-		elif key == "weapon_id" and not value.empty() and LobbyRules.get_starting_choice(LobbyRules.get_character(entry.character_id), value) == null:
+		elif key == "character_id" and not value.empty() and not LobbyRules.is_character_available(LobbyRules.get_character(value)):
 			continue
 
 		if entry.get(key) == value:
 			continue
 		if key == "character_id":
-			entry.weapon_id = ""
+			entry.weapon_ids = []
 		if key != "ready" and key != "team":
 			entry.ready = false
 		entry[key] = value
@@ -1299,6 +1306,18 @@ func _apply_multiplayer_unlocks() -> void :
 		ProgressData.set(key, unlocks[key])
 
 
+# Client: the host's item sets apply to the session (lobby, run builder and every run). Vanilla's
+# "Continue" applies a run's sets the same way; the own selection (deactivated_update_data) stays
+# untouched and comes back on leave (_end_session).
+func _apply_host_item_sets(host_item_sets) -> void :
+	var item_sets: = NetProtocol.get_valid_item_sets(host_item_sets)
+	if item_sets == ProgressData.active_update_data:
+		return
+	ProgressData.apply_run_update_data(item_sets)
+	ItemService.init_unlocked_pool()
+	ModLoaderLog.info("Using the host's item sets: %s" % str(item_sets), NetProtocol.MOD_ID)
+
+
 func _restore_own_unlocks() -> void :
 	for key in _own_unlocks:
 		ProgressData.set(key, _own_unlocks[key])
@@ -1383,6 +1402,8 @@ func _end_session(reason: String) -> void :
 		# A synced run replaced RunData; don't leave it behind for the menus.
 		RunData.reset()
 		_run_data_replaced = false
+	ProgressData.refresh_active_update_data()
+	ItemService.init_unlocked_pool()
 	run_state = ""
 	_run_digest = ""
 	_rejoin_tokens = {}

@@ -1395,7 +1395,7 @@ func _client_item_drop(event: Array) -> void :
 		if not event[3].empty() and ResourceLoader.exists(event[3]):
 			texture = load(event[3])
 	else:
-		consumable_data = ItemService.get_element_safe(ItemService.consumables, event[4])
+		consumable_data = LanGame.get_consumable(event[4])
 		if consumable_data == null:
 			return
 		texture = consumable_data.icon
@@ -1474,9 +1474,12 @@ func _client_crate_to_process(event: Array) -> void :
 		return
 	if event[1] < 0 or event[1] >= _main._players.size():
 		return
-	var consumable_data = ItemService.get_element_safe(ItemService.consumables, event[2])
+	var consumable_data = LanGame.get_consumable(event[2])
 	if consumable_data != null:
 		_main._things_to_process_player_containers[event[1]].consumables.add_element(consumable_data)
+		# Mutation fruit and meca parts: shown until the wave ends (main._clear_displayed_consumables_ui).
+		if _main._lan_is_evolution_consumable(consumable_data):
+			_main._displayed_consumables_picked_up[event[1]].push_back(consumable_data)
 
 
 func _load_scene(path: String):

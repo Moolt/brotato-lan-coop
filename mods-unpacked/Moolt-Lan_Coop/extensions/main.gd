@@ -508,7 +508,8 @@ func spawn_consumables(unit: Unit) -> void :
 
 # Host: a crate that waits for the end of the wave goes to a player chosen here (any player with
 # the share_coop_loot option, unless the mode says otherwise); clients show it in that player's
-# things-to-process icons.
+# things-to-process icons. Mutation fruit and meca parts (Primal Dread) apply at once, and vanilla
+# shows them there until the wave ends; clients get them the same way.
 func on_consumable_picked_up(consumable: Node, player_index: int) -> void :
 	var sizes: = []
 	for queue in _consumables_to_process:
@@ -525,6 +526,12 @@ func on_consumable_picked_up(consumable: Node, player_index: int) -> void :
 	for i in int(min(sizes.size(), RunData.get_player_count())):
 		if _consumables_to_process[i].size() > sizes[i]:
 			wave_sync.on_crate_to_process(i, consumable.consumable_data)
+	if player_index >= 0 and _lan_is_evolution_consumable(consumable.consumable_data):
+		wave_sync.on_crate_to_process(player_index, consumable.consumable_data)
+
+
+static func _lan_is_evolution_consumable(consumable_data: Resource) -> bool:
+	return consumable_data != null and (consumable_data.my_id_hash == Keys.consumable_mutation_fruit_hash or consumable_data.my_id_hash == Keys.consumable_meca_parts_hash)
 
 
 func on_structure_wanted_to_spawn_fruit(pos: Vector2) -> void :

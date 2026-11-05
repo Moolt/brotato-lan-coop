@@ -24,11 +24,12 @@ static func build_run(players: Array, settings: Dictionary) -> void :
 	# weapon_selection._on_selections_completed
 	for player_index in players.size():
 		var entry: Dictionary = players[player_index]
-		var choice = LobbyRules.get_starting_choice(LobbyRules.get_character(entry.character_id), entry.weapon_id)
-		if choice is WeaponData:
-			var _weapon = RunData.add_weapon(choice, player_index, true)
-		elif choice is ItemData:
-			RunData.add_item(choice, player_index, true)
+		# The first weapon becomes selected_weapon, the others extra_selected_weapons (add_weapon).
+		for choice in LobbyRules.get_starting_picks(LobbyRules.get_character(entry.character_id), entry.weapon_ids):
+			if choice is WeaponData:
+				var _weapon = RunData.add_weapon(choice, player_index, true)
+			elif choice is ItemData:
+				RunData.add_item(choice, player_index, true)
 	RunData.add_starting_items_and_weapons()
 
 	# difficulty_selection._on_element_pressed (without the save and stats calls).
@@ -229,6 +230,7 @@ static func summarize() -> Dictionary:
 			"weapons": weapons,
 			"items": items,
 			"gold": player_data.gold,
+			"meca_parts": player_data.meca_parts,
 			"max_hp": RunData.get_player_max_health(player_index),
 			"level": player_data.current_level,
 			"xp": player_data.current_xp,

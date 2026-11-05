@@ -94,6 +94,8 @@ var _mouse_visible: = false
 
 # Character whose starting choices the weapon grid currently shows.
 var _weapon_grid_character_id: = ""
+# Item sets the character grid was filled with.
+var _grid_item_sets: = []
 # Where to move focus after the host confirmed the next pick: "", "weapons" or "ready".
 var _focus_on_update: = ""
 # ui_cancel closes an open dropdown on press; only a press with no dropdown open may close the
@@ -352,10 +354,17 @@ func _new_inventory(columns: int) -> GridContainer:
 # Grids
 
 func _fill_character_grid() -> void :
+	_grid_item_sets = ProgressData.active_update_data.duplicate()
+	_hovered_character = null
+	_focused_character = null
 	var elements: = []
 	for character in ItemService.characters:
+		# Characters from an item set that is off are left out (LobbyRules.is_character_available).
+		var unlocked: = LobbyRules.is_character_unlocked(character)
+		if unlocked and not LobbyRules.is_character_available(character):
+			continue
 		var element = character.duplicate()
-		element.is_locked = not LobbyRules.is_character_unlocked(character)
+		element.is_locked = not unlocked
 		elements.append(element)
 	_character_grid.clear_elements()
 	_character_grid.add_special_element(RANDOM_ICON, true)
@@ -391,9 +400,20 @@ func _refresh() -> void :
 	var me = _net.get_local_player()
 	if me == null:
 		return
+	# The item sets changed after the lobby opened (a client normally has the host's from its
+	# welcome, before the lobby opens).
+	if _grid_item_sets != ProgressData.active_update_data:
+		var focus_owner: = get_focus_owner()
+		var had_focus: = focus_owner != null and _character_grid.is_a_parent_of(focus_owner)
+		_fill_character_grid()
+		_weapon_grid_character_id = "-"
+		if had_focus:
+			_character_grid.focus_element_index(0)
 	if me.character_id != _weapon_grid_character_id:
 		_weapon_grid_character_id = me.character_id
 		_fill_weapon_grid(LobbyRules.get_character(me.character_id))
+	var pick_count: = LobbyRules.get_pick_count(LobbyRules.get_character(me.character_id))
+	_weapon_label.text = tr("LAN_CHOOSE_WEAPONS") % [me.weapon_ids.size(), pick_count] if pick_count > 1 else "LAN_CHOOSE_WEAPON"
 
 	_update_selection(me)
 	_update_previews()
@@ -457,8 +477,15 @@ func _refresh_settings() -> void :
 # nearest one.
 func _update_selection(me: Dictionary) -> void :
 	var color: = UiKit.get_player_color(me.player_index)
-	var character_element: = _mark_selected(_character_grid, me.character_id, color)
-	var _weapon_element: = _mark_selected(_weapon_grid, me.weapon_id, color)
+	var character_element: = _mark_selected(_character_grid, [me.character_id], color)
+	var _weapon_element: = _mark_selected(_weapon_grid, me.weapon_ids, color)
+	# Characters with several picks (Survivor): how often each one is picked, as vanilla shows it.
+	var counts: = LobbyRules.get_pick_count(LobbyRules.get_character(me.character_id)) > 1
+	for element in _weapon_grid.get_children():
+		if element is InventoryElement and not element.is_special:
+			var count: int = me.weapon_ids.count(element.item.my_id)
+			element._number_label.text = "x%d" % count if counts and count > 0 else ""
+			element._number_label.visible = counts and count > 0
 
 	_weapon_grid.set_neighbour_left = character_element != null
 	_weapon_grid.focus_neighbour_left = _weapon_grid.get_path_to(character_element) if character_element != null else NodePath("")
@@ -469,12 +496,12 @@ func _update_selection(me: Dictionary) -> void :
 	_ready_button.focus_neighbour_top = ready_up
 
 
-# Adds a border in the player's colour to the element whose item has item_id, removes it
-# from the others. Returns the marked element or null.
-func _mark_selected(grid: Control, item_id: String, color: Color) -> Control:
+# Adds a border in the player's colour to the elements whose item id is in item_ids, removes it
+# from the others. Returns the first marked element or null.
+func _mark_selected(grid: Control, item_ids: Array, color: Color) -> Control:
 	var marked: Control = null
 	for element in grid.get_children():
-		var is_selected: bool = not item_id.empty() and not element.is_special and element.item != null and element.item.my_id == item_id
+		var is_selected: bool = not element.is_special and element.item != null and item_ids.has(element.item.my_id)
 		var marker = element.get_node_or_null(SELECTED_MARKER_NAME)
 		if is_selected and marker == null:
 			# The fill behind the icon, the border over everything (the element's frame too).
@@ -488,7 +515,7 @@ func _mark_selected(grid: Control, item_id: String, color: Color) -> Control:
 				if node != null:
 					element.remove_child(node)
 					node.queue_free()
-		if is_selected:
+		if is_selected and marked == null:
 			marked = element
 	return marked
 
@@ -519,7 +546,8 @@ func _update_previews() -> void :
 	_mouse_visible = Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE
 	var me = _net.get_local_player() if _net != null else null
 	var character = LobbyRules.get_character(me.character_id) if me != null else null
-	var weapon = LobbyRules.get_starting_choice(character, me.weapon_id) if me != null else null
+	var picks: = LobbyRules.get_starting_picks(character, me.weapon_ids) if me != null else []
+	var weapon = picks.back() if not picks.empty() else null
 	_show_preview(_character_panel, _get_preview_element(_hovered_character, _focused_character), character)
 	_show_preview(_item_panel, _get_preview_element(_hovered_weapon, _focused_weapon), weapon)
 
@@ -693,8 +721,11 @@ func _new_player_row(entry: Dictionary) -> Control:
 	name_label.size_flags_vertical = SIZE_FILL
 	row.add_child(name_label)
 
-	var choice = LobbyRules.get_starting_choice(character, entry.weapon_id)
-	row.add_child(_new_row_icon(choice.get_icon() if choice != null else null))
+	var picks: = LobbyRules.get_starting_picks(character, entry.weapon_ids)
+	if picks.empty():
+		row.add_child(_new_row_icon(null))
+	for choice in picks:
+		row.add_child(_new_row_icon(choice.get_icon()))
 
 	var status: = Label.new()
 	status.rect_min_size = Vector2(150, 0)
@@ -764,7 +795,7 @@ func _on_StartingItems_element_unfocused(_element) -> void :
 func _on_CharacterGrid_element_pressed(element) -> void :
 	var character_id: = ""
 	if element.is_random:
-		var unlocked: = LobbyRules.get_unlocked_characters()
+		var unlocked: = LobbyRules.get_available_characters()
 		if unlocked.empty():
 			return
 		character_id = Utils.get_rand_element(unlocked).my_id
@@ -797,9 +828,10 @@ func _on_WeaponGrid_element_pressed(element) -> void :
 	var me = _net.get_local_player()
 	if me == null:
 		return
+	var character: = LobbyRules.get_character(me.character_id)
 	var choice_id: = ""
 	if element.is_random:
-		var choices: = LobbyRules.get_starting_choices(LobbyRules.get_character(me.character_id))
+		var choices: = LobbyRules.get_starting_choices(character)
 		if choices.empty():
 			return
 		choice_id = Utils.get_rand_element(choices).my_id
@@ -808,8 +840,13 @@ func _on_WeaponGrid_element_pressed(element) -> void :
 	else:
 		choice_id = element.item.my_id
 
-	_focus_on_update = "ready"
-	_net.set_local_player_info({"weapon_id": choice_id})
+	# Each press adds a pick until the character has all of them (vanilla weapon_selection); a
+	# press after that starts over.
+	var pick_count: = LobbyRules.get_pick_count(character)
+	var picks: Array = me.weapon_ids.duplicate() if me.weapon_ids.size() < pick_count else []
+	picks.append(choice_id)
+	_focus_on_update = "ready" if picks.size() >= pick_count else ""
+	_net.set_local_player_info({"weapon_ids": picks})
 
 
 func _on_SettingsButton_pressed() -> void :

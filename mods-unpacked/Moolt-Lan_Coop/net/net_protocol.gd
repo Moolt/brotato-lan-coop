@@ -4,7 +4,7 @@ extends Reference
 # Bump PROTOCOL_VERSION whenever an RPC signature or message layout changes.
 
 const MOD_ID: = "Moolt-Lan_Coop"
-const PROTOCOL_VERSION: = 24
+const PROTOCOL_VERSION: = 25
 
 const DEFAULT_PORT: = 24567
 const DISCOVERY_PORT: = DEFAULT_PORT + 1
@@ -72,7 +72,7 @@ const CHOICE_TIMES: = [0, 45, 60, 90, 120]
 const CHOICE_GRACE: = 10.0
 
 # Keys a client may change on its own lobby entry.
-const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_id", "ready", "team"]
+const PLAYER_EDITABLE_KEYS: = ["character_id", "weapon_ids", "ready", "team"]
 # Teams of the modes that have them (lobby entry "team").
 const TEAM_COUNT: = 2
 
@@ -168,7 +168,9 @@ static func new_player_entry(peer_id: int, player_index: int, player_name: Strin
 		"player_index": player_index, 
 		"name": player_name, 
 		"character_id": "", 
-		"weapon_id": "", 
+		# Starting weapon (or item) ids in pick order; several for characters with extra choices
+		# (LobbyRules.get_pick_count).
+		"weapon_ids": [], 
 		"ready": false, 
 		"connected": true, 
 		"team": player_index % TEAM_COUNT, 
@@ -191,7 +193,22 @@ static func default_lobby_settings() -> Dictionary:
 		# with the picker. Crates: any player may take a crate (vanilla's share_coop_loot).
 		"share_materials": true, 
 		"share_crates": true, 
+		# The host's active item sets (ProgressData.active_update_data); they apply to the whole
+		# session, see get_valid_item_sets.
+		"item_sets": [], 
 	}
+
+
+# The update ids in item_sets that this machine knows and owns, in vanilla's order
+# (ItemService.update_data_list). Every peer owns the same DLCs (the handshake checks them).
+static func get_valid_item_sets(item_sets) -> Array:
+	var result: = []
+	if typeof(item_sets) != TYPE_ARRAY:
+		return result
+	for update_data in ItemService.update_data_list:
+		if update_data != null and item_sets.has(update_data.id) and ProgressData.is_update_data_available(update_data):
+			result.append(update_data.id)
+	return result
 
 
 static func get_unlocks_snapshot() -> Dictionary:

@@ -48,6 +48,27 @@ static func is_wave_client() -> bool:
 	return wave_sync != null and not wave_sync.is_host
 
 
+# DLC consumables that ItemService.consumables lacks: the DLCData resources hold them.
+const DLC_CONSUMABLE_KEYS: = ["poisoned_fruit", "meca_parts_consumable", "mutation_fruit", "meca_fruit", "mutant_fruit"]
+
+
+# A consumable by id: vanilla's list (fruit and crates), then the owned DLCs' own (Abyssal Terrors'
+# poisoned fruit, Primal Dread's meca parts, mutation, meca and mutant fruit). Null if unknown.
+static func get_consumable(consumable_id: String) -> Resource:
+	var consumable_data = ItemService.get_element_safe(ItemService.consumables, consumable_id)
+	if consumable_data != null:
+		return consumable_data
+	for dlc_id in ProgressData.available_dlc_ids:
+		var dlc_data = ItemService.get_dlc_data_by_id(dlc_id)
+		if dlc_data == null:
+			continue
+		for key in DLC_CONSUMABLE_KEYS:
+			var data = dlc_data.get(key)
+			if data is ConsumableData and data.my_id == consumable_id:
+				return data
+	return null
+
+
 # The lobby name of a player, "" outside a session.
 static func get_player_name(player_index: int) -> String:
 	var lan_net = get_lan_net()

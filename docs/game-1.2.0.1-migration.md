@@ -77,12 +77,14 @@ Status 2026-11-04: the regression set passed in a copy with both DLCs: 30 cases,
 
 ## Phase 2: new base mechanics in lobby and run setup
 - [x] 1. **Zones:** the lobby, settings page and `net_protocol.gd:212` list only zones with `dlc_id == ""` or `dlc_id in available_dlc_ids`, as in vanilla `zone_selection_button.gd`. Add the jungle as zone 2. `get_zone_data(id)` now looks up `my_id`. (Done: `LobbyRules.get_zones`. The jungle is selectable now, but plays badly until Phase 3 items 1–4; a release before then should hide it.)
-- [ ] 2. **Item sets:**
+- [x] 2. **Item sets:**
    - The handshake also compares the active item sets (`ProgressData.active_update_data` ids), or the host's set applies to the run: `RunData.active_update_data_ids` already travels in the run state through `ProgressData.apply_run_update_data`.
    - `lobby_rules.gd` and `lobby.gd:356` refuse characters whose `required_item_set` is off (`ItemService.get_disabled_required_update`).
    - Recommendation: the host's selection rules, and clients only need to own the DLCs.
-- [ ] 3. **Several starting weapons** (Survivor, `extra_starting_weapon_choices`): the lobby picks `1 + n` weapons, and `run_builder.gd:25-31` fills `extra_selected_weapons`.
-- [ ] 4. **Meca parts** (shop dismantle, meca upgrades): the shop merge carries `PlayerRunData.meca_parts`, and the in-wave snapshot carries meca parts (the HUD uses `meca_parts_changed`). Mutation fruit and meca parts icons go into `_things_to_process_player_containers`, so clients must see them too.
+   - Done: the host's sets travel in `lobby_settings.item_sets` and apply on clients for the whole session (`LanNet._apply_host_item_sets`, own sets back in `_end_session`). Characters and starting weapons from a set that is off are left out of the lobby and refused by the host (the client gets the sets with its welcome). Driver: `ITEM_SETS_OFF=primal_dread`, `TRY_CHAR=character_droid` (with `EXPECT=2`).
+- [x] 3. **Several starting weapons** (Survivor, `extra_starting_weapon_choices`): the lobby picks `1 + n` weapons, and `run_builder.gd:25-31` fills `extra_selected_weapons`. (Done: the lobby entry's `weapon_id` became `weapon_ids`, protocol version 25.)
+- [x] 4. **Meca parts** (shop dismantle, meca upgrades): the shop merge carries `PlayerRunData.meca_parts`, and the in-wave snapshot carries meca parts (the HUD uses `meca_parts_changed`). Mutation fruit and meca parts icons go into `_things_to_process_player_containers`, so clients must see them too.
+   - Done: the merge already carried them (the whole `PlayerRunData`); `meca_parts` is in the run digest now. Not in the snapshot: only the shop listens to `meca_parts_changed`, and the wave-end run brings the count. The icons go out as `EVENT_CRATE_TO_PROCESS`. Found on the way: clients couldn't resolve DLC consumables by id (`ItemService.consumables` has only fruit and crates), so Abyssal Terrors' poisoned fruit and all Primal Dread drops never showed on clients; `LanGame.get_consumable` looks in the DLC data too. Driver: `MECA_TEST=1`.
 
 ## Phase 3: Primal Dread in-wave sync (only with the DLC; ordered by impact)
 Each item gets a driver scenario (`ZONE=2`, `SPAWN=…`, `BOSS=…`, `DLC_ITEMS`).
@@ -105,7 +107,7 @@ Each item gets a driver scenario (`ZONE=2`, `SPAWN=…`, `BOSS=…`, `DLC_ITEMS`
 Abyssal Terrors enemies (moved to `entities/units/enemies/abyss/`) and the old base enemies (`crash_zone/`) are mostly unchanged. The lung, stargazer, eel and anglerfish handling still matches, so they only need a regression run.
 
 ## Phase 4: release
-- [ ] Manifest: `compatible_game_version: ["1.2.0.1"]`, `version_number` 2.0.0 (the protocol version goes up; old clients are rejected by the game version anyway).
+- [ ] Manifest: `compatible_game_version: ["1.2.0.1"]`, `version_number` 2.0.0 (the protocol version went up to 25 in Phase 2; old clients are rejected by the game version anyway).
 - [ ] Docs: `lan-coop-mod.md` (SpawnRequest, GPE, evolution, item sets), `lan-coop-plan.md` checklist, README.
 - [ ] Full playtests: Linux plus Windows (GOG 1.2.0.1); jungle zone with Primal Dread for both; one peer without a DLC → reject message.
 
@@ -117,6 +119,6 @@ Abyssal Terrors enemies (moved to `entities/units/enemies/abyss/`) and the old b
 
 ## Proposed split into sessions
 - [ ] 1. Phase 0 + Phase 1: the mod runs again on 1.2.0.1 without Primal Dread content. A release can follow straight away so players can use the base game and AT again.
-- [ ] 2. Phase 2: lobby, zones, item sets, extra weapons, meca parts.
+- [x] 2. Phase 2: lobby, zones, item sets, extra weapons, meca parts.
 - [ ] 3. Phase 3 items 1–4 (holes, evolution, puddles, time slow): the jungle becomes playable.
 - [ ] 4. Phase 3 items 5–12: enemy and boss specifics, and polish.
