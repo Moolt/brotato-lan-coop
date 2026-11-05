@@ -530,6 +530,15 @@ func on_consumable_picked_up(consumable: Node, player_index: int) -> void :
 		wave_sync.on_crate_to_process(player_index, consumable.consumable_data)
 
 
+# A consumable gone without a pickup (Primal Dread's hungry hungry dinosaur eats fruit): the host
+# tells the clients.
+func despawn_consumable(consumable: Consumable) -> void :
+	var wave_sync = LanGame.get_wave_sync()
+	if wave_sync != null and wave_sync.is_host and not consumable.already_picked_up:
+		wave_sync.on_item_despawned(consumable)
+	.despawn_consumable(consumable)
+
+
 static func _lan_is_evolution_consumable(consumable_data: Resource) -> bool:
 	return consumable_data != null and (consumable_data.my_id_hash == Keys.consumable_mutation_fruit_hash or consumable_data.my_id_hash == Keys.consumable_meca_parts_hash)
 

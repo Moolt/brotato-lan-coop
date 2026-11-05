@@ -29,6 +29,14 @@ func stop(from_screen_border: bool = false) -> void :
 			wave_sync.on_projectile_stopped(self, net_id, stopped_at)
 
 
+# Primal Dread's ankylosaurus turns player bullets a random way: the host sends the new course.
+func deflect(enemy_position: Vector2, deflect_angle_deg: float):
+	.deflect(enemy_position, deflect_angle_deg)
+	var wave_sync = LanGame.get_wave_sync()
+	if lan_net_id != 0 and wave_sync != null and wave_sync.is_host:
+		wave_sync.on_projectile_redirected(self)
+
+
 func _return_to_pool() -> void :
 	if lan_net_id != 0:
 		var wave_sync = LanGame.get_wave_sync()

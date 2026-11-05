@@ -141,6 +141,21 @@ static func grow(array: Array, value) -> void :
 		array.append(value.duplicate() if copy else value)
 
 
+# Seeds the global RNG so that every machine rolls the same for tag in this wave (from the host's
+# lobby_settings.wave_seed): placements in main's _ready that must match (dig sites, poacher
+# zones). False outside a session. Call end_shared_random() after.
+static func begin_shared_random(tag: String) -> bool:
+	var lan_net = get_lan_net()
+	if lan_net == null or not lan_net.active:
+		return false
+	seed(hash([lan_net.lobby_settings.get("wave_seed", 0), RunData.current_wave, tag]))
+	return true
+
+
+static func end_shared_random() -> void :
+	randomize()
+
+
 # Autoload arrays that vanilla never reassigns, grown once at startup (LanNet._ready).
 static func grow_autoload_arrays() -> void :
 	for stats in [TempStats, LinkedStats]:

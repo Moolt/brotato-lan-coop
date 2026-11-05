@@ -99,6 +99,9 @@ const HP_SCALE: = 255.0
 # weapon around the player points the same way, as in vanilla.
 const GAMEPAD_AIM_DISTANCE: = 10000.0
 const FLAG_DEAD: = 1
+# Primal Dread's puddles tint the players standing in them (Player._set_acid_color, petrol).
+const FLAG_ACID: = 2
+const FLAG_PETROL: = 4
 # seq, host msec, wave time left, flags, enemy time factor, player count.
 const SNAPSHOT_HEADER_SIZE: = 18
 const SNAPSHOT_FLAG_WAITING: = 1
@@ -146,6 +149,25 @@ const EVENT_DESPAWN: = 17
 const EVENT_PUDDLE: = 18
 const EVENT_PUDDLE_END: = 19
 const EVENT_HOLE: = 20
+const EVENT_ITEM_DESPAWN: = 21
+const EVENT_PROJECTILE_REDIRECT: = 22
+const EVENT_BOOMERANG: = 23
+const EVENT_DIG_SITE: = 24
+const EVENT_POACHER_ZONE: = 25
+const EVENT_POACHER_MARK: = 26
+# Primal Dread's brachiosaurus: [code, net id, kind, value]; kinds below.
+const EVENT_BRACHIOSAURUS: = 27
+const BRACHIOSAURUS_STATE: = 0
+const BRACHIOSAURUS_MOUTH: = 1
+# Its foot: value = sprites shown (FOOT_*), flipped.
+const BRACHIOSAURUS_FOOT: = 2
+const FOOT_SHADOW: = 1
+const FOOT_FOOT: = 2
+const FOOT_RELEASE: = 4
+const FOOT_FLIPPED: = 8
+# An enemy projectile that follows its shooter or a target (enemy lasers): [code, id, shooter
+# net id, target kind, target id].
+const EVENT_PROJECTILE_FROM: = 28
 # Puddle kinds (extensions/global/gpe_spawner.gd).
 const PUDDLE_ACID: = 0
 const PUDDLE_PETROL: = 1
@@ -193,6 +215,17 @@ var _hue_materials: = {}
 # EvolutionSceneEffectBehavior adds to evolved enemies (texture, outline), taken before the scene
 # effect behaviours are freed.
 var _evolution_behaviors: = {}
+# Dig sites and poacher zones (Primal Dread items), the scene effect behaviours' own lists (the
+# same order on every machine, placed from the shared wave seed); the poacher behaviour's kill
+# mark scene (client). Host: the state last sent per dig site [digging, dug_up] and per zone
+# its position.
+var _dig_sites: = []
+var _dig_states: = {}
+var _poacher_zones: = []
+var _poacher_positions: = {}
+var _poacher_mark: PackedScene = null
+# Host: brachiosaurus feet (net id) -> the sprites last sent (FOOT_* mask).
+var _foot_states: = {}
 # Puddle net id -> puddle, on both sides (host: until it starts to fade out).
 var _puddles: = {}
 var _next_puddle_id: = 0
@@ -275,7 +308,14 @@ func _ready() -> void :
 	_net.on_wave_started()
 
 	_add_waiting_label()
+	for child in _main._effect_behaviors.get_children():
+		if child.get("dig_sites") is Array:
+			_dig_sites = child.dig_sites
+		if child.get("poacher_zones") is Array:
+			_poacher_zones = child.poacher_zones
+			_poacher_mark = child.poacher_mark
 	if is_host:
+		var _c = RunData.connect("poacher_enemy_killed_in_zone", self, "_on_host_poacher_kill")
 		_waiting_peers = _net.get_connected_client_peers()
 		_set_waiting(not _waiting_peers.empty())
 		var _e = _net.connect("player_disconnected", self, "_on_player_disconnected")
@@ -311,6 +351,8 @@ func _ready() -> void :
 
 
 func _exit_tree() -> void :
+	if RunData.is_connected("poacher_enemy_killed_in_zone", self, "_on_host_poacher_kill"):
+		RunData.disconnect("poacher_enemy_killed_in_zone", self, "_on_host_poacher_kill")
 	if _net != null and _net.wave_sync == self:
 		_net.wave_sync = null
 	# Leaving before the end of the wave (pause menu Quit): the host lets the player die.
@@ -339,6 +381,9 @@ func _physics_process(delta: float) -> void :
 		_flush_pending_projectiles()
 		_check_item_attraction()
 		_check_puddles()
+		_check_dig_sites()
+		_check_poacher_zones()
+		_check_brachiosaurus_feet()
 		_check_births()
 		if not _events.empty():
 			_count_events(_events)
@@ -401,10 +446,13 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 		var _e = entity.connect("died", self, "_on_host_entity_died")
 		if entity is Unit:
 			_e = entity.connect("took_damage", self, "_on_host_entity_took_damage")
-		if entity is Enemy or entity is Turret:
+		# Primal Dread's hungry hungry dinosaur (a pet) plays "eat" when it eats a fruit.
+		if entity is Enemy or entity is Turret or entity is HungryHungryDinosaur:
 			_e = entity._animation_player.connect("animation_started", self, "_on_host_entity_animation", [entity])
 		if entity is Boss:
 			_e = entity.connect("state_changed", self, "_on_host_boss_state_changed")
+		if entity is Brachiosaurus:
+			_e = entity._brachiosaurus_animation_player.connect("animation_started", self, "_on_host_brachiosaurus_mouth", [entity])
 	# The evolution happened in the spawn (EvolutionSceneEffectBehavior on enemy_respawned).
 	var evolution: = EVOLUTION_NONE
 	if entity is Enemy:
@@ -483,6 +531,78 @@ func on_puddle_spawned(puddle: Node2D, kind: int) -> void :
 	_puddles[_next_puddle_id] = puddle
 	var sprite_index: int = max(0, puddle.puddle_sprites.find(puddle.sprite.texture))
 	_events.append([EVENT_PUDDLE, _next_puddle_id, kind, puddle.global_position, puddle._target_scale, sprite_index, puddle.sprite.rotation])
+
+
+# A dig site that starts or stops being dug, or is dug up, goes out with its progress.
+func _check_dig_sites() -> void :
+	if _main._cleaning_up:
+		return
+	for i in _dig_sites.size():
+		var site = _dig_sites[i]
+		if not is_instance_valid(site):
+			continue
+		var state: = [site.is_being_dug() and not site.dug_up, site.dug_up]
+		if _dig_states.get(i, [false, false]) != state:
+			_dig_states[i] = state
+			_events.append([EVENT_DIG_SITE, i, state[0], site.progress, state[1]])
+
+
+# A poacher zone moved after a bonus kill (PoacherZoneSceneEffectBehavior relocates it).
+func _check_poacher_zones() -> void :
+	if _main._cleaning_up:
+		return
+	for i in _poacher_zones.size():
+		var zone = _poacher_zones[i]
+		if not is_instance_valid(zone):
+			continue
+		if not _poacher_positions.has(i):
+			_poacher_positions[i] = zone.global_position
+		elif _poacher_positions[i] != zone.global_position:
+			_poacher_positions[i] = zone.global_position
+			_events.append([EVENT_POACHER_ZONE, i, zone.global_position])
+
+
+# Called by the brachiosaurus.gd extension after the host's state change (every second); its
+# pivots (state 1) follow.
+func on_brachiosaurus_state(boss: Node, new_state: int) -> void :
+	if not boss.has_meta("lan_net_id") or _main._cleaning_up:
+		return
+	_events.append([EVENT_BRACHIOSAURUS, boss.get_meta("lan_net_id"), BRACHIOSAURUS_STATE, new_state])
+	if new_state == 1:
+		call_deferred("_send_pivots", boss)
+
+
+func _on_host_brachiosaurus_mouth(anim_name: String, boss: Node) -> void :
+	if boss.dead or not boss.has_meta("lan_net_id") or _main._cleaning_up:
+		return
+	_events.append([EVENT_BRACHIOSAURUS, boss.get_meta("lan_net_id"), BRACHIOSAURUS_MOUTH, anim_name])
+
+
+# The foot's sprites change in its own physics (chase, lock, stomp), which copies don't run.
+func _check_brachiosaurus_feet() -> void :
+	if _main._cleaning_up:
+		return
+	for net_id in _entities:
+		var foot = _entities[net_id]
+		if not is_instance_valid(foot) or not foot is BrachiosaurusFoot or foot.dead:
+			continue
+		var mask: = 0
+		if foot.sprite.visible:
+			mask |= FOOT_SHADOW
+		if foot._sprite_foot.visible:
+			mask |= FOOT_FOOT
+		if foot._sprite_release.visible:
+			mask |= FOOT_RELEASE
+		if foot._sprite_foot.flip_h:
+			mask |= FOOT_FLIPPED
+		if _foot_states.get(net_id, - 1) != mask:
+			_foot_states[net_id] = mask
+			_events.append([EVENT_BRACHIOSAURUS, net_id, BRACHIOSAURUS_FOOT, mask])
+
+
+func _on_host_poacher_kill(player_index: int, kill_position: Vector2) -> void :
+	if not _main._cleaning_up:
+		_events.append([EVENT_POACHER_MARK, player_index, kill_position])
 
 
 func on_hole_spawned(pos: Vector2) -> void :
@@ -594,6 +714,32 @@ func on_projectile_returned(projectile: Node) -> void :
 		_events.append([EVENT_PROJECTILE_STOP, net_id, projectile.global_position])
 
 
+# A synced projectile changed course on the host (deflected). One not sent yet goes out with its
+# new course anyway.
+func on_projectile_redirected(projectile: Node) -> void :
+	if _pending_projectiles.has(projectile) or _projectiles.get(projectile.lan_net_id) != projectile:
+		return
+	_events.append([EVENT_PROJECTILE_REDIRECT, projectile.lan_net_id, projectile.global_position, projectile.velocity, projectile.rotation])
+
+
+# A boomerang flies by position from start_flight (its weapon calls it right after the shot, with
+# its velocity at zero): the copy gets the same flight, back to the same carrier.
+func _send_boomerang(projectile: Node) -> void :
+	if projectile._phase == BoomerangProjectile.Phase.NONE:
+		return
+	var carrier: = _get_target_ref(projectile._carrier)
+	_events.append([EVENT_BOOMERANG, projectile.lan_net_id, carrier[0], carrier[1], projectile._start, projectile._forward.angle(), (projectile._end - projectile._start).length()])
+
+
+# Enemy lasers stay with their shooter (EnemyLaser) or turn towards its target (EnemyLaserFollow).
+func _send_projectile_from(projectile: Node) -> void :
+	var from = projectile._hitbox.from
+	if from == null or not is_instance_valid(from) or not from.has_meta("lan_net_id") or _entities.get(from.get_meta("lan_net_id")) != from:
+		return
+	var target: = _get_target_ref(projectile.get("target"))
+	_events.append([EVENT_PROJECTILE_FROM, projectile.lan_net_id, from.get_meta("lan_net_id"), target[0], target[1]])
+
+
 func _flush_pending_projectiles() -> void :
 	for projectile in _pending_projectiles:
 		if not is_instance_valid(projectile) or projectile.lan_net_id == 0:
@@ -613,6 +759,10 @@ func _flush_pending_projectiles() -> void :
 		if material is ShaderMaterial and material.shader == HUE_SHIFT_MATERIAL.shader:
 			hue = material.get_shader_param("hue")
 		_events.append([EVENT_PROJECTILE, projectile.lan_net_id, projectile.filename, projectile.global_position, projectile.velocity, projectile.rotation, speed, max_range, is_enemy, projectile.sinusoidal_motion, projectile.sinusoidal_motion_speed, direction, hue])
+		if projectile is BoomerangProjectile:
+			_send_boomerang(projectile)
+		if projectile is EnemyLaser or projectile is EnemyLaserFollow:
+			_send_projectile_from(projectile)
 	_pending_projectiles.clear()
 
 
@@ -689,6 +839,18 @@ func on_item_picked_up(item: Node, player_index: int) -> void :
 		_events.append([EVENT_ITEM_PICKUP, net_id, player_index])
 
 
+# Called by the main.gd extension before vanilla's despawn_consumable (a fruit eaten by a pet).
+func on_item_despawned(item: Node) -> void :
+	var net_id: int = item.lan_net_id
+	if _items.get(net_id) != item or _main._cleaning_up:
+		return
+	var _erased = _items.erase(net_id)
+	_erased = _item_targets.erase(net_id)
+	_erased = _item_scales.erase(net_id)
+	item.lan_net_id = 0
+	_events.append([EVENT_ITEM_DESPAWN, net_id])
+
+
 func on_crate_to_process(player_index: int, consumable_data: Resource) -> void :
 	_events.append([EVENT_CRATE_TO_PROCESS, player_index, consumable_data.my_id])
 
@@ -725,6 +887,7 @@ func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 		return
 	var _erased = _entities.erase(net_id)
 	_erased = _entity_sizes.erase(net_id)
+	_erased = _foot_states.erase(net_id)
 	# The clients' own clean_up_room kills everything at the end of the wave. Entity.despawn()
 	# (an enemy leaving the map, a puddle evicted) also says cleaning_up, mid-wave.
 	if not args.cleaning_up:
@@ -830,7 +993,14 @@ func _build_snapshot() -> PoolByteArray:
 		buffer.put_float(player.get_move_speed())
 		buffer.put_32(player.current_stats.health)
 		buffer.put_32(player.max_stats.health)
-		buffer.put_u8(FLAG_DEAD if player.dead else 0)
+		var player_flags: = 0
+		if player.dead:
+			player_flags |= FLAG_DEAD
+		if player._acid_color_applied:
+			player_flags |= FLAG_ACID
+		if player.petrol_puddle_count > 0:
+			player_flags |= FLAG_PETROL
+		buffer.put_u8(player_flags)
 		var player_data = RunData.players_data[player.player_index]
 		buffer.put_32(player_data.gold)
 		# A double: XP gain bonuses make it fractional, and a float32 would differ from the host's.
@@ -861,7 +1031,7 @@ func _build_snapshot() -> PoolByteArray:
 					flags |= outline[0]
 			if entity.get("is_full") == true:
 				flags |= ENTITY_FLAG_FULL
-			if entity.get("sprite_full") != null and entity.sprite.scale.x < 0:
+			if (entity.get("sprite_full") != null or entity is Brachiosaurus) and entity.sprite.scale.x < 0:
 				flags |= ENTITY_FLAG_MIRRORED
 			if entity.get("angry_sound") != null and entity._current_movement_behavior == entity._on_triggered_movement_behavior:
 				flags |= ENTITY_FLAG_ANGRY
@@ -920,6 +1090,7 @@ func on_snapshot(data: PoolByteArray) -> void :
 		var level: = buffer.get_u16()
 		positions.append({"pos": pos, "move": move})
 		_apply_player_state(_main._players[player_index], speed, health, max_health, (flags & FLAG_DEAD) != 0)
+		_apply_player_tint(_main._players[player_index], flags)
 		_apply_player_progress(player_index, gold, xp, level)
 
 	var entity_positions: = {}
@@ -974,6 +1145,20 @@ func _apply_player_state(player, speed: float, health: int, max_health: int, dea
 		player.emit_signal("health_updated", player, health, max_health)
 	if dead:
 		player.die(_player_die_args())
+
+
+# The acid and petrol tints of players in the host's puddles (clients' puddle copies have no areas).
+func _apply_player_tint(player, flags: int) -> void :
+	if not is_instance_valid(player) or player.dead:
+		return
+	player._set_acid_color((flags & FLAG_ACID) != 0)
+	var petrol: = (flags & FLAG_PETROL) != 0
+	if petrol and player.petrol_puddle_count <= 0:
+		player._set_color_modulation(player.color_petrol)
+		player.petrol_puddle_count = 1
+	elif not petrol and player.petrol_puddle_count > 0:
+		player.remove_color_modulation(player.color_petrol)
+		player.petrol_puddle_count = 0
 
 
 # RunData's signals drive the HUD (gold, XP bar) and, for a level-up, vanilla's on_levelled_up.
@@ -1037,6 +1222,9 @@ func _apply_entity_flags(entity, flags: int) -> void :
 			var mirrored: = (flags & ENTITY_FLAG_MIRRORED) != 0
 			if (entity.sprite.scale.x < 0) != mirrored:
 				entity.sprite.scale.x = - entity.sprite.scale.x
+		# The brachiosaurus faces into the map from the edge it came from.
+		if entity is Brachiosaurus and (entity.sprite.scale.x < 0) != ((flags & ENTITY_FLAG_MIRRORED) != 0):
+			entity.sprite.scale.x = - entity.sprite.scale.x
 		if entity.get("angry_sound") != null:
 			var angry: = (flags & ENTITY_FLAG_ANGRY) != 0
 			if angry and entity._current_movement_behavior != entity._on_triggered_movement_behavior:
@@ -1064,6 +1252,22 @@ func on_events(events: Array) -> void :
 			_client_puddle_end(event)
 		elif event[0] == EVENT_HOLE and event.size() == 2:
 			_client_hole(event)
+		elif event[0] == EVENT_PROJECTILE_REDIRECT and event.size() == 5:
+			_client_projectile_redirect(event)
+		elif event[0] == EVENT_BOOMERANG and event.size() == 7:
+			_client_boomerang(event)
+		elif event[0] == EVENT_DIG_SITE and event.size() == 5:
+			_client_dig_site(event)
+		elif event[0] == EVENT_POACHER_ZONE and event.size() == 3:
+			_client_poacher_zone(event)
+		elif event[0] == EVENT_POACHER_MARK and event.size() == 3:
+			_client_poacher_mark(event)
+		elif event[0] == EVENT_BRACHIOSAURUS and event.size() == 4:
+			_client_brachiosaurus(event)
+		elif event[0] == EVENT_PROJECTILE_FROM and event.size() == 5:
+			_client_projectile_from(event)
+		elif event[0] == EVENT_ITEM_DESPAWN and event.size() == 2:
+			_client_item_despawn(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
 			_client_die(event)
 		elif event[0] == EVENT_DESPAWN and event.size() == 2:
@@ -1202,6 +1406,87 @@ func _client_puddle_end(event: Array) -> void :
 	var _erased = _puddles.erase(event[1])
 	if puddle != null and is_instance_valid(puddle) and puddle.get_meta("lan_puddle_id", 0) == event[1] and puddle.is_active():
 		puddle.despawn()
+
+
+func _client_dig_site(event: Array) -> void :
+	# [EVENT_DIG_SITE, index, digging, progress, dug_up]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_BOOL or typeof(event[3]) != TYPE_REAL or typeof(event[4]) != TYPE_BOOL:
+		return
+	if event[1] < 0 or event[1] >= _dig_sites.size() or not is_instance_valid(_dig_sites[event[1]]):
+		return
+	_dig_sites[event[1]].lan_apply_host_state(event[2], event[3], event[4])
+
+
+func _client_poacher_zone(event: Array) -> void :
+	# [EVENT_POACHER_ZONE, index, pos]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2:
+		return
+	if event[1] < 0 or event[1] >= _poacher_zones.size() or not is_instance_valid(_poacher_zones[event[1]]):
+		return
+	_poacher_zones[event[1]].relocate(event[2])
+
+
+# As PoacherZoneSceneEffectBehavior._on_poacher_enemy_killed_in_zone: a mark where the enemy died,
+# and that player's zones flash.
+func _client_poacher_mark(event: Array) -> void :
+	# [EVENT_POACHER_MARK, player_index, pos]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2 or _main._cleaning_up:
+		return
+	if _poacher_mark != null:
+		var mark: Node2D = _poacher_mark.instance()
+		mark.global_position = event[2]
+		_main._gpe_container.add_child(mark)
+	for zone in _poacher_zones:
+		if is_instance_valid(zone) and zone.player_index == event[1]:
+			zone._on_poacher_enemy_killed_in_zone(event[1], event[2])
+
+
+func _client_brachiosaurus(event: Array) -> void :
+	# [EVENT_BRACHIOSAURUS, net id, kind, value]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT:
+		return
+	var entity = _entities.get(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead:
+		return
+	if event[2] == BRACHIOSAURUS_STATE and typeof(event[3]) == TYPE_INT and entity is Brachiosaurus:
+		entity.lan_apply_host_state(event[3])
+	elif event[2] == BRACHIOSAURUS_MOUTH and typeof(event[3]) == TYPE_STRING and entity is Brachiosaurus:
+		var mouth: AnimationPlayer = entity._brachiosaurus_animation_player
+		if mouth.has_animation(event[3]):
+			if event[3].begins_with("open_mouth"):
+				mouth._audio_shoot.pitch_scale = rand_range(0.8, 1.2)
+				mouth._audio_shoot.play()
+			mouth.play(event[3])
+	elif event[2] == BRACHIOSAURUS_FOOT and typeof(event[3]) == TYPE_INT and entity is BrachiosaurusFoot:
+		var mask: int = event[3]
+		entity.sprite.visible = (mask & FOOT_SHADOW) != 0
+		entity._sprite_foot.visible = (mask & FOOT_FOOT) != 0
+		entity._sprite_release.visible = (mask & FOOT_RELEASE) != 0
+		entity._sprite_foot.flip_h = (mask & FOOT_FLIPPED) != 0
+
+
+func _client_projectile_from(event: Array) -> void :
+	# [EVENT_PROJECTILE_FROM, id, shooter net id, target kind, target id]
+	for i in [1, 2, 3, 4]:
+		if typeof(event[i]) != TYPE_INT:
+			return
+	var projectile = _projectiles.get(event[1])
+	var from = _entities.get(event[2])
+	if projectile == null or not is_instance_valid(projectile) or projectile.lan_net_id != event[1]:
+		return
+	if from == null or not is_instance_valid(from):
+		return
+	projectile._hitbox.from = from
+	if projectile is EnemyLaser:
+		projectile.offset_from_parent = projectile.global_position - from.global_position
+	elif projectile is EnemyLaserFollow:
+		var target = null
+		if event[3] == TARGET_PLAYER and event[4] >= 0 and event[4] < _main._players.size():
+			target = _main._players[event[4]]
+		elif event[3] == TARGET_ENTITY:
+			target = _entities.get(event[4])
+		if target != null and is_instance_valid(target):
+			projectile.target = target
 
 
 func _client_hole(event: Array) -> void :
@@ -1410,6 +1695,8 @@ func _client_projectile(event: Array) -> void :
 		else:
 			_main.add_player_projectile(projectile)
 
+	# A pooled copy may still hold the shooter of its last flight (EVENT_PROJECTILE_FROM).
+	projectile._hitbox.from = null
 	projectile.global_position = event[3]
 	projectile.velocity = event[4]
 	projectile.rotation = event[5]
@@ -1440,6 +1727,39 @@ func _get_hue_material(hue: float) -> ShaderMaterial:
 		material.set_shader_param("hue", hue)
 		_hue_materials[hue] = material
 	return _hue_materials[hue]
+
+
+func _client_projectile_redirect(event: Array) -> void :
+	# [EVENT_PROJECTILE_REDIRECT, net_id, pos, velocity, rotation]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_VECTOR2 or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_REAL:
+		return
+	var projectile = _projectiles.get(event[1])
+	if projectile == null or not is_instance_valid(projectile) or projectile.lan_net_id != event[1]:
+		return
+	projectile.global_position = event[2]
+	projectile.velocity = event[3]
+	projectile.rotation = event[4]
+
+
+func _client_boomerang(event: Array) -> void :
+	# [EVENT_BOOMERANG, net_id, carrier kind, carrier id, start, direction, reach]
+	for i in [1, 2, 3]:
+		if typeof(event[i]) != TYPE_INT:
+			return
+	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_REAL or typeof(event[6]) != TYPE_REAL:
+		return
+	var projectile = _projectiles.get(event[1])
+	if projectile == null or not is_instance_valid(projectile) or projectile.lan_net_id != event[1] or not projectile is BoomerangProjectile:
+		return
+	var carrier = null
+	if event[2] == TARGET_PLAYER and event[3] >= 0 and event[3] < _main._players.size():
+		carrier = _main._players[event[3]]
+	elif event[2] == TARGET_ENTITY:
+		carrier = _entities.get(event[3])
+	if carrier == null or not is_instance_valid(carrier):
+		return
+	projectile.global_position = event[4]
+	projectile.start_flight(carrier, event[5], event[6])
 
 
 func _client_projectile_stop(event: Array) -> void :
@@ -1662,6 +1982,18 @@ func _client_item_pickup(event: Array) -> void :
 			SoundManager.play(Utils.get_rand_element(item.consumable_data.pickup_sounds))
 		_main.add_node_to_pool(item, _main._consumable_pool_id)
 	item.reset()
+
+
+func _client_item_despawn(event: Array) -> void :
+	# [EVENT_ITEM_DESPAWN, net id]
+	if typeof(event[1]) != TYPE_INT:
+		return
+	var item = _items.get(event[1])
+	var _erased = _items.erase(event[1])
+	if item == null or not is_instance_valid(item) or item.lan_net_id != event[1] or not item is Consumable:
+		return
+	item.lan_net_id = 0
+	_main.despawn_consumable(item)
 
 
 func _client_crate_to_process(event: Array) -> void :

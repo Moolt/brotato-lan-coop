@@ -78,7 +78,9 @@ extends Node
 #   (host and join) RELOAD_RACE=1: when the wave-end state arrives (the solo view starts right
 #         after), every player's stats and weapons are queued for a reload in main's StatsManager,
 #         as a stat change in the wave's last frames leaves them
-#   (host) ITEMS=id,id: at t=16 those items for players 0 and 1; 5 s into the next wave both
+#   (host and join) PROJ_TEST=1: every second in a wave the host deflects a flying player bullet;
+#         both log the synced player projectiles (id, velocity angle, boomerang phase)
+#   (host) ITEMS=id,id: at t=16 those items (or weapons, into free slots) for players 0 and 1; 5 s into the next wave both
 #         sides log pets, structures and entities without a net id (as PET_TEST)
 #   (host) PET_TEST=1: at t=16 a pet item for player 0 and 1; 5 s into the next wave both sides
 #         log every pet (owner, position, net id)
@@ -104,6 +106,8 @@ extends Node
 #         or primal_dread)
 #   (host) BOSS_HP2=n: the bosses' HP at t=18 of 5000 (default 2500; the eel's phase 2 is below 2000)
 #   (host) SPAWN=path: four more enemies of that scene at t=13 (e.g. the DLC's pufferfish)
+#   (host) SPAWN_EVOLVE=meca|mutant (Primal Dread zone): the SPAWN enemies come evolved (meca
+#         jungle enemies shoot lasers)
 #   (host) SPAWN_NEAR=1: the SPAWN enemies 250 px around the host player (they notice it)
 #   (host) CHARM_BOOST=1: at t=13 players 0 and 1 get 200 max HP, so a Romantic charms on every
 #         hit that leaves an enemy below 25 % HP (vanilla's own charm path, both players' hits)
@@ -345,6 +349,7 @@ func _process(delta: float) -> void :
 	jitter_sample(delta)
 	client_walk()
 	pet_watch()
+	proj_watch(delta)
 	push_test()
 	choice_watch()
 	pick_upgrades(delta)
@@ -604,6 +609,40 @@ func reload_race() -> void :
 	print("[TEST] ", role, " reload_race queued ", main._players.size(), " players, ", weapons, " weapons, solo_view=", get_node("/root/LanNet").solo_view.active)
 
 
+# PROJ_TEST=1: every second in a wave, the host deflects one flying player bullet (as the
+# ankylosaurus does), and both sides log every synced player projectile: id, velocity angle,
+# boomerang phase (compare the ids both sides have).
+var proj_log_t: = 0.0
+
+
+func proj_watch(delta: float) -> void :
+	if OS.get_environment("PROJ_TEST") != "1":
+		return
+	var main = get_tree().current_scene
+	if main == null or main.filename != MenuData.game_scene or main._cleaning_up or main.get_node_or_null("LanWaveSync") == null:
+		return
+	proj_log_t += delta
+	if proj_log_t < 1.0:
+		return
+	proj_log_t = 0.0
+	var sync = main.get_node("LanWaveSync")
+	var deflected = "-"
+	if sync.is_host:
+		for projectile in main._player_projectiles.get_children():
+			if projectile is PlayerProjectile and not projectile is BoomerangProjectile and projectile._hitbox.active and projectile.lan_net_id != 0 and not sync._pending_projectiles.has(projectile):
+				projectile.deflect(projectile.global_position, 45.0)
+				deflected = projectile.lan_net_id
+				break
+	var out = []
+	for projectile in main._player_projectiles.get_children():
+		if projectile is Projectile and projectile._hitbox.active and projectile.lan_net_id != 0:
+			if projectile is BoomerangProjectile:
+				out.append("%d:boomerang%d" % [projectile.lan_net_id, projectile._phase])
+			else:
+				out.append("%d:%d" % [projectile.lan_net_id, int(round(rad2deg(projectile.velocity.angle())))])
+	print("[TEST] ", role, "_proj wave=", RunData.current_wave, " time_left=", stepify(main._wave_timer.time_left, 0.1), " deflected=", deflected, " flying=", out, " events22/23=", sync.event_counts.get(22, 0), "/", sync.event_counts.get(23, 0))
+
+
 # PET_TEST=1: 5 s into the second wave, every pet on this machine (owner, scene, position, net id).
 var pets_logged: = false
 
@@ -633,6 +672,13 @@ func pet_watch() -> void :
 		if child is Entity and not child.dead and not child.has_meta("lan_net_id") and not child is Player:
 			unsynced[child.filename.get_file()] = unsynced.get(child.filename.get_file(), 0) + 1
 	print("[TEST] ", role, "_structures count=", structures.size(), " ", structures, " unsynced_entities=", unsynced)
+	# Boomerangs in flight (phase: 1 out, 2 apex, 3 back; 0 = not flying) and the event counts
+	# of redirects (22), boomerang flights (23), item despawns (21).
+	var boomerangs = []
+	for projectile in main._player_projectiles.get_children():
+		if projectile is BoomerangProjectile and projectile._hitbox.active:
+			boomerangs.append("%d:%d" % [projectile.lan_net_id, projectile._phase])
+	print("[TEST] ", role, "_projectiles boomerangs=", boomerangs, " redirects=", sync.event_counts.get(22, 0), " boomerang_events=", sync.event_counts.get(23, 0), " item_despawns=", sync.event_counts.get(21, 0))
 	shot(role + "_pets")
 
 
@@ -1107,6 +1153,7 @@ func dlc_log_watch(delta: float) -> void :
 	if dlc_log_t >= float(OS.get_environment("DLC_LOG")):
 		dlc_log_t = 0.0
 		log_dlc(role + "_every", main, sync)
+		log_gpe(role + "_every", main, sync)
 
 
 # The item set of DLC_SET (default abyssal_terrors), null when it isn't owned.
@@ -1222,7 +1269,7 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 	var monitoring = 0
 	for container in [main._gpe_container, main._fire_puddles_container]:
 		for child in container.get_children():
-			if child is Area2D and child.has_method("is_active") and child.is_active():
+			if (child is AcidPuddle or child is PetrolPuddle or child is FirePuddle) and child.is_active():
 				var kind = "FirePuddle" if child is FirePuddle else "PetrolPuddle" if child is PetrolPuddle else "AcidPuddle"
 				puddles[kind] += 1
 				if child.monitoring:
@@ -1256,6 +1303,50 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 		if is_instance_valid(e) and e is Enemy and not e.dead and e._current_movement_behavior is GoTowardsBorderOppositeMovementBehavior:
 			chargers.append("%d:%s:%d" % [net_id, "shown" if e.visible else "hidden", int(round(rad2deg(e.rotation)))])
 	print("[TEST] ", tag, " gpe chargers=", chargers)
+	# Dig sites (position, progress, dug up) and poacher zones (owner, position), in list order.
+	var sites = []
+	for site in wave_sync._dig_sites:
+		if is_instance_valid(site):
+			sites.append("%s:%.1f/%.1f%s%s" % [site.global_position.round(), site.progress, site.dig_time, " digging" if site.is_being_dug() else "", " dug" if site.dug_up else ""])
+	var zones = []
+	for zone in wave_sync._poacher_zones:
+		if is_instance_valid(zone):
+			zones.append("p%d:%s" % [zone.player_index, zone.global_position.round()])
+	# The brachiosaurus (BOSS=…/jungle/bosses/brachiosaurus/brachiosaurus.tscn): state, shown,
+	# mirrored, pivots (count, first direction), mouth animation; its feet's sprite masks; enemy
+	# lasers and how many follow a shooter.
+	var brachio = []
+	var feet = []
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if not is_instance_valid(e) or e.dead:
+			continue
+		if e is Brachiosaurus:
+			var pivots = find_pivots(e, [])
+			brachio.append("%d:state=%d timer=%s/%.2f script=%s %s%s pivots=%d%s mouth=%s" % [net_id, e.current_state, e._check_state_timer.is_stopped(), e._check_state_timer.time_left, e.get_script().resource_path.get_file(), "shown" if e.visible else "hidden", " mirrored" if e.sprite.scale.x < 0 else "", pivots.size(), "/%d" % pivots[0].direction if not pivots.empty() else "", e._brachiosaurus_animation_player.current_animation])
+		elif e is BrachiosaurusFoot:
+			feet.append("%d:%d%d%d" % [net_id, int(e.sprite.visible), int(e._sprite_foot.visible), int(e._sprite_release.visible)])
+	var lasers = 0
+	var lasers_from = 0
+	for projectile in main._enemy_projectiles.get_children():
+		if (projectile is EnemyLaser or projectile is EnemyLaserFollow) and projectile._hitbox.active:
+			lasers += 1
+			if projectile._hitbox.from != null:
+				lasers_from += 1
+	print("[TEST] ", tag, " gpe brachiosaurus=", brachio, " feet=", feet, " lasers=", lasers, " following=", lasers_from)
+	# A hash of the zone decoration's places in 20 px steps (the same on every machine; trampled
+	# ferns change their texture, shaken ones move a few px).
+	var decoration = []
+	for container in [main._entities_container, main._tile_map]:
+		for child in container.get_children():
+			if child is Sprite and not child is Entity:
+				decoration.append((child.global_position / 20.0).round())
+	var decoration_keys = []
+	for pos in decoration:
+		decoration_keys.append("%d,%d" % [pos.x, pos.y])
+	decoration_keys.sort()
+	print("[TEST] ", tag, " gpe decoration=", decoration.size(), " md5=", to_json(decoration_keys).md5_text().left(8))
+	print("[TEST] ", tag, " gpe dig_sites=", sites, " poacher_zones=", zones, " marks=", wave_sync.event_counts.get(26, 0))
 	print("[TEST] ", tag, " gpe local_blocked=", local_blocked, " holes=", holes, " puddles=", puddles, " monitoring=", monitoring, " tracked=", wave_sync._puddles.size(), " mutant=", mutant, " meca=", meca, " time_factor=", stepify(EntityService.enemy_time_factor, 0.01), " overlay=", overlay.visible if overlay != null else "-", " wave_seed=", get_node("/root/LanNet").lobby_settings.get("wave_seed", 0))
 
 
@@ -1274,6 +1365,14 @@ func gpe_test(main: Node) -> void :
 	var fire = gpe.get_new_fire_puddle_at_pos(pos + Vector2(0, 200), burning, GPESpawner.FIRE_PUDDLE_SCALE * 2, 6.0, 0)
 	gpe.spawn_single_hole_at_position(pos + Vector2(0, -300))
 	EntityService.slow_enemy_time(0.5, 4.0)
+	# The host player digs at the first dig site (CHAR=character_archaeologist).
+	var sync = main.get_node("LanWaveSync")
+	if not sync._dig_sites.empty():
+		main._players[0].global_position = sync._dig_sites[0].global_position
+	# A kill in each poacher zone and a bonus for its owner (the zone moves) (CHAR=character_poacher).
+	for zone in sync._poacher_zones:
+		RunData.emit_signal("poacher_enemy_killed_in_zone", zone.player_index, zone.global_position)
+		RunData.emit_signal("poacher_bonus_gained", zone.player_index, zone.global_position)
 	var spawner = main._entity_spawner
 	var scene = load("res://entities/units/enemies/crash_zone/basic/spitter/spitter.tscn")
 	for i in 2:
@@ -1501,7 +1600,10 @@ func _host_step() -> void :
 					var spawn_pos = center_offset(i) + Vector2(0, 200)
 					if OS.get_environment("SPAWN_NEAR") == "1":
 						spawn_pos = get_tree().current_scene._players[0].global_position + Vector2(250, 0).rotated(i * PI / 2)
-					spawner.queue_to_spawn.push_back(SpawnRequest.new(EntityType.ENEMY, load(OS.get_environment("SPAWN")), spawn_pos))
+					var spawn_request = SpawnRequest.new(EntityType.ENEMY, load(OS.get_environment("SPAWN")), spawn_pos)
+					spawn_request.is_meca = OS.get_environment("SPAWN_EVOLVE") == "meca"
+					spawn_request.is_mutant = OS.get_environment("SPAWN_EVOLVE") == "mutant"
+					spawner.queue_to_spawn.push_back(spawn_request)
 			if OS.get_environment("CHARM_BOOST") == "1":
 				# Romantic's charm chance is half the max HP in percent: 100 % from here on.
 				for i in 2:
@@ -1585,8 +1687,12 @@ func _host_step() -> void :
 			if OS.get_environment("ITEMS") != "":
 				for item_id in OS.get_environment("ITEMS").split(","):
 					var item = ItemService.get_element_safe(ItemService.items, item_id)
+					var weapon = ItemService.get_element_safe(ItemService.weapons, item_id)
 					for player_index in 2:
-						RunData.add_item(item, player_index)
+						if item != null:
+							RunData.add_item(item, player_index)
+						elif weapon != null and RunData.players_data[player_index].weapons.size() < 6:
+							var _w = RunData.add_weapon(weapon, player_index)
 				print("[TEST] items added for players 0 and 1: ", OS.get_environment("ITEMS"))
 			if OS.get_environment("PET_TEST") == "1":
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_blazemander"), 0)
