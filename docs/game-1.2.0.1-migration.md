@@ -124,9 +124,9 @@ Abyssal Terrors enemies (moved to `entities/units/enemies/abyss/`) and the old b
 ## Phase 4: release
 - [x] Manifest: `compatible_game_version: ["1.2.0.1"]`, `version_number` 2.0.0 (the protocol version went up to 25 in Phase 2; old clients are rejected by the game version anyway).
 - [x] Docs: `lan-coop-mod.md` (SpawnRequest, GPE, evolution, item sets: already written along the phases), `lan-coop-plan.md` checklist, README (requirements, DLCs, zones, item sets, Survivor, development layout, a jungle screenshot), CHANGELOG section 2.0.0.
-- [ ] Full playtests: Linux plus Windows (GOG 1.2.0.1); jungle zone with Primal Dread for both; one peer without a DLC → reject message.
+- [x] Full playtests: Linux plus Windows (GOG 1.2.0.1); jungle zone with Primal Dread for both; one peer without a DLC → reject message.
    - Driver, 2026-11-05: host here (test copy) + `join` on Windows with the shipped game and the 2.0.0 zip, `ZONE=2 START_WAVE=4 WAVES=2`: same hole layout and wave seed on both, shop and next wave, no script errors. The same Windows client without `primal_dread.dlc` is turned away (`LAN_REJECT_DLC`). Seven players in the jungle at wave 20 (`FAKES=5`, README screenshot) without errors.
-   - Open: the user's manual playtest.
+   - The user's manual playtest passed; released as 2.0.0 on 2026-11-05.
 
 ## Verification (per phase)
 - `tools/make_test_copy.sh` from 1.2.0.1, then the driver's `quit` role (parse errors) and `title` role (menu layout).
