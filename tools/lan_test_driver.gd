@@ -78,6 +78,8 @@ extends Node
 #   (host and join) RELOAD_RACE=1: when the wave-end state arrives (the solo view starts right
 #         after), every player's stats and weapons are queued for a reload in main's StatsManager,
 #         as a stat change in the wave's last frames leaves them
+#   (host) ITEMS=id,id: at t=16 those items for players 0 and 1; 5 s into the next wave both
+#         sides log pets, structures and entities without a net id (as PET_TEST)
 #   (host) PET_TEST=1: at t=16 a pet item for player 0 and 1; 5 s into the next wave both sides
 #         log every pet (owner, position, net id)
 #   (host) HOST_DIES=1: the host also dies at t=18 (with the fake; in Team Race their team is out).
@@ -107,6 +109,11 @@ extends Node
 #         hit that leaves an enemy below 25 % HP (vanilla's own charm path, both players' hits)
 #   (host) CHARM_TEST=1: at t=15 the host charms every spitter (needs a charm effect, e.g.
 #         CHAR=character_romantic); log_sync's dlc line logs charmed projectiles on both sides
+#   (host) GPE_TEST=1 (Primal Dread, e.g. ZONE=2 START_WAVE=4 for the holes): at t=15 an acid, a
+#         petrol and a fire puddle, a single hole, a mutant and a meca spitter, and the enemy time
+#         at half speed for 4 s; log_sync's gpe line (both sides): hole layout, puddles by kind and
+#         how many have areas on (clients: 0), evolved enemies by net id, time factor, overlay,
+#         wave seed; on clients also that a local puddle is refused
 # log_sync's dlc line (both sides): every boss's pivots (direction, angle), charmed (hue-shifted)
 #   enemy projectiles, enemy projectiles the machine shot itself (clients: must stay 0), Pursuer
 #   sizes by net id, full lungs
@@ -602,7 +609,7 @@ var pets_logged: = false
 
 
 func pet_watch() -> void :
-	if OS.get_environment("PET_TEST") != "1" or pets_logged or first_wave == 0:
+	if (OS.get_environment("PET_TEST") != "1" and OS.get_environment("ITEMS") == "") or pets_logged or first_wave == 0:
 		return
 	var main = get_tree().current_scene
 	if main == null or main.filename != MenuData.game_scene or main._cleaning_up or RunData.current_wave != first_wave + 1:
@@ -616,6 +623,16 @@ func pet_watch() -> void :
 		if is_instance_valid(pet):
 			out.append("p%d:%s:%s:id=%s" % [pet.player_index, pet.filename.get_file().get_basename(), pet.global_position.round(), pet.get_meta("lan_net_id") if pet.has_meta("lan_net_id") else "-"])
 	print("[TEST] ", role, "_pets wave=", RunData.current_wave, " time_left=", stepify(main._wave_timer.time_left, 0.01), " count=", out.size(), " ", out, " net_entities=", sync._entities.size())
+	var structures = []
+	for structure in main._entity_spawner.structures:
+		if is_instance_valid(structure):
+			structures.append("p%d:%s:%s:id=%s" % [structure.player_index, structure.filename.get_file().get_basename(), structure.global_position.round(), structure.get_meta("lan_net_id") if structure.has_meta("lan_net_id") else "-"])
+	# Entity nodes that aren't synced (spawned outside the entity spawner).
+	var unsynced = {}
+	for child in main._entities_container.get_children():
+		if child is Entity and not child.dead and not child.has_meta("lan_net_id") and not child is Player:
+			unsynced[child.filename.get_file()] = unsynced.get(child.filename.get_file(), 0) + 1
+	print("[TEST] ", role, "_structures count=", structures.size(), " ", structures, " unsynced_entities=", unsynced)
 	shot(role + "_pets")
 
 
@@ -1191,6 +1208,86 @@ func log_dlc(tag: String, main: Node, wave_sync: Node) -> void :
 
 
 
+# Primal Dread ground effects and evolution (GPE_TEST): the hole layout, active puddles by
+# kind (and how many of them have their areas on: clients must have 0), puddles the sync tracks,
+# evolved enemies by net id, the enemy time factor and its overlay.
+func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
+	var holes = []
+	for child in main._gpe_container.get_children():
+		if child.filename.find("holes_") >= 0:
+			holes.append(child.filename.get_file())
+		elif child is Hole:
+			holes.append("single:%s" % child.global_position.round())
+	var puddles = {"AcidPuddle": 0, "PetrolPuddle": 0, "FirePuddle": 0}
+	var monitoring = 0
+	for container in [main._gpe_container, main._fire_puddles_container]:
+		for child in container.get_children():
+			if child is Area2D and child.has_method("is_active") and child.is_active():
+				var kind = "FirePuddle" if child is FirePuddle else "PetrolPuddle" if child is PetrolPuddle else "AcidPuddle"
+				puddles[kind] += 1
+				if child.monitoring:
+					monitoring += 1
+	var mutant = []
+	var meca = []
+	var ids = wave_sync._entities.keys()
+	ids.sort()
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if is_instance_valid(e) and e is Enemy and not e.dead:
+			if e._is_mutant and e.has_outline(Utils.MUTANT_COLOR):
+				mutant.append(net_id)
+			elif e._is_meca and e.has_outline(Utils.MECA_COLOR):
+				meca.append(net_id)
+	var overlay = main.get_node_or_null("UI/ShiftTimeVisualEffect")
+	# Clients: a puddle of their own must be refused (the host's come as events).
+	var local_blocked = "-"
+	if not wave_sync.is_host:
+		local_blocked = main._gpe_spawner.get_new_acid_puddle_at_pos(main._players[0].global_position, false, true) == null
+	var consumables = []
+	for consumable in main._consumables:
+		if is_instance_valid(consumable) and consumable.consumable_data != null:
+			consumables.append(consumable.consumable_data.my_id)
+	consumables.sort()
+	print("[TEST] ", tag, " gpe consumables=", consumables)
+	# Oviraptors and iguanodons by net id: shown or hidden, and their facing in degrees.
+	var chargers = []
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if is_instance_valid(e) and e is Enemy and not e.dead and e._current_movement_behavior is GoTowardsBorderOppositeMovementBehavior:
+			chargers.append("%d:%s:%d" % [net_id, "shown" if e.visible else "hidden", int(round(rad2deg(e.rotation)))])
+	print("[TEST] ", tag, " gpe chargers=", chargers)
+	print("[TEST] ", tag, " gpe local_blocked=", local_blocked, " holes=", holes, " puddles=", puddles, " monitoring=", monitoring, " tracked=", wave_sync._puddles.size(), " mutant=", mutant, " meca=", meca, " time_factor=", stepify(EntityService.enemy_time_factor, 0.01), " overlay=", overlay.visible if overlay != null else "-", " wave_seed=", get_node("/root/LanNet").lobby_settings.get("wave_seed", 0))
+
+
+# GPE_TEST=1 (host, t=15): an acid, a petrol and a fire puddle, a single hole and a mutant and a
+# meca enemy near the host player, and the enemy time at half speed for 4 s. On clients, a local
+# puddle must not appear.
+func gpe_test(main: Node) -> void :
+	var pos: Vector2 = main._players[0].global_position
+	var gpe = main._gpe_spawner
+	var acid = gpe.get_new_acid_puddle_at_pos(pos + Vector2(-200, 0), false, false)
+	var petrol = gpe.get_new_petrol_puddle_at_pos(pos + Vector2(200, 0), true, false)
+	var burning = BurningData.new()
+	burning.chance = 1.0
+	burning.damage = 5
+	burning.duration = 3
+	var fire = gpe.get_new_fire_puddle_at_pos(pos + Vector2(0, 200), burning, GPESpawner.FIRE_PUDDLE_SCALE * 2, 6.0, 0)
+	gpe.spawn_single_hole_at_position(pos + Vector2(0, -300))
+	EntityService.slow_enemy_time(0.5, 4.0)
+	var spawner = main._entity_spawner
+	var scene = load("res://entities/units/enemies/crash_zone/basic/spitter/spitter.tscn")
+	for i in 2:
+		# Far from the players, so their weapons don't kill them before the next log.
+		var request = SpawnRequest.new(EntityType.ENEMY, scene, ZoneService.get_current_zone_rect().end - Vector2(300 + i * 150, 400))
+		request.is_mutant = i == 0
+		request.is_meca = i == 1
+		spawner.queue_to_spawn.push_back(request)
+	var dlc_data = ItemService.get_dlc_data_by_id("primal_dread")
+	main.spawn_consumable(dlc_data.meca_fruit, pos + Vector2(-100, 100), pos)
+	main.spawn_consumable(dlc_data.mutant_fruit, pos + Vector2(100, 100), pos)
+	print("[TEST] gpe_test acid=", acid != null, " petrol=", petrol != null, " fire=", fire != null)
+
+
 func find_pivots(node: Node, result: Array = []) -> Array:
 	if node is Pivot:
 		result.append(node)
@@ -1234,6 +1331,7 @@ func log_sync(tag: String) -> void :
 		cursed.sort()
 		print("[TEST] ", tag, " outlines cursed=", cursed, " boosted=", outlined.boosted, " charmed=", outlined.charmed, " scene_behaviors=", main._effect_behaviors.get_child_count())
 		log_dlc(tag, main, sync)
+		log_gpe(tag, main, sync)
 		var steps = []
 		for i in RunData.get_player_count():
 			steps.append("%d:%d hp=%d" % [i, RunData.steps_taken_this_wave[i], RunData.get_player_max_health(i)])
@@ -1428,6 +1526,8 @@ func _host_step() -> void :
 						enemy.set_charmed(0)
 						charmed += 1 if enemy.get_charmed_by_player_index() == 0 else 0
 				print("[TEST] charm_test charmed=", charmed)
+			if OS.get_environment("GPE_TEST") == "1":
+				gpe_test(get_tree().current_scene)
 			next_t = 16.0
 		8:
 			var main7 = get_tree().current_scene
@@ -1482,6 +1582,12 @@ func _host_step() -> void :
 				print("[TEST] full_slots weapons=", RunData.players_data[0].weapons.size(), ",", RunData.players_data[1].weapons.size())
 			if OS.get_environment("DLC_ITEMS") != "" and dlc_item_set() != null:
 				dlc_items_test(int(OS.get_environment("DLC_ITEMS")))
+			if OS.get_environment("ITEMS") != "":
+				for item_id in OS.get_environment("ITEMS").split(","):
+					var item = ItemService.get_element_safe(ItemService.items, item_id)
+					for player_index in 2:
+						RunData.add_item(item, player_index)
+				print("[TEST] items added for players 0 and 1: ", OS.get_environment("ITEMS"))
 			if OS.get_environment("PET_TEST") == "1":
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_blazemander"), 0)
 				RunData.add_item(ItemService.get_element_safe(ItemService.items, "item_bonk_dog"), 1)

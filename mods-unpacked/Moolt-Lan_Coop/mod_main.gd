@@ -59,6 +59,7 @@ func _init() -> void :
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/weapon_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/focus_emulator_signal.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/entity_spawner.gd"))
+	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/gpe_spawner.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("global/stats_manager.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/coop_service.gd"))
 	ModLoaderMod.install_script_extension(ext_dir.plus_file("singletons/debug_service.gd"))

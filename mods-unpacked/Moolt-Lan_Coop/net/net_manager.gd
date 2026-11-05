@@ -355,6 +355,9 @@ func _send_run(what: String) -> void :
 	_run_digest = RunBuilder.digest()
 	_run_id_counter += 1
 	lobby_settings.run_id = _run_id_counter
+	var rng: = RandomNumberGenerator.new()
+	rng.randomize()
+	lobby_settings.wave_seed = rng.randi()
 	_run_acks = {}
 	_start_requested = true
 	ModLoaderLog.info("Run %d %s: %s" % [_run_id_counter, what, to_json(RunBuilder.summarize())], NetProtocol.MOD_ID)

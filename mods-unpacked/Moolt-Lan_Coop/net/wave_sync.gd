@@ -32,7 +32,11 @@ extends Node
 #   - Every SNAPSHOT_INTERVAL physics frames (20 Hz) it sends a snapshot to all clients:
 #     wave time left, whether the wave still waits for clients; per player position, movement, speed, HP, death, gold, XP and level; per entity (trees
 #     excluded, they don't move) position, HP ratio (0-255), burning, the enemy outlines
-#     (boosted, cursed, charmed) and full lungs (DLC).
+#     (boosted, cursed, charmed) and full lungs (DLC), and the enemy time factor (time shifter,
+#     pocket watch).
+#   - Primal Dread: an enemy's evolution (mutant, meca) goes with its spawn. Acid, petrol and fire
+#     puddles (only the host spawns them, extensions/global/gpe_spawner.gd) and single holes have
+#     their own events; the wave's hole layout comes from the shared wave seed.
 # Client:
 #   - The wave manager and the entity spawner don't run. Entities come from the host's events,
 #     spawned through the normal spawner (and its pools), then made inert: no physics, kinematic,
@@ -95,9 +99,13 @@ const HP_SCALE: = 255.0
 # weapon around the player points the same way, as in vanilla.
 const GAMEPAD_AIM_DISTANCE: = 10000.0
 const FLAG_DEAD: = 1
-const SNAPSHOT_HEADER_SIZE: = 14
+# seq, host msec, wave time left, flags, enemy time factor, player count.
+const SNAPSHOT_HEADER_SIZE: = 18
 const SNAPSHOT_FLAG_WAITING: = 1
 const LOAD_TIMEOUT: = 15.0
+# Client: EntityService's slow time left while the host's snapshot says slowed (it ends on the
+# host's word, not on a local countdown).
+const TIME_SLOW_HOLD: = 1.0e9
 const WAITING_FONT = preload("res://resources/fonts/actual/base/font_smallest_text.tres")
 const WAITING_FONT_SIZE: = 40
 const SNAPSHOT_PLAYER_SIZE: = 37
@@ -112,6 +120,9 @@ const ENTITY_FLAG_FULL: = 16
 const ENTITY_FLAG_MIRRORED: = 32
 # The DLC's stargazers: angry (lung died or full); clients play the angry sound when it turns on.
 const ENTITY_FLAG_ANGRY: = 64
+# Hidden on the host: Primal Dread's oviraptor and iguanodon wait unseen at the map's edge
+# until their warning ends, then charge across (GoTowardsBorderOppositeMovementBehavior).
+const ENTITY_FLAG_HIDDEN: = 128
 const MAX_NET_ID: = 65535
 
 const EVENT_SPAWN: = 0
@@ -132,6 +143,17 @@ const EVENT_BIRTH_MOVED: = 14
 const EVENT_PIVOTS: = 15
 const EVENT_ENTITY_SIZE: = 16
 const EVENT_DESPAWN: = 17
+const EVENT_PUDDLE: = 18
+const EVENT_PUDDLE_END: = 19
+const EVENT_HOLE: = 20
+# Puddle kinds (extensions/global/gpe_spawner.gd).
+const PUDDLE_ACID: = 0
+const PUDDLE_PETROL: = 1
+const PUDDLE_FIRE: = 2
+# An enemy's evolution (Primal Dread), in its spawn event.
+const EVOLUTION_NONE: = 0
+const EVOLUTION_MUTANT: = 1
+const EVOLUTION_MECA: = 2
 # Charmed enemies' projectiles use it with the charm's hue.
 const HUE_SHIFT_MATERIAL = preload("res://resources/shaders/hue_shift_shadermat.tres")
 const ITEM_GOLD: = 0
@@ -167,6 +189,13 @@ var _entity_sizes: = {}
 var _pending_pivots: = {}
 # Client: hue -> the projectile material, shared like the charm shares its own.
 var _hue_materials: = {}
+# Client: EVOLUTION_MUTANT / EVOLUTION_MECA -> the enemy effect behaviour data the zone's
+# EvolutionSceneEffectBehavior adds to evolved enemies (texture, outline), taken before the scene
+# effect behaviours are freed.
+var _evolution_behaviors: = {}
+# Puddle net id -> puddle, on both sides (host: until it starts to fade out).
+var _puddles: = {}
+var _next_puddle_id: = 0
 
 # Host: latest state per remote player_index: {pos, time (client msec), move, aim, manual_aim,
 # fresh (not applied yet), since (its age in s: estimated at arrival, then counted up),
@@ -266,6 +295,9 @@ func _ready() -> void :
 		# Scene effect behaviours act on spawns (the DLC curses enemies as they spawn); the
 		# host's do that, and the snapshot carries the outlines.
 		for child in _main._effect_behaviors.get_children():
+			if child.get("mutant_enemy_effect_behavior_data") != null:
+				_evolution_behaviors[EVOLUTION_MUTANT] = child.mutant_enemy_effect_behavior_data
+				_evolution_behaviors[EVOLUTION_MECA] = child.meca_enemy_effect_behavior_data
 			child.queue_free()
 		for player in _main._players:
 			player.disable_hurtbox()
@@ -306,6 +338,7 @@ func _physics_process(delta: float) -> void :
 		_apply_remote_states(delta)
 		_flush_pending_projectiles()
 		_check_item_attraction()
+		_check_puddles()
 		_check_births()
 		if not _events.empty():
 			_count_events(_events)
@@ -372,7 +405,14 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 			_e = entity._animation_player.connect("animation_started", self, "_on_host_entity_animation", [entity])
 		if entity is Boss:
 			_e = entity.connect("state_changed", self, "_on_host_boss_state_changed")
-	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by])
+	# The evolution happened in the spawn (EvolutionSceneEffectBehavior on enemy_respawned).
+	var evolution: = EVOLUTION_NONE
+	if entity is Enemy:
+		if entity._is_mutant:
+			evolution = EVOLUTION_MUTANT
+		elif entity._is_meca:
+			evolution = EVOLUTION_MECA
+	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by, evolution])
 	if entity is Pursuer:
 		_entity_sizes[net_id] = entity.sprite.scale.y
 	_send_pivots(entity)
@@ -432,6 +472,36 @@ func _check_births() -> void :
 	for birth_id in done:
 		var _erased = _births.erase(birth_id)
 		_erased = _birth_positions.erase(birth_id)
+
+
+# Called by the gpe_spawner.gd extension for every puddle the host spawns, once it is set up.
+func on_puddle_spawned(puddle: Node2D, kind: int) -> void :
+	if _main._cleaning_up:
+		return
+	_next_puddle_id = _next_puddle_id % MAX_NET_ID + 1
+	puddle.set_meta("lan_puddle_id", _next_puddle_id)
+	_puddles[_next_puddle_id] = puddle
+	var sprite_index: int = max(0, puddle.puddle_sprites.find(puddle.sprite.texture))
+	_events.append([EVENT_PUDDLE, _next_puddle_id, kind, puddle.global_position, puddle._target_scale, sprite_index, puddle.sprite.rotation])
+
+
+func on_hole_spawned(pos: Vector2) -> void :
+	if not _main._cleaning_up:
+		_events.append([EVENT_HOLE, pos])
+
+
+# A puddle that started to fade out (lifetime over, evicted, its plant died) fades on the clients.
+func _check_puddles() -> void :
+	if _puddles.empty() or _main._cleaning_up:
+		return
+	var done: = []
+	for puddle_id in _puddles:
+		var puddle = _puddles[puddle_id]
+		if not is_instance_valid(puddle) or not puddle.is_active() or puddle.get_meta("lan_puddle_id", 0) != puddle_id:
+			done.append(puddle_id)
+	for puddle_id in done:
+		var _erased = _puddles.erase(puddle_id)
+		_events.append([EVENT_PUDDLE_END, puddle_id])
 
 
 func on_client_loaded(peer_id: int) -> void :
@@ -749,6 +819,7 @@ func _build_snapshot() -> PoolByteArray:
 	buffer.put_u32(OS.get_ticks_msec())
 	buffer.put_float(_main._wave_timer.time_left)
 	buffer.put_u8(SNAPSHOT_FLAG_WAITING if _waiting else 0)
+	buffer.put_float(EntityService.enemy_time_factor)
 	buffer.put_u8(_main._players.size())
 	for player in _main._players:
 		buffer.put_float(player.global_position.x)
@@ -794,6 +865,8 @@ func _build_snapshot() -> PoolByteArray:
 				flags |= ENTITY_FLAG_MIRRORED
 			if entity.get("angry_sound") != null and entity._current_movement_behavior == entity._on_triggered_movement_behavior:
 				flags |= ENTITY_FLAG_ANGRY
+		if not entity.visible:
+			flags |= ENTITY_FLAG_HIDDEN
 		buffer.put_u8(flags)
 		if entity is Pursuer and _entity_sizes.get(net_id) != entity.sprite.scale.y:
 			_entity_sizes[net_id] = entity.sprite.scale.y
@@ -815,6 +888,7 @@ func on_snapshot(data: PoolByteArray) -> void :
 	var host_time: = buffer.get_u32()
 	var time_left: = buffer.get_float()
 	var snapshot_flags: = buffer.get_u8()
+	var time_factor: = buffer.get_float()
 	var count: = buffer.get_u8()
 	var entities_offset: = SNAPSHOT_HEADER_SIZE + count * SNAPSHOT_PLAYER_SIZE
 	if count != _main._players.size() or data.size() < entities_offset + 2:
@@ -866,10 +940,28 @@ func on_snapshot(data: PoolByteArray) -> void :
 	var waiting: = (snapshot_flags & SNAPSHOT_FLAG_WAITING) != 0
 	if waiting != _waiting and not _main._cleaning_up:
 		_set_waiting(waiting)
+	if not _main._cleaning_up:
+		_apply_enemy_time_factor(time_factor)
 	if not _main._cleaning_up and abs(_main._wave_timer.time_left - time_left) > TIMER_RESYNC_THRESHOLD and time_left > 0.0:
 		_main._wave_timer.start(time_left)
 		_main._wave_timer.paused = _waiting
 		_main._wave_timer.half_wave_timer.paused = _waiting
+
+
+# The host's enemy time slow (time shifter, pocket watch): enemy projectiles fly and enemy
+# animations play slower (Projectile._get_time_factor, Enemy._apply_time_factor_to_animation in
+# _update_puppets), and ShiftTimeVisualEffect follows enemy_time_slow_changed. It lasts until the
+# host's factor is back at 1.
+func _apply_enemy_time_factor(time_factor: float) -> void :
+	if time_factor >= 1.0:
+		if EntityService._enemy_time_slow_remaining > 0.0:
+			EntityService.stop_enemy_time_slow()
+		return
+	var was_slowed: bool = EntityService._enemy_time_slow_remaining > 0.0
+	EntityService.enemy_time_factor = max(EntityService.MIN_ENEMY_TIME_FACTOR, time_factor)
+	EntityService._enemy_time_slow_remaining = TIME_SLOW_HOLD
+	if not was_slowed:
+		EntityService.emit_signal("enemy_time_slow_changed", true)
 
 
 func _apply_player_state(player, speed: float, health: int, max_health: int, dead: bool) -> void :
@@ -914,6 +1006,16 @@ func _apply_entity_health(entity, health: int) -> void :
 func _apply_entity_flags(entity, flags: int) -> void :
 	if entity == null or not is_instance_valid(entity) or entity.dead or not entity is Unit:
 		return
+	var hidden: = (flags & ENTITY_FLAG_HIDDEN) != 0
+	if entity.visible == hidden:
+		entity.visible = not hidden
+		if not hidden and _is_border_charger(entity):
+			# GoTowardsBorderOppositeMovementBehavior._on_warning_finished: the charge starts.
+			var behavior: Node = entity._current_movement_behavior
+			if entity.enemy_id == "iguanodon":
+				SoundManager.playSingle(behavior.iguanodon_charge_sound, 0, 0, false, 0.5)
+			elif entity.enemy_id == "oviraptor":
+				SoundManager.playSingle(behavior.oviraptor_charge_sound, 0, 0, false, 0.5)
 	var burning: = (flags & ENTITY_FLAG_BURNING) != 0
 	if burning != entity._burning_particles.emitting:
 		if burning:
@@ -954,8 +1056,14 @@ func on_events(events: Array) -> void :
 	for event in events:
 		if typeof(event) != TYPE_ARRAY or event.empty() or typeof(event[0]) != TYPE_INT:
 			continue
-		if event[0] == EVENT_SPAWN and event.size() == 8:
+		if event[0] == EVENT_SPAWN and event.size() == 9:
 			_client_spawn(event)
+		elif event[0] == EVENT_PUDDLE and event.size() == 7:
+			_client_puddle(event)
+		elif event[0] == EVENT_PUDDLE_END and event.size() == 2:
+			_client_puddle_end(event)
+		elif event[0] == EVENT_HOLE and event.size() == 2:
+			_client_hole(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
 			_client_die(event)
 		elif event[0] == EVENT_DESPAWN and event.size() == 2:
@@ -993,10 +1101,10 @@ func on_events(events: Array) -> void :
 
 
 func _client_spawn(event: Array) -> void :
-	# [EVENT_SPAWN, net_id, type, scene path, pos, player_index, data ref, charmed_by]
+	# [EVENT_SPAWN, net_id, type, scene path, pos, player_index, data ref, charmed_by, evolution]
 	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_STRING:
 		return
-	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_INT or typeof(event[7]) != TYPE_INT:
+	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_INT or typeof(event[7]) != TYPE_INT or typeof(event[8]) != TYPE_INT:
 		return
 	if _main._cleaning_up or not ResourceLoader.exists(event[3]):
 		return
@@ -1016,6 +1124,94 @@ func _client_spawn(event: Array) -> void :
 		return
 	_make_inert(entity)
 	_entities[event[1]] = entity
+	if event[8] != EVOLUTION_NONE and entity is Enemy:
+		_client_evolve(entity, event[8])
+	if _is_border_charger(entity):
+		# As the behaviour's first get_movement on the host: rustling grass and shaking ferns
+		# where it waits. It shows once the snapshot says it is visible.
+		entity.visible = false
+		SoundManager.playSingle(entity._current_movement_behavior.grass_sound, 0, 0, false, 0.5)
+		_main._shake_zone_sprites(entity.global_position, 1.2)
+
+
+# Primal Dread's oviraptor and iguanodon (hidden until they charge from the map's edge).
+func _is_border_charger(entity: Node) -> bool:
+	return entity is Enemy and entity._current_movement_behavior is GoTowardsBorderOppositeMovementBehavior
+
+
+# As EvolutionSceneEffectBehavior._evolution_enemy, without the boost (the host has the stats):
+# the flags, and the enemy effect behaviour that swaps the texture and adds the outline (it
+# takes both off again when the enemy dies).
+func _client_evolve(enemy: Node, evolution: int) -> void :
+	enemy._is_mutant = evolution == EVOLUTION_MUTANT
+	enemy._is_meca = evolution == EVOLUTION_MECA
+	enemy.can_be_boosted = false
+	var behavior_data = _evolution_behaviors.get(evolution)
+	if behavior_data != null and behavior_data.get("scene") is PackedScene:
+		enemy.effect_behaviors.add_child(behavior_data.scene.instance().init(enemy))
+
+
+func _client_puddle(event: Array) -> void :
+	# [EVENT_PUDDLE, puddle id, kind, pos, target scale, sprite index, sprite rotation]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_VECTOR2:
+		return
+	if typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_INT or typeof(event[6]) != TYPE_REAL:
+		return
+	if _main._cleaning_up:
+		return
+	var spawner: Node = _main._gpe_spawner
+	var scene: PackedScene = null
+	var container: Node = _main._gpe_container
+	if event[2] == PUDDLE_ACID:
+		scene = spawner.acid_puddle
+	elif event[2] == PUDDLE_PETROL:
+		scene = spawner.petrol_puddle
+	elif event[2] == PUDDLE_FIRE:
+		scene = spawner.fire_puddle
+		container = _main._fire_puddles_container
+	if scene == null or not is_instance_valid(container):
+		return
+	var pool_id: int = scene.get_instance_id()
+	var puddle = _main.get_node_from_pool(pool_id, container)
+	if puddle == null:
+		puddle = scene.instance()
+		puddle.set_meta("pool_id", pool_id)
+		container.add_child(puddle)
+	# Only shows: no areas (the host's puddles hurt, slow and burn), no lifetime (it fades out on
+	# the host's EVENT_PUDDLE_END). Init without its random sprite and rotation.
+	puddle.set_deferred("monitoring", false)
+	puddle.set_deferred("monitorable", false)
+	puddle.global_position = event[3]
+	puddle.lifetime = - 1
+	if event[5] >= 0 and event[5] < puddle.puddle_sprites.size():
+		puddle.sprite.texture = puddle.puddle_sprites[event[5]]
+	if event[5] >= 0 and event[5] < puddle.puddle_sprites_outline.size():
+		puddle.sprite_outline.texture = puddle.puddle_sprites_outline[event[5]]
+	puddle.sprite.rotation = event[6]
+	puddle._target_scale = event[4]
+	puddle._play_spawn_tween()
+	puddle.set_meta("lan_puddle_id", event[1])
+	_puddles[event[1]] = puddle
+
+
+func _client_puddle_end(event: Array) -> void :
+	# [EVENT_PUDDLE_END, puddle id]
+	if typeof(event[1]) != TYPE_INT:
+		return
+	var puddle = _puddles.get(event[1])
+	var _erased = _puddles.erase(event[1])
+	if puddle != null and is_instance_valid(puddle) and puddle.get_meta("lan_puddle_id", 0) == event[1] and puddle.is_active():
+		puddle.despawn()
+
+
+func _client_hole(event: Array) -> void :
+	# [EVENT_HOLE, pos]
+	if typeof(event[1]) != TYPE_VECTOR2 or _main._cleaning_up:
+		return
+	var spawner: Node = _main._gpe_spawner
+	spawner.lan_from_host = true
+	spawner.spawn_single_hole_at_position(event[1])
+	spawner.lan_from_host = false
 
 
 func _resolve_data_ref(ref, player_index: int):
@@ -1562,6 +1758,15 @@ func _update_puppets(delta: float) -> void :
 		entity.global_position = a.linear_interpolate(b, weight)
 		if entity is Unit:
 			entity.update_animation(b - a)
+		# Enemy._physics_process (off on copies) slows the animations with the enemy time factor.
+		if entity is Enemy:
+			entity._apply_time_factor_to_animation(entity.get_time_factor())
+			# A charging oviraptor or iguanodon faces along its path, as the host's behaviour
+			# turns it (upright when it runs left). Not on the step where the host moved it up or
+			# down to its lane.
+			var path: Vector2 = b - a
+			if entity.visible and abs(path.x) > abs(path.y) and _is_border_charger(entity):
+				entity.rotation = path.angle() + (PI if path.x < 0 else 0.0)
 
 
 # Holds the wave timer (enemy spawns follow it) and its half-wave timer.
