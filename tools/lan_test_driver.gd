@@ -1333,6 +1333,38 @@ func log_gpe(tag: String, main: Node, wave_sync: Node) -> void :
 			lasers += 1
 			if projectile._hitbox.from != null:
 				lasers_from += 1
+	# Item 12 visuals: warning lines shown, jumps (landing marker shown, shadow height), enemies with
+	# outlines beyond the managed ones, T-rex facing and mouth, carbon bows' next arrows, carbon
+	# arrows in flight, and the events of pet weapon attacks (32) and carbon arrows (33).
+	var warning_lines = []
+	var jumps = []
+	var extra_outlined = 0
+	var trex = []
+	for net_id in ids:
+		var e = wave_sync._entities[net_id]
+		if not is_instance_valid(e) or e.dead or not e is Enemy:
+			continue
+		for behavior in wave_sync._find_visual_behaviors(e, []):
+			if behavior is WarningChargingAttackBehavior and is_instance_valid(behavior._warning_line) and behavior._warning_line.visible:
+				warning_lines.append("%d:%d" % [net_id, int(round(rad2deg(behavior._warning_line.points[1].angle())))])
+			elif behavior is JumpAttackBehavior and behavior._land_shadow_warning != null and behavior._land_shadow_warning.visible:
+				jumps.append("%d:%s" % [net_id, behavior._land_shadow_warning.global_position.round()])
+		for color in e._outline_colors:
+			if not color in wave_sync._managed_outline_colors:
+				extra_outlined += 1
+				break
+		if e is Tyranosaurus:
+			trex.append("%d:%s mouth=%s" % [net_id, "left" if e.sprite.scale.x < 0 else "right", e._TRexAnimationPlayer.current_animation])
+	var arrows = []
+	for p in main._players:
+		for w in p.current_weapons:
+			if w is CarbonBowWeapon:
+				arrows.append("%d:%d" % [p.player_index, w._next_stat_hash % 1000])
+	var carbon_flying = []
+	for projectile in main._player_projectiles.get_children():
+		if projectile is Projectile and projectile._hitbox.active and projectile.lan_net_id != 0 and projectile.filename.find("carbon_bow") >= 0:
+			carbon_flying.append("%d:%s" % [projectile.lan_net_id, projectile._sprite.texture.resource_path.get_file().get_basename().replace("carbon_bow_projectile_", "")])
+	print("[TEST] ", tag, " gpe visuals warning_lines=", warning_lines, " jumps=", jumps, " extra_outlined=", extra_outlined, " trex=", trex, " carbon_next=", arrows, " carbon_flying=", carbon_flying, " pet_weapon_events=", wave_sync.event_counts.get(32, 0), " arrow_events=", wave_sync.event_counts.get(33, 0), " outline_events=", wave_sync.event_counts.get(31, 0), " look_events=", wave_sync.event_counts.get(34, 0))
 	print("[TEST] ", tag, " gpe brachiosaurus=", brachio, " feet=", feet, " lasers=", lasers, " following=", lasers_from)
 	# A hash of the zone decoration's places in 20 px steps (the same on every machine; trampled
 	# ferns change their texture, shaken ones move a few px).
@@ -1411,7 +1443,7 @@ func log_sync(tag: String) -> void :
 	var spawner = main._entity_spawner
 	var boss_hp = []
 	for boss in spawner.bosses:
-		boss_hp.append("%d/%d bar=%s" % [boss.current_stats.health, boss.max_stats.health, boss.life_bar.visible])
+		boss_hp.append("%d/%d bar=%s" % [boss.current_stats.health, boss.max_stats.health, boss.get("life_bar").visible if boss.get("life_bar") != null else "-"])
 	print("[TEST] ", tag, " enemies=", spawner.enemies.size(), " bosses=", spawner.bosses.size(), " boss_hp=", boss_hp, " neutrals=", spawner.neutrals.size(), " structures=", spawner.structures.size(), " pets=", spawner.pets.size(), " births=", spawner.active_births, " gold=", main._active_golds.size(), " consumables=", main._consumables.size(), " p0_upgrade_icons=", main._things_to_process_player_containers[0].upgrades.get_child_count(), " p0_crate_icons=", main._things_to_process_player_containers[0].consumables.get_child_count())
 	var sync = main.get_node_or_null("LanWaveSync")
 	if sync != null:

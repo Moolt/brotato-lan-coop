@@ -168,6 +168,24 @@ const FOOT_FLIPPED: = 8
 # An enemy projectile that follows its shooter or a target (enemy lasers): [code, id, shooter
 # net id, target kind, target id].
 const EVENT_PROJECTILE_FROM: = 28
+# Primal Dread visuals (polled on the host per tick, see _check_entity_visuals):
+# [code, net id, behaviour index, shown, line end]: a charge's warning line (velociraptor).
+const EVENT_WARNING_LINE: = 29
+# [code, net id, behaviour index, start, target, flipped]: a jump starts (dimetrodon,
+# carnotaurus); clients play its shadow and landing marker.
+const EVENT_JUMP: = 30
+# [code, net id, [colour html, ...]]: an enemy's other outlines (percent damage taken: blood
+# turret, mosquitor), when they change.
+const EVENT_OUTLINES: = 31
+# [code, net id, rotation, distance, attack type]: an attack of a weapon a synced entity holds
+# (Primal Dread's ammosaurus).
+const EVENT_ENTITY_WEAPON: = 32
+# [code, player_index, weapon index, stat hash]: a carbon bow's next arrow.
+const EVENT_CARBON_ARROW: = 33
+# [code, id, texture path, sprite scale]: a projectile's texture set at the shot (carbon bow).
+const EVENT_PROJECTILE_LOOK: = 34
+# A warning line's end point is sent again when it turned more than this (radians).
+const WARNING_LINE_RESEND_ANGLE: = 0.05
 # Puddle kinds (extensions/global/gpe_spawner.gd).
 const PUDDLE_ACID: = 0
 const PUDDLE_PETROL: = 1
@@ -204,6 +222,8 @@ var _frame: = 0
 var _entities: = {}
 # Built in _ready: Utils isn't a constant.
 var _enemy_outlines: = []
+# The outline colours the flags and the evolution manage (EVENT_OUTLINES sends the others).
+var _managed_outline_colors: = []
 # Host: net id -> the Pursuer's sprite scale last sent (it grows when boosted).
 var _entity_sizes: = {}
 # Client: net id -> pivot directions and angles from the host, until the copy has as many pivots
@@ -226,6 +246,14 @@ var _poacher_positions: = {}
 var _poacher_mark: PackedScene = null
 # Host: brachiosaurus feet (net id) -> the sprites last sent (FOOT_* mask).
 var _foot_states: = {}
+# Net id -> the entity's warning-line and jump attack behaviours (subtree order, the same on
+# every machine), for entities that have any; host: also the state last sent per behaviour.
+var _visual_behaviors: = {}
+var _visual_states: = {}
+# Client: running jumps, net id -> {behavior, time}.
+var _jumps: = {}
+# Net id -> the extra outline colours (html) last sent (host) or shown (client).
+var _extra_outlines: = {}
 # Puddle net id -> puddle, on both sides (host: until it starts to fade out).
 var _puddles: = {}
 var _next_puddle_id: = 0
@@ -300,6 +328,7 @@ func _ready() -> void :
 		[ENTITY_FLAG_CURSED, Utils.CURSE_COLOR, 1.0, 0.0], 
 		[ENTITY_FLAG_CHARMED, Utils.CHARM_COLOR, 0.4, 0.75], 
 	]
+	_managed_outline_colors = [Utils.BOOST_COLOR, Utils.CURSE_COLOR, Utils.CHARM_COLOR, Utils.MUTANT_COLOR, Utils.MECA_COLOR]
 	_net = LanGame.get_lan_net()
 	_main = get_parent()
 	is_host = _net.is_host
@@ -384,6 +413,7 @@ func _physics_process(delta: float) -> void :
 		_check_dig_sites()
 		_check_poacher_zones()
 		_check_brachiosaurus_feet()
+		_check_entity_visuals()
 		_check_births()
 		if not _events.empty():
 			_count_events(_events)
@@ -394,6 +424,7 @@ func _physics_process(delta: float) -> void :
 	else:
 		_send_own_state()
 		_update_puppets(delta)
+		_update_jumps(delta)
 		_play_pending_weapon_events()
 
 
@@ -451,8 +482,9 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 			_e = entity._animation_player.connect("animation_started", self, "_on_host_entity_animation", [entity])
 		if entity is Boss:
 			_e = entity.connect("state_changed", self, "_on_host_boss_state_changed")
-		if entity is Brachiosaurus:
-			_e = entity._brachiosaurus_animation_player.connect("animation_started", self, "_on_host_brachiosaurus_mouth", [entity])
+		var mouth = _get_mouth_player(entity)
+		if mouth != null:
+			_e = mouth.connect("animation_started", self, "_on_host_brachiosaurus_mouth", [entity])
 	# The evolution happened in the spawn (EvolutionSceneEffectBehavior on enemy_respawned).
 	var evolution: = EVOLUTION_NONE
 	if entity is Enemy:
@@ -463,7 +495,35 @@ func on_entity_spawned(entity: Node, scene: PackedScene, type: int, pos: Vector2
 	_events.append([EVENT_SPAWN, net_id, type, scene.resource_path, pos, player_index, _get_data_ref(data, player_index), charmed_by, evolution])
 	if entity is Pursuer:
 		_entity_sizes[net_id] = entity.sprite.scale.y
+	_watch_visual_behaviors(entity, net_id)
 	_send_pivots(entity)
+
+
+# The second AnimationPlayer of Primal Dread's brachiosaurus and T-rex (mouth open or closed).
+func _get_mouth_player(entity: Node):
+	if entity is Brachiosaurus:
+		return entity._brachiosaurus_animation_player
+	if entity is Tyranosaurus:
+		return entity._TRexAnimationPlayer
+	return null
+
+
+func _watch_visual_behaviors(entity: Node, net_id: int) -> void :
+	var _erased = _visual_behaviors.erase(net_id)
+	_erased = _visual_states.erase(net_id)
+	if not entity is Enemy:
+		return
+	var behaviors: = _find_visual_behaviors(entity, [])
+	if not behaviors.empty():
+		_visual_behaviors[net_id] = behaviors
+
+
+func _find_visual_behaviors(node: Node, result: Array) -> Array:
+	if node is WarningChargingAttackBehavior or node is JumpAttackBehavior:
+		result.append(node)
+	for child in node.get_children():
+		var _r = _find_visual_behaviors(child, result)
+	return result
 
 
 # Bullets circling a boss on pivots (vanilla's predator, the DLC's giant, jellyfish and eel) turn
@@ -600,6 +660,50 @@ func _check_brachiosaurus_feet() -> void :
 			_events.append([EVENT_BRACHIOSAURUS, net_id, BRACHIOSAURUS_FOOT, mask])
 
 
+# Warning lines (shown, end point) and jump starts, which the behaviours drive in the host's
+# physics only.
+func _check_entity_visuals() -> void :
+	if _visual_behaviors.empty() or _main._cleaning_up:
+		return
+	for net_id in _visual_behaviors:
+		var entity = _entities.get(net_id)
+		if entity == null or not is_instance_valid(entity) or entity.dead:
+			continue
+		var behaviors: Array = _visual_behaviors[net_id]
+		var states: Array = _visual_states.get(net_id, [])
+		while states.size() < behaviors.size():
+			states.append(null)
+		for i in behaviors.size():
+			var behavior = behaviors[i]
+			if not is_instance_valid(behavior):
+				continue
+			if behavior is WarningChargingAttackBehavior:
+				var line = behavior._warning_line
+				if not is_instance_valid(line):
+					continue
+				var end: Vector2 = line.points[1] if line.visible and line.points.size() > 1 else Vector2.ZERO
+				var last = states[i]
+				if last == null or last[0] != line.visible or (line.visible and abs(last[1].angle_to(end)) > WARNING_LINE_RESEND_ANGLE):
+					states[i] = [line.visible, end]
+					_events.append([EVENT_WARNING_LINE, net_id, i, line.visible, end])
+			elif behavior is JumpAttackBehavior:
+				if behavior._is_jumping and states[i] != true:
+					_events.append([EVENT_JUMP, net_id, i, behavior._start_position, behavior._target_position, entity.sprite.flip_h])
+				states[i] = behavior._is_jumping
+		_visual_states[net_id] = states
+
+
+# Outlines beyond the flags' and the evolution's (percent damage taken: blood turret, mosquitor).
+func _check_extra_outlines(net_id: int, entity: Node) -> void :
+	var extra: = []
+	for color in entity._outline_colors:
+		if not color in _managed_outline_colors:
+			extra.append(color.to_html())
+	if extra != _extra_outlines.get(net_id, []):
+		_extra_outlines[net_id] = extra
+		_events.append([EVENT_OUTLINES, net_id, extra])
+
+
 func _on_host_poacher_kill(player_index: int, kill_position: Vector2) -> void :
 	if not _main._cleaning_up:
 		_events.append([EVENT_POACHER_MARK, player_index, kill_position])
@@ -663,7 +767,13 @@ func _on_player_disconnected(player_index: int) -> void :
 
 func on_weapon_shot(weapon: Node, distance: float) -> void :
 	var player = weapon._parent
-	if not is_instance_valid(player) or not player is Player:
+	if not is_instance_valid(player):
+		return
+	if not player is Player:
+		# A weapon a synced entity holds (Primal Dread's ammosaurus).
+		if player.has_meta("lan_net_id") and _entities.get(player.get_meta("lan_net_id")) == player and player.get("_weapon") == weapon:
+			var entity_attack_type: int = weapon.next_attack_type if weapon is MeleeWeapon else RANGED_ATTACK
+			_events.append([EVENT_ENTITY_WEAPON, player.get_meta("lan_net_id"), weapon.rotation, distance, entity_attack_type])
 		return
 	var weapon_index: int = player.current_weapons.find(weapon)
 	if weapon_index < 0:
@@ -763,6 +873,8 @@ func _flush_pending_projectiles() -> void :
 			_send_boomerang(projectile)
 		if projectile is EnemyLaser or projectile is EnemyLaserFollow:
 			_send_projectile_from(projectile)
+		if projectile.has_meta(CarbonBowWeapon.PROJECTILE_STAT_META) and projectile._sprite.texture != null:
+			_events.append([EVENT_PROJECTILE_LOOK, projectile.lan_net_id, projectile._sprite.texture.resource_path, projectile._sprite.scale.x])
 	_pending_projectiles.clear()
 
 
@@ -851,6 +963,16 @@ func on_item_despawned(item: Node) -> void :
 	_events.append([EVENT_ITEM_DESPAWN, net_id])
 
 
+# Called by the carbon_bow.gd extension: the host picked the bow's next arrow.
+func on_carbon_bow_arrow(weapon: Node) -> void :
+	var player = weapon._parent
+	if not is_instance_valid(player) or not player is Player or _main._cleaning_up:
+		return
+	var weapon_index: int = player.current_weapons.find(weapon)
+	if weapon_index >= 0:
+		_events.append([EVENT_CARBON_ARROW, player.player_index, weapon_index, weapon._next_stat_hash])
+
+
 func on_crate_to_process(player_index: int, consumable_data: Resource) -> void :
 	_events.append([EVENT_CRATE_TO_PROCESS, player_index, consumable_data.my_id])
 
@@ -888,6 +1010,9 @@ func _on_host_entity_died(entity: Node, args: Entity.DieArgs) -> void :
 	var _erased = _entities.erase(net_id)
 	_erased = _entity_sizes.erase(net_id)
 	_erased = _foot_states.erase(net_id)
+	_erased = _visual_behaviors.erase(net_id)
+	_erased = _visual_states.erase(net_id)
+	_erased = _extra_outlines.erase(net_id)
 	# The clients' own clean_up_room kills everything at the end of the wave. Entity.despawn()
 	# (an enemy leaving the map, a puddle evicted) also says cleaning_up, mid-wave.
 	if not args.cleaning_up:
@@ -1031,8 +1156,10 @@ func _build_snapshot() -> PoolByteArray:
 					flags |= outline[0]
 			if entity.get("is_full") == true:
 				flags |= ENTITY_FLAG_FULL
-			if (entity.get("sprite_full") != null or entity is Brachiosaurus) and entity.sprite.scale.x < 0:
+			if (entity.get("sprite_full") != null or entity is Brachiosaurus or entity is Tyranosaurus) and entity.sprite.scale.x < 0:
 				flags |= ENTITY_FLAG_MIRRORED
+			if not entity._outline_colors.empty() or _extra_outlines.has(net_id):
+				_check_extra_outlines(net_id, entity)
 			if entity.get("angry_sound") != null and entity._current_movement_behavior == entity._on_triggered_movement_behavior:
 				flags |= ENTITY_FLAG_ANGRY
 		if not entity.visible:
@@ -1223,7 +1350,8 @@ func _apply_entity_flags(entity, flags: int) -> void :
 			if (entity.sprite.scale.x < 0) != mirrored:
 				entity.sprite.scale.x = - entity.sprite.scale.x
 		# The brachiosaurus faces into the map from the edge it came from.
-		if entity is Brachiosaurus and (entity.sprite.scale.x < 0) != ((flags & ENTITY_FLAG_MIRRORED) != 0):
+		# The brachiosaurus faces into the map, the T-rex towards its target.
+		if (entity is Brachiosaurus or entity is Tyranosaurus) and (entity.sprite.scale.x < 0) != ((flags & ENTITY_FLAG_MIRRORED) != 0):
 			entity.sprite.scale.x = - entity.sprite.scale.x
 		if entity.get("angry_sound") != null:
 			var angry: = (flags & ENTITY_FLAG_ANGRY) != 0
@@ -1266,6 +1394,18 @@ func on_events(events: Array) -> void :
 			_client_brachiosaurus(event)
 		elif event[0] == EVENT_PROJECTILE_FROM and event.size() == 5:
 			_client_projectile_from(event)
+		elif event[0] == EVENT_WARNING_LINE and event.size() == 5:
+			_client_warning_line(event)
+		elif event[0] == EVENT_JUMP and event.size() == 6:
+			_client_jump(event)
+		elif event[0] == EVENT_OUTLINES and event.size() == 3:
+			_client_outlines(event)
+		elif event[0] == EVENT_ENTITY_WEAPON and event.size() == 5:
+			_client_entity_weapon(event)
+		elif event[0] == EVENT_CARBON_ARROW and event.size() == 4:
+			_client_carbon_arrow(event)
+		elif event[0] == EVENT_PROJECTILE_LOOK and event.size() == 4:
+			_client_projectile_look(event)
 		elif event[0] == EVENT_ITEM_DESPAWN and event.size() == 2:
 			_client_item_despawn(event)
 		elif event[0] == EVENT_DIE and event.size() == 3:
@@ -1450,10 +1590,10 @@ func _client_brachiosaurus(event: Array) -> void :
 		return
 	if event[2] == BRACHIOSAURUS_STATE and typeof(event[3]) == TYPE_INT and entity is Brachiosaurus:
 		entity.lan_apply_host_state(event[3])
-	elif event[2] == BRACHIOSAURUS_MOUTH and typeof(event[3]) == TYPE_STRING and entity is Brachiosaurus:
-		var mouth: AnimationPlayer = entity._brachiosaurus_animation_player
+	elif event[2] == BRACHIOSAURUS_MOUTH and typeof(event[3]) == TYPE_STRING and _get_mouth_player(entity) != null:
+		var mouth: AnimationPlayer = _get_mouth_player(entity)
 		if mouth.has_animation(event[3]):
-			if event[3].begins_with("open_mouth"):
+			if event[3].begins_with("open_mouth") and mouth.get("_audio_shoot") != null:
 				mouth._audio_shoot.pitch_scale = rand_range(0.8, 1.2)
 				mouth._audio_shoot.play()
 			mouth.play(event[3])
@@ -1618,16 +1758,21 @@ func _client_weapon_shot(event: Array) -> void :
 	var player = _main._players[event[1]]
 	if not is_instance_valid(player) or player.dead or event[2] < 0 or event[2] >= player.current_weapons.size():
 		return
-	var weapon = player.current_weapons[event[2]]
+	_show_weapon_attack(player.current_weapons[event[2]], event[3], event[4], event[5])
+
+
+# A weapon's attack from the host: melee weapons swing, ranged ones recoil. One that comes while
+# the weapon still swings waits.
+func _show_weapon_attack(weapon, rotation: float, distance: float, attack_type: int) -> void :
 	if not is_instance_valid(weapon):
 		return
 	if weapon._is_shooting:
-		_pending_weapon_events[weapon] = event
+		_pending_weapon_events[weapon] = [rotation, distance, attack_type]
 		return
-	weapon.rotation = event[3]
-	if weapon is MeleeWeapon and event[5] != RANGED_ATTACK:
-		weapon.next_attack_type = event[5]
-		weapon._shooting_behavior.shoot(event[4])
+	weapon.rotation = rotation
+	if weapon is MeleeWeapon and attack_type != RANGED_ATTACK:
+		weapon.next_attack_type = attack_type
+		weapon._shooting_behavior.shoot(distance)
 	else:
 		_client_ranged_recoil(weapon)
 
@@ -1639,10 +1784,145 @@ func _play_pending_weapon_events() -> void :
 	for weapon in _pending_weapon_events.keys():
 		if is_instance_valid(weapon) and weapon._is_shooting:
 			continue
-		var event: Array = _pending_weapon_events[weapon]
+		var attack: Array = _pending_weapon_events[weapon]
 		var _erased = _pending_weapon_events.erase(weapon)
 		if is_instance_valid(weapon):
-			_client_weapon_shot(event)
+			_show_weapon_attack(weapon, attack[0], attack[1], attack[2])
+
+
+func _client_entity_weapon(event: Array) -> void :
+	# [EVENT_ENTITY_WEAPON, net id, rotation, distance, attack type]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_REAL or typeof(event[3]) != TYPE_REAL or typeof(event[4]) != TYPE_INT:
+		return
+	var entity = _entities.get(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead or not entity.get("_weapon") is Weapon:
+		return
+	_show_weapon_attack(entity._weapon, event[2], event[3], event[4])
+
+
+func _client_carbon_arrow(event: Array) -> void :
+	# [EVENT_CARBON_ARROW, player_index, weapon index, stat hash]
+	for i in [1, 2, 3]:
+		if typeof(event[i]) != TYPE_INT:
+			return
+	if event[1] < 0 or event[1] >= _main._players.size():
+		return
+	var player = _main._players[event[1]]
+	if not is_instance_valid(player) or event[2] < 0 or event[2] >= player.current_weapons.size():
+		return
+	var weapon = player.current_weapons[event[2]]
+	if is_instance_valid(weapon) and weapon is CarbonBowWeapon:
+		weapon._next_stat_hash = event[3]
+		weapon._show_next_arrow()
+
+
+func _client_projectile_look(event: Array) -> void :
+	# [EVENT_PROJECTILE_LOOK, id, texture path, sprite scale]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_STRING or typeof(event[3]) != TYPE_REAL:
+		return
+	var projectile = _projectiles.get(event[1])
+	if projectile == null or not is_instance_valid(projectile) or projectile.lan_net_id != event[1]:
+		return
+	if ResourceLoader.exists(event[2]):
+		projectile._sprite.texture = load(event[2])
+		projectile._sprite.scale = Vector2(event[3], event[3])
+
+
+func _client_warning_line(event: Array) -> void :
+	# [EVENT_WARNING_LINE, net id, behaviour index, shown, line end]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_BOOL or typeof(event[4]) != TYPE_VECTOR2:
+		return
+	var behavior = _get_visual_behavior(event[1], event[2])
+	if not behavior is WarningChargingAttackBehavior or not is_instance_valid(behavior._warning_line):
+		return
+	var line: Line2D = behavior._warning_line
+	line.visible = event[3]
+	if event[3]:
+		line.points = PoolVector2Array([event[4].normalized() * 50.0, event[4]])
+
+
+# As JumpAttackBehavior._try_start_jump without the move (the snapshot brings the arc): the
+# landing marker and the flip now, the shadow in _update_jumps.
+func _client_jump(event: Array) -> void :
+	# [EVENT_JUMP, net id, behaviour index, start, target, flipped]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_INT or typeof(event[3]) != TYPE_VECTOR2 or typeof(event[4]) != TYPE_VECTOR2 or typeof(event[5]) != TYPE_BOOL:
+		return
+	var behavior = _get_visual_behavior(event[1], event[2])
+	if not behavior is JumpAttackBehavior:
+		return
+	var entity = _entities.get(event[1])
+	entity.sprite.flip_h = event[5]
+	if behavior._shadow != null and not _jumps.has(event[1]):
+		behavior._ground_position = behavior._shadow.position
+	behavior._target_position = event[4]
+	if behavior._land_shadow_warning != null:
+		behavior._land_shadow_warning.global_position = event[4]
+		behavior._land_shadow_warning.visible = true
+	_jumps[event[1]] = {"behavior": behavior, "time": 0.0}
+
+
+# JumpAttackBehavior._process_jump's shadow and marker, and its landing (sound, marker off).
+func _update_jumps(delta: float) -> void :
+	if _jumps.empty():
+		return
+	for net_id in _jumps.keys():
+		var jump: Dictionary = _jumps[net_id]
+		var behavior = jump.behavior
+		var entity = _entities.get(net_id)
+		if not is_instance_valid(behavior) or entity == null or not is_instance_valid(entity) or entity.dead:
+			var _erased = _jumps.erase(net_id)
+			continue
+		jump.time += delta
+		if jump.time < behavior.jump_delay:
+			continue
+		var progress: float = (jump.time - behavior.jump_delay) / behavior.jump_duration
+		if progress >= 1.0:
+			SoundManager.playSingle(behavior.land_sound, 0, 0, true, 0.5)
+			if behavior._shadow != null:
+				behavior._shadow.position.y = behavior._ground_position.y
+				behavior._shadow.scale = Vector2.ONE * 2.0
+			if behavior._land_shadow_warning != null:
+				behavior._land_shadow_warning.visible = false
+			var _erased = _jumps.erase(net_id)
+			continue
+		var vertical_t: float = progress
+		if progress >= 0.5:
+			vertical_t = 0.5 + ease((progress - 0.5) * 2.0, - 3.0) * 0.5
+		behavior._update_shadow(sin(vertical_t * PI) * behavior.jump_height)
+		if behavior._land_shadow_warning != null:
+			behavior._land_shadow_warning.global_position = behavior._target_position
+
+
+func _get_visual_behavior(net_id: int, index: int):
+	var entity = _entities.get(net_id)
+	if entity == null or not is_instance_valid(entity) or entity.dead:
+		return null
+	if not _visual_behaviors.has(net_id):
+		_visual_behaviors[net_id] = _find_visual_behaviors(entity, [])
+	var behaviors: Array = _visual_behaviors[net_id]
+	if index < 0 or index >= behaviors.size() or not is_instance_valid(behaviors[index]):
+		return null
+	return behaviors[index]
+
+
+func _client_outlines(event: Array) -> void :
+	# [EVENT_OUTLINES, net id, [colour html, ...]]
+	if typeof(event[1]) != TYPE_INT or typeof(event[2]) != TYPE_ARRAY:
+		return
+	var entity = _entities.get(event[1])
+	if entity == null or not is_instance_valid(entity) or entity.dead or not entity is Enemy:
+		return
+	for html in _extra_outlines.get(event[1], []):
+		if not html in event[2]:
+			entity.remove_outline(Color(html))
+	var shown: = []
+	for html in event[2]:
+		if typeof(html) != TYPE_STRING:
+			continue
+		if not entity.has_outline(Color(html)):
+			entity.add_outline(Color(html), 1.0, 0.0)
+		shown.append(html)
+	_extra_outlines[event[1]] = shown
 
 
 # The visible part of RangedWeaponShootingBehavior.shoot, without the projectiles.

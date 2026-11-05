@@ -6,7 +6,7 @@ What each release changed, for players. The newest release is at the top. Each r
 
 ### Added
 - Survivor picks two starting weapons in the lobby, as in the base game.
-- Primal Dread (in part): every player has the same holes in the jungle, sees the acid, petrol and fire puddles, sees mutant and meca enemies with their look, and sees the dinosaurs that charge across the map from its edge. The brachiosaurus boss, dig sites, poacher zones, boomerangs, bullets the ankylosaurus deflects, enemy lasers and the fruit the hungry hungry dinosaur eats look the same for everyone, and so does the jungle's decoration. Slowed enemy time (time shifter, pocket watch) slows enemy bullets and animations and shows its overlay for everyone.
+- Primal Dread support: the jungle, its enemies, bosses and items play the same for everyone. Everyone has the same holes, map decoration, dig sites and poacher zones, and sees the puddles, mutant and meca enemies, charging dinosaurs, the brachiosaurus and T-rex, lasers, warning lines and jumps, deflected bullets, boomerangs, carbon bow arrows, pet attacks and the slowed enemy time of the time shifter and pocket watch.
 
 ### Changed
 - Works with Brotato **1.2.0.1** and no longer with 1.1.15.4 (the last release for 1.1.15.4 is 1.12.3). Everyone in a session needs 1.2.0.1.
@@ -18,9 +18,6 @@ What each release changed, for players. The newest release is at the top. Each r
 - Script errors on the end screen.
 - Enemies that leave the map without dying (e.g. at its edge) now disappear for every player.
 - Poisoned fruit (Abyssal Terrors) now shows up for every player, not only for the host.
-
-### Known issues
-- Some small Primal Dread effects show only for the host: the velociraptor's warning line, jump shadows and landing markers, the T-rex's facing and mouth, some outlines and the ammosaurus' swings.
 
 ## [1.12.3] - 2026-10-29
 

@@ -165,6 +165,12 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | 25 | poacher zone | index, pos: the host moved the zone after a bonus kill (polled) |
 | 26 | poacher mark | player_index, pos: a kill in that player's zone (mark, zone flash) |
 | 27 | brachiosaurus | net id, kind, value: 0 = the host's state (every second; clients set `current_state` and add the pivots at state 1, whose directions follow as event 15), 1 = mouth animation, 2 = the foot's sprites (shadow 1, foot 2, release 4, flipped 8; polled) |
+| 29 | warning line | net id, behaviour index, shown, line end: a `WarningChargingAttackBehavior`'s line (`velociraptor++`); polled, sent on show/hide and when it turns more than 0.05 rad |
+| 30 | jump | net id, behaviour index, start, target, flipped: a `JumpAttackBehavior` starts (dimetrodon, carnotaurus); clients play the shadow and landing marker (`_update_jumps`) |
+| 31 | outlines | net id, colours (html): an enemy's outlines beyond the managed ones (boost, curse, charm, mutant, meca), e.g. percent damage taken from the blood turret or mosquitor; checked per snapshot |
+| 32 | entity weapon | net id, rotation, distance, attack type: an attack of the weapon a synced entity holds (`_weapon`: Primal Dread's ammosaurus), shown like a player's |
+| 33 | carbon arrow | player_index, weapon index, stat hash: the carbon bow's next arrow (`carbon_bow.gd` extension) |
+| 34 | projectile look | id, texture path, sprite scale: a carbon bow arrow's texture |
 | 28 | projectile from | id, shooter net id, target kind, target id: enemy lasers (`EnemyLaser` stays with its shooter, `EnemyLaserFollow` turns towards the target). Client projectile copies start with `_hitbox.from = null` (pooled ones kept the last shooter) |
 
 `LanWaveSync.event_counts` counts sent (host) / received (client) events per code.
@@ -200,6 +206,7 @@ A reference for working on the mod: what exists, how a session flows, the sync p
 | `entities/gpe/dig_site/dig_site.gd` | clients don't dig; `lan_apply_host_state` shows the host's digging and completes without the crate |
 | `entities/units/enemies/jungle/bosses/brachiosaurus/brachiosaurus.gd` | state timer only on the host, which reports each state; `lan_apply_host_state` on clients (pivots). Uses the enemy extension's `LanGame` (a second const fails to parse) |
 | `entities/units/movement_behaviors/stay_edges_of_map_movement_behavior.gd` | no edge tweens on clients |
+| `weapons/ranged/carbon_bow/carbon_bow.gd` | host reports the next arrow. Uses the weapon extension's `LanGame` |
 | `global/gpe_spawner.gd` | Primal Dread ground effects: the hole layout from the shared wave seed; puddles only on the host, each reported to `LanWaveSync` (clients get null); single holes host-only and sent (`lan_from_host` while a client spawns the host's) |
 | `global/entity_spawner.gd` | 12-slot arrays, spawn circle (then the mode's `get_player_spawn_position`), enemy cap (the mode's `get_enemy_cap_factor`), reports spawns and markers (host; also `mode.on_entity_spawned`; group markers, one for several enemies, show as a plain marker on clients), `mode.on_group_queued` after each wave group (host; the queues hold `SpawnRequest`s since 1.2.0.1), markers only show (client) |
 | `entities/units/player/player.gd` | `lan_net_driven`, `lan_move_speed`, `lan_no_regen`; no alien eyes on clients; heal-over-time ticks (SceneTreeTimers, e.g. fruit with the DLC's jerky) skipped once the wave is cleaning up (in the solo view they healed players beyond the 1-player RunData: script errors); host: hits filtered by `mode.can_hit`; PvP modes: hurtbox also on the player projectile layer, `scale_player_damage`, a weapon `from` swapped for its player during `take_damage` (riposte calls `from.take_damage`) |
