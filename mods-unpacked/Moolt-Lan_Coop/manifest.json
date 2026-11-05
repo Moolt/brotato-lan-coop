@@ -1,7 +1,7 @@
 {
   "name": "Lan_Coop",
   "namespace": "Moolt",
-  "version_number": "1.12.3",
+  "version_number": "2.0.0",
   "description": "Lan Multiplayer for Brotato",
   "website_url": "https://github.com/Moolt/brotato-lan-coop",
   "dependencies": [
@@ -15,7 +15,7 @@
       "load_before": [],
       "incompatibilities": [],
       "compatible_mod_loader_version": ["6.3.0"],
-      "compatible_game_version": ["1.1.15.4"],
+      "compatible_game_version": ["1.2.0.1"],
       "config_schema": {}
     }
   }

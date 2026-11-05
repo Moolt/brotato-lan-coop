@@ -2,7 +2,7 @@
 
 A [Brotato](https://store.steampowered.com/app/1942280/Brotato/) mod that adds **LAN multiplayer for up to 12 players**, each on their own PC. Host a game, let your friends join from the same network, and play full runs together: waves, upgrades, shop and end screens.
 
-![Seven players fighting wave 20 in the Abyss](docs/images/wave.jpg)
+![Seven players fighting wave 20 in the jungle (Primal Dread)](docs/images/wave.jpg)
 
 ## Features
 
@@ -14,7 +14,8 @@ A [Brotato](https://store.steampowered.com/app/1942280/Brotato/) mod that adds *
 - **Keyboard, mouse and gamepad**, including mouse aim.
 - **Dropped connections**: a player whose connection breaks can rejoin the running game.
 - **End screen for the whole team.** Browse every player's stats, weapons and items after the run.
-- **Abyssal Terrors DLC supported**: its characters, items, weapons, enemies and the Abyss zone all work in multiplayer.
+- **Both DLCs supported**: the characters, items, weapons, enemies and zones of Abyssal Terrors (the Abyss) and Primal Dread (the jungle) all work in multiplayer.
+- **Item sets**: the sets the host switched on in the main menu apply to everyone.
 - **Game modes** besides plain co-op (see below).
 - English and German texts for everything the mod adds.
 
@@ -28,7 +29,7 @@ A [Brotato](https://store.steampowered.com/app/1942280/Brotato/) mod that adds *
 
 ## Requirements
 
-- **Brotato 1.1.15.4.** You need to own the game; this repo contains no game files.
+- **Brotato 1.2.0.1.** You need to own the game; this repo contains no game files. For Brotato 1.1.15.4, use [release 1.12.3](https://github.com/Moolt/brotato-lan-coop/releases/tag/v1.12.3).
 - **Everyone needs the same setup:** the same game version, the same mod version, and the same DLCs enabled. The host turns away players whose setup differs and tells them why.
 - All PCs on the same local network (LAN or WiFi).
 
@@ -44,7 +45,7 @@ Every player installs the mod the same way.
 
 1. **Host:** click *Multiplayer*, enter your name and click *Host game*. The lobby shows your address (IP and port).
 2. **Everyone else:** click *Multiplayer*, enter a name and click *Join game*. Pick the host's game from *Games on your network*, or type its address into *Join by address*.
-3. In the lobby, pick a character and a starting weapon, then click *Ready*.
+3. In the lobby, pick a character and a starting weapon (two for the Survivor), then click *Ready*.
 4. The host can open *Settings* to choose the mode, zone, danger level, enemy scaling, time limit and loot rules. Everyone sees the choices in the lobby.
 5. When everyone is ready, the host clicks *Start*.
 
@@ -53,7 +54,7 @@ Every player installs the mod the same way.
 | Setting | Options |
 |---|---|
 | Mode | Co-op or one of the game modes below |
-| Zone | Crash Zone, or the Abyss with the DLC |
+| Zone | Crash Zone; the Abyss (Abyssal Terrors) and the jungle (Primal Dread) for owners of the DLC |
 | Danger | Danger 0 to 5 |
 | Enemy scaling | Relaxed, Normal, Tough: how much tougher and more numerous enemies get per extra player |
 | Time to choose | No limit, 45, 60, 90 or 120 seconds for the upgrades and the shop after each wave. When it runs out, an upgrade is picked at random and the shop closes. |
@@ -122,24 +123,26 @@ The rest of this page is for people who want to know how the mod works or work o
 
 ### Development setup
 
-The mod is developed against a local decompiled copy of the game, which is not part of this repo:
+The mod is developed against a local decompiled copy of the game (made with [GDRE Tools](https://github.com/GDRETools/gdsdecomp)), which is not part of this repo:
 
 ```
 brotato-multiplayer/
-├── Decompiled/          # decompiled Brotato project, opened in a Godot 3.x editor
-│   ├── mods-unpacked/Moolt-Lan_Coop -> ../../brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop
-│   ├── CLAUDE.md -> ../brotato-lan-coop/CLAUDE.md
-│   └── docs      -> ../brotato-lan-coop/docs
-├── BrotatoAbyssalTerrors_Decompiled/   # optional: the decompiled DLC, used by test copies
+├── Game/1.2.0.1/
+│   ├── Brotato/         # the installed game (GOG), with the DLC marker files
+│   └── Decompiled/      # decompiled Brotato project, opened in a Godot 3.x editor
+│       ├── mods-unpacked/Moolt-Lan_Coop -> ../../../../brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop
+│       ├── CLAUDE.md -> ../../../brotato-lan-coop/CLAUDE.md
+│       └── docs      -> ../../../brotato-lan-coop/docs
+├── Godot/               # the Godot 3.7 binary
 └── brotato-lan-coop/    # this repo
 ```
 
-Create the symlinks from inside `Decompiled/`:
+Since 1.2.0.1 both DLCs are inside the game's `Brotato.pck`, so the decompiled project has their content too. Create the symlinks from inside `Game/1.2.0.1/Decompiled/`:
 
 ```bash
-ln -s ../../brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop mods-unpacked/Moolt-Lan_Coop
-ln -s ../brotato-lan-coop/CLAUDE.md CLAUDE.md
-ln -s ../brotato-lan-coop/docs docs
+ln -s ../../../../brotato-lan-coop/mods-unpacked/Moolt-Lan_Coop mods-unpacked/Moolt-Lan_Coop
+ln -s ../../../brotato-lan-coop/CLAUDE.md CLAUDE.md
+ln -s ../../../brotato-lan-coop/docs docs
 ```
 
 To try a change, `tools/play2.sh` opens two game windows side by side on one PC: host in one, join from the other. [docs/testing.md](docs/testing.md) describes the automated test driver.

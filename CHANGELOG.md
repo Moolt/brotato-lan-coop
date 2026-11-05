@@ -4,12 +4,15 @@ What each release changed, for players. The newest release is at the top. Each r
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-05
+
 ### Added
 - Survivor picks two starting weapons in the lobby, as in the base game.
 - Primal Dread support: the jungle, its enemies, bosses and items play the same for everyone. Its holes spread over the bigger arena of a session. Everyone has the same holes, map decoration, dig sites and poacher zones, and sees the puddles, mutant and meca enemies, charging dinosaurs, the brachiosaurus and T-rex, lasers, warning lines and jumps, deflected bullets, boomerangs, carbon bow arrows, pet attacks and the slowed enemy time of the time shifter and pocket watch.
+- Team Race in the jungle: both halves get the same holes, dinosaurs charging from the side stay in their half, dig sites, poacher zones and turrets never land inside the wall, and a poacher zone stays in its owner's half.
 
 ### Changed
-- Works with Brotato **1.2.0.1** and no longer with 1.1.15.4 (the last release for 1.1.15.4 is 1.12.3). Everyone in a session needs 1.2.0.1.
+- Works with Brotato **1.2.0.1** and no longer with 1.1.15.4 (the last release for 1.1.15.4 is 1.12.3). Everyone in a session needs 1.2.0.1 and mod version 2.0.0.
 - The lobby offers only the zones whose DLC you own.
 - The host's item sets (main menu) apply to everyone in the session. Characters and starting weapons from a set the host switched off don't show in the lobby.
 
@@ -18,7 +21,6 @@ What each release changed, for players. The newest release is at the top. Each r
 - Script errors on the end screen.
 - Enemies that leave the map without dying (e.g. at its edge) now disappear for every player.
 - Poisoned fruit (Abyssal Terrors) now shows up for every player, not only for the host.
-- Team Race in the jungle: both halves get the same holes; dinosaurs charging from the side stay in their half instead of crossing the wall into the other team's; dig sites, poacher zones and turrets no longer land inside the wall, and a poacher zone stays in its owner's half.
 - Lobby: the mouse wheel scrolls the character and weapon lists again (since the game update it only scrolled a description).
 - Lobby settings: with a controller or keyboard, the focus now moves through the settings in the order they are shown.
 - The evil mob now evolves (look, health bar) for every player, and the materials it eats disappear for everyone.
@@ -150,7 +152,8 @@ What each release changed, for players. The newest release is at the top. Each r
 ### Added
 - First release: LAN multiplayer for up to 12 players, one per PC. Host or join from the main menu (discovered games or by IP), a lobby with characters, weapons and ready-up, a larger arena and more enemies as more players join, and upgrades and shop on each machine between waves.
 
-[Unreleased]: https://github.com/Moolt/brotato-lan-coop/compare/v1.12.3...HEAD
+[Unreleased]: https://github.com/Moolt/brotato-lan-coop/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Moolt/brotato-lan-coop/compare/v1.12.3...v2.0.0
 [1.12.3]: https://github.com/Moolt/brotato-lan-coop/compare/v1.12.2...v1.12.3
 [1.12.2]: https://github.com/Moolt/brotato-lan-coop/compare/v1.12.1...v1.12.2
 [1.12.1]: https://github.com/Moolt/brotato-lan-coop/compare/v1.12.0...v1.12.1

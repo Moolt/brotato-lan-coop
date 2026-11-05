@@ -4,10 +4,10 @@ Goals, design decisions, progress and **open work**. How the mod is built (files
 
 Keep this file current: tick items when they are done (with a one-line note of where it lives), add new gaps and todos as they come up, and move as-built detail to [lan-coop-mod.md](lan-coop-mod.md) rather than here.
 
-**Game 1.2.0.1 / Primal Dread:** the port is tracked in [game-1.2.0.1-migration.md](game-1.2.0.1-migration.md).
+**Game 1.2.0.1 / Primal Dread:** the port (release 2.0.0) is tracked in [game-1.2.0.1-migration.md](game-1.2.0.1-migration.md). 1.1.15.4 was last supported by 1.12.3 (tag `last-1.1.15.4`).
 
 ## Goal
-Brotato 1.1.15.4 (Godot 3.7, ModLoader 6.3.0, which has no hooks, only `install_script_extension` / `take_over_path`) ships local couch co-op for up to 4 players. The mod turns it into LAN co-op:
+Brotato 1.2.0.1 (Godot 3.7, ModLoader 6.3.0, which has no hooks, only `install_script_extension` / `take_over_path`) ships local couch co-op for up to 4 players. The mod turns it into LAN co-op:
 - [x] up to 12 players, one per machine
 - [x] keyboard and gamepad (controller text entry still open, see [Polish](#polish))
 - [x] host/join by IP or from discovered games, via a "Multiplayer" main-menu button
@@ -40,6 +40,7 @@ These hold for all further work; changing one is a design change, note it here.
 - [x] **Step 7: Between waves.** Wave-end state, solo view, solo upgrades and shop, host merge, end screens (7a–7f).
 - [ ] **Step 8: Polish** (in progress). Done: 8a in-wave visuals and aim, 8b lobby layout. Open: [Polish](#polish), [Performance](#performance), [Tests](#tests).
 - [ ] **Step 9: Feature additions.** [Lobby settings](#lobby-settings), [Features](#features).
+- [x] **Port to Brotato 1.2.0.1 and Primal Dread** (2026-11-05, release 2.0.0). [game-1.2.0.1-migration.md](game-1.2.0.1-migration.md).
 
 Milestones:
 - [x] 1 docs, 2 connect, 3 synced start, 4 full wave, 5 between waves
